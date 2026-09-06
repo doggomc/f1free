@@ -39,6 +39,8 @@ const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const NEWS_FILE = path.join(DATA_DIR, 'news.json');
 const MAINTENANCE_FILE = path.join(DATA_DIR, 'maintenance.json');
 const UNIQUE_VISITORS_FILE = path.join(DATA_DIR, 'unique-visitors.json');
+const ANALYTICS_FILE = path.join(DATA_DIR, 'analytics.json');
+const ANALYTICS_REDIS_KEY = process.env.ANALYTICS_REDIS_KEY || 'freef1:analytics:v1';
 const PRODUCTION_MODE = process.env.NODE_ENV === 'production' || process.env.REQUIRE_PRODUCTION_SECRETS === '1';
 const insecureProductionConfig = [
   !process.env.ADMIN_USER ? 'ADMIN_USER' : null,
@@ -333,7 +335,7 @@ function parseUA(ua) {
     /mac os x (\d+[._]\d+[._]?\d*)/.exec(lower) ? { os: 'macOS ' + RegExp.$1.replace(/_/g, '.') } :
     /iphone os (\d+[._]\d+)/.exec(lower) ? { os: 'iOS ' + RegExp.$1.replace(/_/g, '.') } :
     /ipad.*os (\d+[._]\d+)/.exec(lower) ? { os: 'iPadOS ' + RegExp.$1.replace(/_/g, '.') } :
-    /android (\d+[./]\d+)/.exec(lower) ? { os: 'Android ' + RegExp.$1.replace(/\//, '.') } :
+    /android (\d+(?:[./]\d+)?)/.exec(lower) ? { os: 'Android ' + RegExp.$1.replace(/\//, '.') } :
     /cros/.test(lower) ? { os: 'ChromeOS' } :
     /linux/.test(lower) ? { os: 'Linux' } :
     { os: 'Unknown' };
@@ -1041,6 +1043,7 @@ function upsertVisitor(key, req, options = {}) {
       current.country = geo.country || null;
       current.city = geo.city || null;
       current.countryCode = geo.countryCode || null;
+      recordSessionGeo(current);
       broadcastVisitorChange('geo', current, false);
     });
   } else {
@@ -1084,6 +1087,405 @@ function visitorTracking(req, res, next) {
 
 app.use(visitorTracking);
 
+
+// ─────────────────────────────────────────────
+// AUDIENCE ANALYTICS
+// Aggregated, anonymous counters only: no IPs, no visitor IDs, no raw
+// user agents. Hourly buckets are kept for 14 days, daily buckets for 90,
+// plus a one-minute concurrent-viewer series for the last 24 hours.
+// ─────────────────────────────────────────────
+
+const ANALYTICS_HOURLY_RETENTION_HOURS = Number(process.env.ANALYTICS_HOURLY_RETENTION_HOURS || 14 * 24);
+const ANALYTICS_DAILY_RETENTION_DAYS = Number(process.env.ANALYTICS_DAILY_RETENTION_DAYS || 90);
+const ANALYTICS_LIVE_POINTS = 24 * 60;
+const ANALYTICS_FLUSH_MS = Number(process.env.ANALYTICS_FLUSH_MS || 60_000);
+const ANALYTICS_SAMPLE_MS = 60_000;
+const ANALYTICS_MAP_CAP = { device: 8, browser: 24, os: 16, country: 250, pages: 8, source: 16, team: 16 };
+const SITE_PAGES = new Set(['/', '/news', '/info']);
+const DURATION_BINS_MS = [60_000, 5 * 60_000, 15 * 60_000, 45 * 60_000, 120 * 60_000]; // <1m, 1–5m, 5–15m, 15–45m, 45m–2h, 2h+
+
+const analytics = { hourly: new Map(), daily: new Map(), live: [], since: null };
+const analyticsDirty = { hourly: new Set(), daily: new Set(), removed: new Set(), live: false, meta: false, significant: false };
+const ANALYTICS_IDLE_FLUSH_MS = Number(process.env.ANALYTICS_IDLE_FLUSH_MS || 5 * 60_000);
+let analyticsSampling = false;
+let lastAnalyticsFlushAt = Date.now();
+let analyticsStoreReady = false;
+let analyticsHydrated = false;
+let analyticsFlushInFlight = null;
+let analyticsInitPromise = null;
+
+function newAnalyticsBucket() {
+  return {
+    sessions: 0, ended: 0, durationMs: 0, durHist: [0, 0, 0, 0, 0, 0],
+    newVisitors: 0, returning: 0, pageViews: 0,
+    peakOnline: 0, onlineSum: 0, onlineSamples: 0,
+    device: {}, browser: {}, os: {}, country: {}, pages: {}, source: {}, team: {},
+    fullscreen: 0, nostream: 0, streamReady: 0, streamReadyMs: 0, streamTimeout: 0
+  };
+}
+
+const analyticsHourKey = ts => Math.floor(ts / 3_600_000);
+const analyticsDayKey = ts => new Date(ts).toISOString().slice(0, 10);
+
+function analyticsHourCutoff(now = Date.now()) { return analyticsHourKey(now) - ANALYTICS_HOURLY_RETENTION_HOURS; }
+function analyticsDayCutoff(now = Date.now()) { return analyticsDayKey(now - ANALYTICS_DAILY_RETENTION_DAYS * 86_400_000); }
+
+// Apply a mutation to the hourly and daily bucket that own `ts`.
+function mutateAnalytics(ts, fn) {
+  const now = Date.now();
+  const stamp = Number.isFinite(ts) ? Math.min(ts, now) : now;
+  const hk = analyticsHourKey(stamp);
+  if (hk > analyticsHourCutoff(now)) {
+    let bucket = analytics.hourly.get(hk);
+    if (!bucket) analytics.hourly.set(hk, bucket = newAnalyticsBucket());
+    fn(bucket);
+    analyticsDirty.hourly.add(hk);
+  }
+  const dk = analyticsDayKey(stamp);
+  if (dk >= analyticsDayCutoff(now)) {
+    let bucket = analytics.daily.get(dk);
+    if (!bucket) analytics.daily.set(dk, bucket = newAnalyticsBucket());
+    fn(bucket);
+    analyticsDirty.daily.add(dk);
+  }
+  if (!analytics.since) { analytics.since = stamp; analyticsDirty.meta = true; }
+  if (!analyticsSampling) analyticsDirty.significant = true;
+}
+
+function incCounter(map, rawKey, cap) {
+  let key = String(rawKey || 'Unknown').trim().slice(0, 32) || 'Unknown';
+  if (!(key in map) && Object.keys(map).length >= cap) key = 'Other';
+  map[key] = (map[key] || 0) + 1;
+}
+
+function browserFamily(browser) { return String(browser || 'Unknown').replace(/\s+[\d.]+$/, ''); }
+function osFamily(os) { return String(os || 'Unknown').split(' ')[0] || 'Unknown'; }
+function durationBin(ms) {
+  let bin = 0;
+  while (bin < DURATION_BINS_MS.length && ms >= DURATION_BINS_MS[bin]) bin++;
+  return bin;
+}
+
+function normalizeSitePage(value) {
+  if (typeof value !== 'string' || !value) return null;
+  let page = value.trim().slice(0, 64);
+  const query = page.indexOf('?');
+  if (query >= 0) page = page.slice(0, query);
+  if (!page.startsWith('/')) return null;
+  if (page.length > 1 && page.endsWith('/')) page = page.slice(0, -1);
+  return SITE_PAGES.has(page) ? page : '/other';
+}
+
+function recordSessionStart(entry) {
+  if (!entry || entry.analyticsStarted) return;
+  entry.analyticsStarted = true;
+  const online = countOnlineUsers();
+  const page = normalizeSitePage(entry.page) || '/other';
+  const hasGeo = Boolean(entry.countryCode);
+  if (hasGeo) entry.analyticsGeo = true;
+  mutateAnalytics(entry.connectedAt, bucket => {
+    bucket.sessions++;
+    bucket.pageViews++;
+    incCounter(bucket.device, entry.deviceType, ANALYTICS_MAP_CAP.device);
+    incCounter(bucket.browser, browserFamily(entry.browser), ANALYTICS_MAP_CAP.browser);
+    incCounter(bucket.os, osFamily(entry.os), ANALYTICS_MAP_CAP.os);
+    incCounter(bucket.pages, page, ANALYTICS_MAP_CAP.pages);
+    if (hasGeo) incCounter(bucket.country, entry.countryCode, ANALYTICS_MAP_CAP.country);
+    if (online > bucket.peakOnline) bucket.peakOnline = online;
+  });
+}
+
+function recordSessionGeo(entry) {
+  if (!entry?.analyticsStarted || entry.analyticsGeo || !entry.countryCode) return;
+  entry.analyticsGeo = true;
+  mutateAnalytics(entry.connectedAt, bucket => incCounter(bucket.country, entry.countryCode, ANALYTICS_MAP_CAP.country));
+}
+
+function recordVisitorKind(entry, isGloballyNew) {
+  if (!entry?.analyticsStarted || entry.analyticsKind) return;
+  entry.analyticsKind = true;
+  mutateAnalytics(entry.connectedAt, bucket => { if (isGloballyNew) bucket.newVisitors++; else bucket.returning++; });
+}
+
+function recordSessionEnd(entry, endedAt = entry?.lastSeen) {
+  if (!entry?.analyticsStarted || entry.analyticsEnded) return;
+  entry.analyticsEnded = true;
+  const duration = Math.max(0, Number(endedAt || Date.now()) - Number(entry.connectedAt || endedAt));
+  mutateAnalytics(entry.connectedAt, bucket => {
+    bucket.ended++;
+    bucket.durationMs += duration;
+    bucket.durHist[durationBin(duration)]++;
+  });
+}
+
+function recordViewerEvent(type, value, entry) {
+  const now = Date.now();
+  switch (type) {
+    case 'view': {
+      const page = normalizeSitePage(value);
+      if (!page) return false;
+      if (entry) entry.page = page;
+      mutateAnalytics(now, bucket => { bucket.pageViews++; incCounter(bucket.pages, page, ANALYTICS_MAP_CAP.pages); });
+      return true;
+    }
+    case 'source': {
+      const label = String(value || '').replace(/[^\w .+-]/g, '').trim().slice(0, 24);
+      if (!label) return false;
+      mutateAnalytics(now, bucket => incCounter(bucket.source, label, ANALYTICS_MAP_CAP.source));
+      return true;
+    }
+    case 'team': {
+      const slug = String(value || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 24);
+      if (!slug) return false;
+      mutateAnalytics(now, bucket => incCounter(bucket.team, slug, ANALYTICS_MAP_CAP.team));
+      return true;
+    }
+    case 'fullscreen': mutateAnalytics(now, bucket => { bucket.fullscreen++; }); return true;
+    case 'nostream': mutateAnalytics(now, bucket => { bucket.nostream++; }); return true;
+    case 'stream_timeout': mutateAnalytics(now, bucket => { bucket.streamTimeout++; }); return true;
+    case 'stream_ready': {
+      const ms = Number(value);
+      if (!Number.isFinite(ms) || ms < 0) return false;
+      const clamped = Math.min(Math.round(ms), 60_000);
+      mutateAnalytics(now, bucket => { bucket.streamReady++; bucket.streamReadyMs += clamped; });
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+// One sample per minute: the concurrent-viewer curve and per-bucket averages/peaks.
+function sampleAnalytics() {
+  const now = Date.now();
+  const minute = Math.floor(now / 60_000) * 60_000;
+  const online = countOnlineUsers(now);
+  const last = analytics.live[analytics.live.length - 1];
+  if (last && last[0] === minute) last[1] = Math.max(last[1], online);
+  else analytics.live.push([minute, online]);
+  if (analytics.live.length > ANALYTICS_LIVE_POINTS) analytics.live.splice(0, analytics.live.length - ANALYTICS_LIVE_POINTS);
+  analyticsDirty.live = true;
+  analyticsSampling = true;
+  try {
+    mutateAnalytics(now, bucket => {
+      bucket.onlineSum += online;
+      bucket.onlineSamples++;
+      if (online > bucket.peakOnline) bucket.peakOnline = online;
+    });
+  } finally {
+    analyticsSampling = false;
+  }
+  pruneAnalytics(now);
+}
+
+// Write every minute while something is happening; only every few minutes when
+// the minute sampler is the sole source of changes (keeps Upstash usage low).
+function flushAnalyticsIfDue() {
+  if (!analyticsIsDirty()) return;
+  if (analyticsDirty.significant || Date.now() - lastAnalyticsFlushAt >= ANALYTICS_IDLE_FLUSH_MS) flushAnalytics().catch(() => {});
+}
+
+function pruneAnalytics(now = Date.now()) {
+  const hourCutoff = analyticsHourCutoff(now);
+  for (const key of analytics.hourly.keys()) {
+    if (key <= hourCutoff) { analytics.hourly.delete(key); analyticsDirty.hourly.delete(key); analyticsDirty.removed.add(`h:${key}`); }
+  }
+  const dayCutoff = analyticsDayCutoff(now);
+  for (const key of analytics.daily.keys()) {
+    if (key < dayCutoff) { analytics.daily.delete(key); analyticsDirty.daily.delete(key); analyticsDirty.removed.add(`d:${key}`); }
+  }
+  const liveCutoff = now - ANALYTICS_LIVE_POINTS * 60_000;
+  while (analytics.live.length && analytics.live[0][0] < liveCutoff) { analytics.live.shift(); analyticsDirty.live = true; }
+}
+
+// Drop zero counters so idle hours serialize to a few bytes.
+function compactAnalyticsBucket(bucket) {
+  const out = {};
+  for (const [key, value] of Object.entries(bucket)) {
+    if (Array.isArray(value)) { if (value.some(Boolean)) out[key] = value; }
+    else if (value && typeof value === 'object') { if (Object.keys(value).length) out[key] = value; }
+    else if (value) out[key] = value;
+  }
+  return out;
+}
+
+function mergeAnalyticsBucket(target, stored) {
+  if (!stored || typeof stored !== 'object') return target;
+  for (const key of Object.keys(target)) {
+    const value = stored[key];
+    if (value == null) continue;
+    if (Array.isArray(target[key])) {
+      target[key] = target[key].map((current, index) => current + (Number(value[index]) || 0));
+    } else if (typeof target[key] === 'object') {
+      for (const [name, count] of Object.entries(value)) {
+        const n = Number(count) || 0;
+        if (n > 0) target[key][String(name).slice(0, 32)] = (target[key][name] || 0) + n;
+      }
+    } else if (key === 'peakOnline') {
+      target.peakOnline = Math.max(target.peakOnline, Number(value) || 0);
+    } else {
+      target[key] += Math.max(0, Number(value) || 0);
+    }
+  }
+  return target;
+}
+
+function hydrateAnalyticsBucket(map, key, stored) {
+  const merged = mergeAnalyticsBucket(map.get(key) || newAnalyticsBucket(), stored);
+  map.set(key, merged);
+}
+
+function hydrateAnalyticsLive(stored) {
+  if (!Array.isArray(stored)) return;
+  const byMinute = new Map(analytics.live);
+  for (const point of stored) {
+    if (!Array.isArray(point)) continue;
+    const minute = Number(point[0]), count = Number(point[1]);
+    if (!Number.isFinite(minute) || !Number.isFinite(count)) continue;
+    byMinute.set(minute, Math.max(byMinute.get(minute) || 0, count));
+  }
+  analytics.live = [...byMinute.entries()].sort((a, b) => a[0] - b[0]).slice(-ANALYTICS_LIVE_POINTS);
+}
+
+function hydrateAnalyticsField(field, raw) {
+  let value;
+  try { value = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (_) { return; }
+  if (field === 'live') return hydrateAnalyticsLive(value);
+  if (field === 'meta') {
+    const since = Number(value?.since);
+    if (Number.isFinite(since) && since > 0) analytics.since = analytics.since ? Math.min(analytics.since, since) : since;
+    return;
+  }
+  if (field.startsWith('h:')) {
+    const key = Number(field.slice(2));
+    if (Number.isFinite(key)) hydrateAnalyticsBucket(analytics.hourly, key, value);
+  } else if (field.startsWith('d:')) {
+    const key = field.slice(2);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(key)) hydrateAnalyticsBucket(analytics.daily, key, value);
+  }
+}
+
+async function syncAnalyticsStore() {
+  try {
+    if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
+      const stored = readLocalJson(ANALYTICS_FILE);
+      if (stored && typeof stored === 'object') {
+        for (const [key, bucket] of Object.entries(stored.hourly || {})) hydrateAnalyticsField(`h:${key}`, bucket);
+        for (const [key, bucket] of Object.entries(stored.daily || {})) hydrateAnalyticsField(`d:${key}`, bucket);
+        hydrateAnalyticsField('live', stored.live);
+        hydrateAnalyticsField('meta', { since: stored.since });
+      }
+      analyticsStoreReady = fileStoreReady;
+    } else {
+      const payload = await upstashRequest(['HGETALL', ANALYTICS_REDIS_KEY]);
+      const flat = Array.isArray(payload?.result) ? payload.result : [];
+      for (let i = 0; i + 1 < flat.length; i += 2) hydrateAnalyticsField(String(flat[i]), flat[i + 1]);
+      analyticsStoreReady = true;
+    }
+  } catch (error) {
+    warnUniqueStore(error);
+    analyticsStoreReady = false;
+  } finally {
+    pruneAnalytics();
+    analyticsHydrated = true;
+  }
+  return analyticsStoreReady;
+}
+
+function analyticsIsDirty() {
+  return analyticsDirty.live || analyticsDirty.meta || analyticsDirty.hourly.size > 0 || analyticsDirty.daily.size > 0 || analyticsDirty.removed.size > 0;
+}
+
+function flushAnalytics(force = false) {
+  // A write in progress may not contain the latest counters: run again after it.
+  if (analyticsFlushInFlight) return analyticsFlushInFlight.then(() => flushAnalytics(force));
+  if (!analyticsHydrated) return Promise.resolve(false);
+  if (!force && !analyticsIsDirty()) return Promise.resolve(true);
+
+  const hourly = [...analyticsDirty.hourly], daily = [...analyticsDirty.daily], removed = [...analyticsDirty.removed];
+  const writeLive = analyticsDirty.live || force, writeMeta = analyticsDirty.meta || force;
+  analyticsDirty.hourly.clear(); analyticsDirty.daily.clear(); analyticsDirty.removed.clear();
+  analyticsDirty.live = false; analyticsDirty.meta = false; analyticsDirty.significant = false;
+  lastAnalyticsFlushAt = Date.now();
+
+  const restoreDirty = () => {
+    hourly.forEach(key => analyticsDirty.hourly.add(key));
+    daily.forEach(key => analyticsDirty.daily.add(key));
+    removed.forEach(key => analyticsDirty.removed.add(key));
+    if (writeLive) analyticsDirty.live = true;
+    if (writeMeta) analyticsDirty.meta = true;
+  };
+
+  // The local-file branch has no await, so the IIFE settles synchronously and a
+  // `finally` inside it would clear the marker *before* the assignment below.
+  const run = (async () => {
+    try {
+      if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
+        const snapshot = {
+          version: 1,
+          since: analytics.since,
+          savedAt: Date.now(),
+          live: analytics.live,
+          hourly: Object.fromEntries([...analytics.hourly].map(([key, bucket]) => [key, compactAnalyticsBucket(bucket)])),
+          daily: Object.fromEntries([...analytics.daily].map(([key, bucket]) => [key, compactAnalyticsBucket(bucket)]))
+        };
+        const saved = writeLocalJson(ANALYTICS_FILE, snapshot);
+        analyticsStoreReady = saved;
+        if (!saved) restoreDirty();
+        return saved;
+      }
+
+      const fields = [];
+      for (const key of hourly) { const bucket = analytics.hourly.get(key); if (bucket) fields.push(`h:${key}`, JSON.stringify(compactAnalyticsBucket(bucket))); }
+      for (const key of daily) { const bucket = analytics.daily.get(key); if (bucket) fields.push(`d:${key}`, JSON.stringify(compactAnalyticsBucket(bucket))); }
+      if (writeLive) fields.push('live', JSON.stringify(analytics.live));
+      if (writeMeta) fields.push('meta', JSON.stringify({ version: 1, since: analytics.since, savedAt: Date.now() }));
+      const commands = [];
+      for (let i = 0; i < fields.length; i += 120) commands.push(['HSET', ANALYTICS_REDIS_KEY, ...fields.slice(i, i + 120)]);
+      if (removed.length) commands.push(['HDEL', ANALYTICS_REDIS_KEY, ...removed]);
+      if (commands.length) await upstashRequest(commands);
+      analyticsStoreReady = true;
+      return true;
+    } catch (error) {
+      warnUniqueStore(error);
+      analyticsStoreReady = false;
+      restoreDirty();
+      return false;
+    }
+  })();
+  analyticsFlushInFlight = run;
+  run.finally(() => { if (analyticsFlushInFlight === run) analyticsFlushInFlight = null; });
+  return run;
+}
+
+function getAnalyticsSnapshot() {
+  const now = Date.now();
+  let openSessions = 0, openSessionMs = 0;
+  for (const visitor of activeUsers.values()) {
+    if (!visitor.analyticsStarted || now - visitor.lastSeen > HEARTBEAT_TIMEOUT) continue;
+    openSessions++;
+    openSessionMs += now - visitor.connectedAt;
+  }
+  return {
+    generatedAt: now,
+    since: analytics.since,
+    retention: { hourlyHours: ANALYTICS_HOURLY_RETENTION_HOURS, dailyDays: ANALYTICS_DAILY_RETENTION_DAYS, liveMinutes: ANALYTICS_LIVE_POINTS },
+    store: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, analyticsStoreReady),
+    serverStartedAt: SERVER_STARTED_AT,
+    current: { online: countOnlineUsers(now), openSessions, openSessionMs },
+    live: analytics.live,
+    hourly: [...analytics.hourly].sort((a, b) => a[0] - b[0]).map(([key, bucket]) => ({ t: key * 3_600_000, ...compactAnalyticsBucket(bucket) })),
+    daily: [...analytics.daily].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([key, bucket]) => ({ d: key, t: Date.parse(`${key}T00:00:00Z`), ...compactAnalyticsBucket(bucket) }))
+  };
+}
+
+analyticsInitPromise = syncAnalyticsStore();
+const analyticsSampleTimer = setInterval(sampleAnalytics, ANALYTICS_SAMPLE_MS);
+analyticsSampleTimer.unref?.();
+const analyticsFlushTimer = setInterval(flushAnalyticsIfDue, ANALYTICS_FLUSH_MS);
+analyticsFlushTimer.unref?.();
+analyticsInitPromise.then(() => sampleAnalytics());
+
 // ─────────────────────────────────────────────
 // CLEANUP LOOP
 // ─────────────────────────────────────────────
@@ -1096,6 +1498,7 @@ function cleanupInactiveVisitors() {
   for (const [id, visitor] of activeUsers) {
     if (now - visitor.lastSeen > HEARTBEAT_TIMEOUT) {
       visitor.online = false;
+      recordSessionEnd(visitor);
       broadcastSSE('visitor_update', { type: 'offline', visitor: sanitizeVisitor(visitor) });
       activeUsers.delete(id);
       if (visitorKeyByIp.get(visitor.ip) === id) visitorKeyByIp.delete(visitor.ip);
@@ -1164,7 +1567,8 @@ function getStats() {
       nodeEnv: process.env.NODE_ENV || 'development',
       uniqueVisitorStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, uniqueVisitorStoreReady),
       maintenanceStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, maintenanceStoreReady),
-      newsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, newsStoreReady)
+      newsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, newsStoreReady),
+      analyticsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, analyticsStoreReady)
     }
   };
 }
@@ -1287,12 +1691,17 @@ app.get('/api/visitors/heartbeat', async (req, res, next) => {
 
     const existingIpKey = findVisitorKeyByIp(ip);
     const key = activeUsers.has(suppliedUserId) ? suppliedUserId : (existingIpKey || suppliedUserId);
+    const headerPage = normalizeSitePage(req.query.page);
     const { entry, isNew } = upsertVisitor(key, req, {
-      page: pageFromReferer(req, activeUsers.get(key)?.page || '/'),
+      page: headerPage || pageFromReferer(req, activeUsers.get(key)?.page || '/'),
       source: 'heartbeat',
-      keepExistingPage: !req.headers.referer
+      keepExistingPage: !headerPage && !req.headers.referer
     });
+    // Analytics: a heartbeat means a real browser running the site, so this is
+    // where a session starts counting (page-only hits from crawlers are not).
+    recordSessionStart(entry);
     const isGloballyNew = await trackUniqueVisitor(key);
+    recordVisitorKind(entry, isGloballyNew);
 
     // Heartbeats update one row in real time; full stats are serialized only
     // for a new live session or a newly confirmed permanent visitor.
@@ -1301,6 +1710,25 @@ app.get('/api/visitors/heartbeat', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+// Viewer events from the public site (feed picked, page opened, fullscreen,
+// stream ready/timeout, no-stream impression, livery picked). Same token and
+// rate limit as the heartbeat; the payload is reduced to whitelisted counters.
+app.post('/api/visitors/event', (req, res) => {
+  const suppliedUserId = normalizeVisitorId(req.headers['x-user-id']);
+  if (!suppliedUserId) return res.status(400).json({ error: 'Missing user ID' });
+  if (!consumeVisitorRateLimit(`event:${getClientIp(req)}`)) {
+    res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
+    return res.status(429).json({ error: 'Too many events. Try again later.' });
+  }
+  if (!verifyVisitorToken(req.headers['x-visitor-token'], suppliedUserId)) {
+    return res.status(403).json({ error: 'Invalid or expired visitor token' });
+  }
+  const type = typeof req.body?.type === 'string' ? req.body.type.slice(0, 24) : '';
+  const entry = activeUsers.get(suppliedUserId) || activeUsers.get(findVisitorKeyByIp(getClientIp(req)) || '');
+  if (!recordViewerEvent(type, req.body?.value, entry)) return res.status(400).json({ error: 'Unknown event' });
+  res.status(204).end();
 });
 
 app.get('/api/visitors/active', (req, res) => {
@@ -1450,6 +1878,11 @@ app.get('/admin/api/status', (req, res) => {
 
 app.get('/admin/api/visitors', (req, res) => {
   res.json(getStats());
+});
+
+app.get('/admin/api/analytics', async (req, res) => {
+  await analyticsInitPromise;
+  res.json(getAnalyticsSnapshot());
 });
 
 app.get('/admin/api/stream/status', (req, res) => {
@@ -1705,8 +2138,12 @@ function shutdown(signal) {
   writeSSE(sseClients, 'event: shutdown\ndata: {}\n\n');
   writeSSE(publicSseClients, 'event: shutdown\ndata: {}\n\n');
   for (const response of [...sseClients, ...publicSseClients]) response.end();
+  clearInterval(analyticsSampleTimer);
+  clearInterval(analyticsFlushTimer);
+  for (const visitor of activeUsers.values()) recordSessionEnd(visitor);
+  const finalFlush = flushAnalytics(true).catch(() => false);
   server.close(async () => {
-    await Promise.allSettled([...pendingUniqueWrites.values()]);
+    await Promise.allSettled([...pendingUniqueWrites.values(), finalFlush]);
     process.exit(0);
   });
   setTimeout(() => process.exit(1), 10_000).unref();

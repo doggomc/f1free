@@ -57,6 +57,7 @@ const streamPreview     = $('streamPreview');
 const sysUptime         = $('sysUptime');
 const sysVisitorStore   = $('sysVisitorStore');
 const sysNewsStore      = $('sysNewsStore');
+const sysAnalyticsStore = $('sysAnalyticsStore');
 const sysOverrideStatus = $('sysOverrideStatus');
 const sysMaintenanceStatus = $('sysMaintenanceStatus');
 const sysNodeEnv        = $('sysNodeEnv');
@@ -114,6 +115,7 @@ function showLogin() {
   authScreen.classList.remove('hidden');
   appEl.classList.remove('open');
   if (sse) { sse.close(); sse = null; sseConnected = false; }
+  if (typeof Analytics !== 'undefined') Analytics.stop();
 }
 
 function showDashboard() {
@@ -124,6 +126,7 @@ function showDashboard() {
   pollStats();
   loadMaintenanceStatus();
   loadNews();
+  if (typeof Analytics !== 'undefined') Analytics.start();
 }
 
 async function handleLogin(e) {
@@ -393,6 +396,11 @@ function updateSystemInfo(data) {
     const store = String(data?.server?.newsStore || 'unknown').toUpperCase();
     sysNewsStore.textContent = store;
     sysNewsStore.style.color = store === 'UPSTASH' ? 'var(--green)' : store === 'FILE' ? 'var(--amber)' : '#ff6b62';
+  }
+  if (sysAnalyticsStore) {
+    const store = String(data?.server?.analyticsStore || 'unknown').toUpperCase();
+    sysAnalyticsStore.textContent = store;
+    sysAnalyticsStore.style.color = store === 'UPSTASH' ? 'var(--green)' : store === 'FILE' ? 'var(--amber)' : '#ff6b62';
   }
   if (sysOverrideStatus) {
     sysOverrideStatus.textContent = data?.override?.active ? 'OVERRIDE' : 'NORMAL';

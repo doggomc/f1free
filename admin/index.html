@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
   <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"></noscript>
-  <link rel="stylesheet" href="/admin/admin.css?v=20260826-hardening2">
+  <link rel="stylesheet" href="/admin/admin.css?v=20260906-analytics1">
 </head>
 <body>
 
@@ -264,6 +264,10 @@
                 <span class="sys-val" id="sysNewsStore">—</span>
               </div>
               <div class="system-item">
+                <span class="sys-key">Analytics Store</span>
+                <span class="sys-val" id="sysAnalyticsStore">—</span>
+              </div>
+              <div class="system-item">
                 <span class="sys-key">Override Mode</span>
                 <span class="sys-val" id="sysOverrideStatus" style="color:var(--green)">NORMAL</span>
               </div>
@@ -284,12 +288,128 @@
 
         </div>
       </div>
+
+      <!-- ══ AUDIENCE ANALYTICS ══════════════════════════ -->
+      <section class="analytics" id="analytics" aria-labelledby="analyticsTitle">
+        <div class="analytics-head">
+          <div>
+            <div class="section-kicker">Audience</div>
+            <h2 class="section-title" id="analyticsTitle">Analytics</h2>
+            <div class="analytics-meta"><span id="analyticsSince">—</span> · <span id="analyticsUpdated">—</span></div>
+          </div>
+          <div class="analytics-controls">
+            <span class="panel-badge normal" id="analyticsStore">—</span>
+            <div class="range-group" id="analyticsRange" role="group" aria-label="Time range">
+              <button class="range-btn" data-range="24h" type="button">24h</button>
+              <button class="range-btn" data-range="7d" type="button">7d</button>
+              <button class="range-btn" data-range="14d" type="button">14d</button>
+              <button class="range-btn" data-range="30d" type="button">30d</button>
+              <button class="range-btn" data-range="90d" type="button">90d</button>
+            </div>
+            <button class="btn-sm btn-ghost" id="analyticsExport" type="button" title="Download the selected range as CSV">⤓ CSV</button>
+            <button class="btn-sm btn-ghost" id="analyticsRefresh" type="button" title="Refresh now">↻</button>
+          </div>
+        </div>
+        <div class="analytics-error" id="analyticsError" hidden></div>
+
+        <!-- KPI row -->
+        <div class="kpi-row">
+          <div class="stat-card accent-red"><div class="stat-label">Sessions</div><div class="stat-value red" id="kSessionsVal">0</div><div class="stat-sub" id="kSessionsSub">—</div><div class="kpi-delta" id="kSessionsDelta"></div></div>
+          <div class="stat-card accent-purple"><div class="stat-label">Avg time on site</div><div class="stat-value purple" id="kAvgTimeVal">0s</div><div class="stat-sub" id="kAvgTimeSub">—</div><div class="kpi-delta" id="kAvgTimeDelta"></div></div>
+          <div class="stat-card accent-green"><div class="stat-label">Avg viewers online</div><div class="stat-value green" id="kAvgOnlineVal">0</div><div class="stat-sub" id="kAvgOnlineSub">—</div><div class="kpi-delta" id="kAvgOnlineDelta"></div></div>
+          <div class="stat-card accent-blue"><div class="stat-label">New visitors</div><div class="stat-value blue" id="kNewVal">0%</div><div class="stat-sub" id="kNewSub">—</div><div class="kpi-delta" id="kNewDelta"></div></div>
+          <div class="stat-card accent-amber"><div class="stat-label">Bounce rate</div><div class="stat-value amber" id="kBounceVal">0%</div><div class="stat-sub" id="kBounceSub">—</div><div class="kpi-delta" id="kBounceDelta"></div></div>
+          <div class="stat-card accent-green"><div class="stat-label">Total watch time</div><div class="stat-value green" id="kWatchVal">0m</div><div class="stat-sub" id="kWatchSub">—</div><div class="kpi-delta" id="kWatchDelta"></div></div>
+        </div>
+
+        <!-- Concurrent viewers -->
+        <div class="panel chart-panel">
+          <div class="panel-head">
+            <div class="panel-title">Concurrent viewers</div>
+            <div class="chart-note" id="chartLiveNote">—</div>
+          </div>
+          <div class="chart-body" id="chartLive"></div>
+        </div>
+
+        <div class="chart-grid two">
+          <div class="panel chart-panel">
+            <div class="panel-head"><div class="panel-title">Sessions · new vs returning</div><div class="chart-note" id="analyticsRangeLabel">—</div></div>
+            <div class="chart-body" id="chartSessions"></div>
+          </div>
+          <div class="panel chart-panel">
+            <div class="panel-head"><div class="panel-title">Average time on site</div><div class="chart-note">per period · completed sessions</div></div>
+            <div class="chart-body" id="chartDuration"></div>
+          </div>
+        </div>
+
+        <div class="chart-grid two">
+          <div class="panel chart-panel">
+            <div class="panel-head"><div class="panel-title">When people watch</div><div class="chart-note" id="chartHeatNote">avg viewers online · weekday × hour</div></div>
+            <div class="chart-body" id="chartHeat"></div>
+          </div>
+          <div class="panel chart-panel">
+            <div class="panel-head"><div class="panel-title">Session length distribution</div><div class="chart-note">share of completed sessions</div></div>
+            <div class="chart-body" id="chartDurationHist"></div>
+          </div>
+        </div>
+
+        <div class="chart-grid four">
+          <div class="panel chart-panel">
+            <div class="panel-head"><div class="panel-title">Devices</div></div>
+            <div class="chart-body" id="chartDevice"></div>
+          </div>
+          <div class="panel chart-panel">
+            <div class="panel-head"><div class="panel-title">Browsers</div></div>
+            <div class="chart-body" id="chartBrowser"></div>
+          </div>
+          <div class="panel chart-panel">
+            <div class="panel-head"><div class="panel-title">Operating systems</div></div>
+            <div class="chart-body" id="chartOs"></div>
+          </div>
+          <div class="panel chart-panel">
+            <div class="panel-head"><div class="panel-title">Countries</div></div>
+            <div class="chart-body" id="chartCountry"></div>
+          </div>
+        </div>
+
+        <div class="chart-grid four">
+          <div class="panel chart-panel">
+            <div class="panel-head"><div class="panel-title">Pages</div></div>
+            <div class="chart-body" id="chartPages"></div>
+          </div>
+          <div class="panel chart-panel">
+            <div class="panel-head"><div class="panel-title">Feed sources picked</div></div>
+            <div class="chart-body" id="chartSource"></div>
+          </div>
+          <div class="panel chart-panel">
+            <div class="panel-head"><div class="panel-title">Team liveries</div></div>
+            <div class="chart-body" id="chartTeam"></div>
+          </div>
+          <div class="panel chart-panel">
+            <div class="panel-head"><div class="panel-title">Player health</div></div>
+            <div class="chart-body health-grid" id="playerHealth"></div>
+          </div>
+        </div>
+
+        <div class="panel chart-panel">
+          <div class="panel-head"><div class="panel-title">Busiest hours</div><div class="chart-note">top hours by peak concurrent viewers · last 14 days</div></div>
+          <div class="panel-body table-wrap">
+            <table class="busiest">
+              <thead><tr><th>Hour</th><th class="num">Peak online</th><th class="num">Avg online</th><th class="num">Sessions</th><th class="num">Avg length</th><th>Top countries</th></tr></thead>
+              <tbody id="busiestBody"><tr><td colspan="6"><div class="empty-state">Loading…</div></td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <p class="analytics-foot">Aggregated counters only — no IP addresses, visitor IDs or user-agent strings are stored. Hourly detail is kept for 14 days, daily totals for 90 days.</p>
+      </section>
     </main>
   </div>
 
   <!-- Toast Container -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="/admin/admin.js?v=20260826-hardening2" defer></script>
+  <script src="/admin/charts.js?v=20260906-analytics1" defer></script>
+  <script src="/admin/analytics.js?v=20260906-analytics1" defer></script>
+  <script src="/admin/admin.js?v=20260906-analytics1" defer></script>
 </body>
 </html>
