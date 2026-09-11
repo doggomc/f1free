@@ -1,0 +1,904 @@
+[
+ {
+  "round": 1,
+  "slug": "australia",
+  "name": "Australian Grand Prix",
+  "circuit": "Albert Park Grand Prix Circuit",
+  "locality": "Melbourne",
+  "country": "Australia",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-03-06T01:30:00Z",
+    "ts": 1772760600000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-03-06T05:00:00Z",
+    "ts": 1772773200000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-03-07T01:30:00Z",
+    "ts": 1772847000000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-03-07T05:00:00Z",
+    "ts": 1772859600000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-03-08T04:00:00Z",
+    "ts": 1772942400000
+   }
+  ]
+ },
+ {
+  "round": 2,
+  "slug": "china",
+  "name": "Chinese Grand Prix",
+  "circuit": "Shanghai International Circuit",
+  "locality": "Shanghai",
+  "country": "China",
+  "sprint": true,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-03-13T03:30:00Z",
+    "ts": 1773372600000
+   },
+   {
+    "slug": "sprint-qualifying",
+    "name": "Sprint Qualifying",
+    "start": "2026-03-13T07:30:00Z",
+    "ts": 1773387000000
+   },
+   {
+    "slug": "sprint",
+    "name": "Sprint",
+    "start": "2026-03-14T03:00:00Z",
+    "ts": 1773457200000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-03-14T07:00:00Z",
+    "ts": 1773471600000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-03-15T07:00:00Z",
+    "ts": 1773558000000
+   }
+  ]
+ },
+ {
+  "round": 3,
+  "slug": "japan",
+  "name": "Japanese Grand Prix",
+  "circuit": "Suzuka Circuit",
+  "locality": "Suzuka",
+  "country": "Japan",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-03-27T02:30:00Z",
+    "ts": 1774578600000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-03-27T06:00:00Z",
+    "ts": 1774591200000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-03-28T02:30:00Z",
+    "ts": 1774665000000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-03-28T06:00:00Z",
+    "ts": 1774677600000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-03-29T05:00:00Z",
+    "ts": 1774760400000
+   }
+  ]
+ },
+ {
+  "round": 4,
+  "slug": "miami",
+  "name": "Miami Grand Prix",
+  "circuit": "Miami International Autodrome",
+  "locality": "Miami",
+  "country": "USA",
+  "sprint": true,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-05-01T16:00:00Z",
+    "ts": 1777651200000
+   },
+   {
+    "slug": "sprint-qualifying",
+    "name": "Sprint Qualifying",
+    "start": "2026-05-01T20:30:00Z",
+    "ts": 1777667400000
+   },
+   {
+    "slug": "sprint",
+    "name": "Sprint",
+    "start": "2026-05-02T16:00:00Z",
+    "ts": 1777737600000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-05-02T20:00:00Z",
+    "ts": 1777752000000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-05-03T20:00:00Z",
+    "ts": 1777838400000
+   }
+  ]
+ },
+ {
+  "round": 5,
+  "slug": "canada",
+  "name": "Canadian Grand Prix",
+  "circuit": "Circuit Gilles Villeneuve",
+  "locality": "Montreal",
+  "country": "Canada",
+  "sprint": true,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-05-22T16:30:00Z",
+    "ts": 1779467400000
+   },
+   {
+    "slug": "sprint-qualifying",
+    "name": "Sprint Qualifying",
+    "start": "2026-05-22T20:30:00Z",
+    "ts": 1779481800000
+   },
+   {
+    "slug": "sprint",
+    "name": "Sprint",
+    "start": "2026-05-23T16:00:00Z",
+    "ts": 1779552000000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-05-23T20:00:00Z",
+    "ts": 1779566400000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-05-24T20:00:00Z",
+    "ts": 1779652800000
+   }
+  ]
+ },
+ {
+  "round": 6,
+  "slug": "monaco",
+  "name": "Monaco Grand Prix",
+  "circuit": "Circuit de Monaco",
+  "locality": "Monte Carlo",
+  "country": "Monaco",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-06-05T11:30:00Z",
+    "ts": 1780659000000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-06-05T15:00:00Z",
+    "ts": 1780671600000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-06-06T10:30:00Z",
+    "ts": 1780741800000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-06-06T14:00:00Z",
+    "ts": 1780754400000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-06-07T13:00:00Z",
+    "ts": 1780837200000
+   }
+  ]
+ },
+ {
+  "round": 7,
+  "slug": "barcelona",
+  "name": "Barcelona Grand Prix",
+  "circuit": "Circuit de Barcelona-Catalunya",
+  "locality": "Barcelona",
+  "country": "Spain",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-06-12T11:30:00Z",
+    "ts": 1781263800000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-06-12T15:00:00Z",
+    "ts": 1781276400000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-06-13T10:30:00Z",
+    "ts": 1781346600000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-06-13T14:00:00Z",
+    "ts": 1781359200000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-06-14T13:00:00Z",
+    "ts": 1781442000000
+   }
+  ]
+ },
+ {
+  "round": 8,
+  "slug": "austria",
+  "name": "Austrian Grand Prix",
+  "circuit": "Red Bull Ring",
+  "locality": "Spielberg",
+  "country": "Austria",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-06-26T11:30:00Z",
+    "ts": 1782473400000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-06-26T15:00:00Z",
+    "ts": 1782486000000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-06-27T10:30:00Z",
+    "ts": 1782556200000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-06-27T14:00:00Z",
+    "ts": 1782568800000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-06-28T13:00:00Z",
+    "ts": 1782651600000
+   }
+  ]
+ },
+ {
+  "round": 9,
+  "slug": "britain",
+  "name": "British Grand Prix",
+  "circuit": "Silverstone Circuit",
+  "locality": "Silverstone",
+  "country": "UK",
+  "sprint": true,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-07-03T11:30:00Z",
+    "ts": 1783078200000
+   },
+   {
+    "slug": "sprint-qualifying",
+    "name": "Sprint Qualifying",
+    "start": "2026-07-03T15:30:00Z",
+    "ts": 1783092600000
+   },
+   {
+    "slug": "sprint",
+    "name": "Sprint",
+    "start": "2026-07-04T11:00:00Z",
+    "ts": 1783162800000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-07-04T15:00:00Z",
+    "ts": 1783177200000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-07-05T14:00:00Z",
+    "ts": 1783260000000
+   }
+  ]
+ },
+ {
+  "round": 10,
+  "slug": "belgium",
+  "name": "Belgian Grand Prix",
+  "circuit": "Circuit de Spa-Francorchamps",
+  "locality": "Spa",
+  "country": "Belgium",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-07-17T11:30:00Z",
+    "ts": 1784287800000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-07-17T15:00:00Z",
+    "ts": 1784300400000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-07-18T10:30:00Z",
+    "ts": 1784370600000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-07-18T14:00:00Z",
+    "ts": 1784383200000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-07-19T13:00:00Z",
+    "ts": 1784466000000
+   }
+  ]
+ },
+ {
+  "round": 11,
+  "slug": "hungary",
+  "name": "Hungarian Grand Prix",
+  "circuit": "Hungaroring",
+  "locality": "Budapest",
+  "country": "Hungary",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-07-24T11:30:00Z",
+    "ts": 1784892600000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-07-24T15:00:00Z",
+    "ts": 1784905200000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-07-25T10:30:00Z",
+    "ts": 1784975400000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-07-25T14:00:00Z",
+    "ts": 1784988000000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-07-26T13:00:00Z",
+    "ts": 1785070800000
+   }
+  ]
+ },
+ {
+  "round": 12,
+  "slug": "netherlands",
+  "name": "Dutch Grand Prix",
+  "circuit": "Circuit Park Zandvoort",
+  "locality": "Zandvoort",
+  "country": "Netherlands",
+  "sprint": true,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-08-21T10:30:00Z",
+    "ts": 1787308200000
+   },
+   {
+    "slug": "sprint-qualifying",
+    "name": "Sprint Qualifying",
+    "start": "2026-08-21T14:30:00Z",
+    "ts": 1787322600000
+   },
+   {
+    "slug": "sprint",
+    "name": "Sprint",
+    "start": "2026-08-22T10:00:00Z",
+    "ts": 1787392800000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-08-22T14:00:00Z",
+    "ts": 1787407200000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-08-23T13:00:00Z",
+    "ts": 1787490000000
+   }
+  ]
+ },
+ {
+  "round": 13,
+  "slug": "italy",
+  "name": "Italian Grand Prix",
+  "circuit": "Autodromo Nazionale di Monza",
+  "locality": "Monza",
+  "country": "Italy",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-09-04T10:30:00Z",
+    "ts": 1788517800000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-09-04T14:00:00Z",
+    "ts": 1788530400000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-09-05T10:30:00Z",
+    "ts": 1788604200000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-09-05T14:00:00Z",
+    "ts": 1788616800000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-09-06T13:00:00Z",
+    "ts": 1788699600000
+   }
+  ]
+ },
+ {
+  "round": 14,
+  "slug": "spain",
+  "name": "Spanish Grand Prix",
+  "circuit": "Madring",
+  "locality": "Madrid",
+  "country": "Spain",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-09-11T11:30:00Z",
+    "ts": 1789126200000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-09-11T15:00:00Z",
+    "ts": 1789138800000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-09-12T10:30:00Z",
+    "ts": 1789209000000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-09-12T14:00:00Z",
+    "ts": 1789221600000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-09-13T13:00:00Z",
+    "ts": 1789304400000
+   }
+  ]
+ },
+ {
+  "round": 15,
+  "slug": "azerbaijan",
+  "name": "Azerbaijan Grand Prix",
+  "circuit": "Baku City Circuit",
+  "locality": "Baku",
+  "country": "Azerbaijan",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-09-24T08:30:00Z",
+    "ts": 1790238600000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-09-24T12:00:00Z",
+    "ts": 1790251200000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-09-25T08:30:00Z",
+    "ts": 1790325000000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-09-25T12:00:00Z",
+    "ts": 1790337600000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-09-26T11:00:00Z",
+    "ts": 1790420400000
+   }
+  ]
+ },
+ {
+  "round": 16,
+  "slug": "singapore",
+  "name": "Singapore Grand Prix",
+  "circuit": "Marina Bay Street Circuit",
+  "locality": "Marina Bay",
+  "country": "Singapore",
+  "sprint": true,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-10-09T08:30:00Z",
+    "ts": 1791534600000
+   },
+   {
+    "slug": "sprint-qualifying",
+    "name": "Sprint Qualifying",
+    "start": "2026-10-09T12:30:00Z",
+    "ts": 1791549000000
+   },
+   {
+    "slug": "sprint",
+    "name": "Sprint",
+    "start": "2026-10-10T09:00:00Z",
+    "ts": 1791622800000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-10-10T13:00:00Z",
+    "ts": 1791637200000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-10-11T12:00:00Z",
+    "ts": 1791720000000
+   }
+  ]
+ },
+ {
+  "round": 17,
+  "slug": "usa",
+  "name": "United States Grand Prix",
+  "circuit": "Circuit of the Americas",
+  "locality": "Austin",
+  "country": "USA",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-10-23T17:30:00Z",
+    "ts": 1792776600000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-10-23T21:00:00Z",
+    "ts": 1792789200000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-10-24T17:30:00Z",
+    "ts": 1792863000000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-10-24T21:00:00Z",
+    "ts": 1792875600000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-10-25T20:00:00Z",
+    "ts": 1792958400000
+   }
+  ]
+ },
+ {
+  "round": 18,
+  "slug": "mexico",
+  "name": "Mexico City Grand Prix",
+  "circuit": "Autódromo Hermanos Rodríguez",
+  "locality": "Mexico City",
+  "country": "Mexico",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-10-30T18:30:00Z",
+    "ts": 1793385000000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-10-30T22:00:00Z",
+    "ts": 1793397600000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-10-31T17:30:00Z",
+    "ts": 1793467800000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-10-31T21:00:00Z",
+    "ts": 1793480400000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-11-01T20:00:00Z",
+    "ts": 1793563200000
+   }
+  ]
+ },
+ {
+  "round": 19,
+  "slug": "brazil",
+  "name": "Brazilian Grand Prix",
+  "circuit": "Autódromo José Carlos Pace",
+  "locality": "São Paulo",
+  "country": "Brazil",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-11-06T15:30:00Z",
+    "ts": 1793979000000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-11-06T19:00:00Z",
+    "ts": 1793991600000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-11-07T14:30:00Z",
+    "ts": 1794061800000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-11-07T18:00:00Z",
+    "ts": 1794074400000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-11-08T17:00:00Z",
+    "ts": 1794157200000
+   }
+  ]
+ },
+ {
+  "round": 20,
+  "slug": "lasvegas",
+  "name": "Las Vegas Grand Prix",
+  "circuit": "Las Vegas Strip Street Circuit",
+  "locality": "Las Vegas",
+  "country": "USA",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-11-20T00:30:00Z",
+    "ts": 1795134600000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-11-20T04:00:00Z",
+    "ts": 1795147200000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-11-21T00:30:00Z",
+    "ts": 1795221000000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-11-21T04:00:00Z",
+    "ts": 1795233600000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-11-22T04:00:00Z",
+    "ts": 1795320000000
+   }
+  ]
+ },
+ {
+  "round": 21,
+  "slug": "qatar",
+  "name": "Qatar Grand Prix",
+  "circuit": "Losail International Circuit",
+  "locality": "Lusail",
+  "country": "Qatar",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-11-27T13:30:00Z",
+    "ts": 1795786200000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-11-27T17:00:00Z",
+    "ts": 1795798800000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-11-28T14:30:00Z",
+    "ts": 1795876200000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-11-28T18:00:00Z",
+    "ts": 1795888800000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-11-29T16:00:00Z",
+    "ts": 1795968000000
+   }
+  ]
+ },
+ {
+  "round": 22,
+  "slug": "abudhabi",
+  "name": "Abu Dhabi Grand Prix",
+  "circuit": "Yas Marina Circuit",
+  "locality": "Abu Dhabi",
+  "country": "UAE",
+  "sprint": false,
+  "sessions": [
+   {
+    "slug": "fp1",
+    "name": "Practice 1",
+    "start": "2026-12-04T09:30:00Z",
+    "ts": 1796376600000
+   },
+   {
+    "slug": "fp2",
+    "name": "Practice 2",
+    "start": "2026-12-04T13:00:00Z",
+    "ts": 1796389200000
+   },
+   {
+    "slug": "fp3",
+    "name": "Practice 3",
+    "start": "2026-12-05T10:30:00Z",
+    "ts": 1796466600000
+   },
+   {
+    "slug": "qualifying",
+    "name": "Qualifying",
+    "start": "2026-12-05T14:00:00Z",
+    "ts": 1796479200000
+   },
+   {
+    "slug": "race",
+    "name": "Race",
+    "start": "2026-12-06T13:00:00Z",
+    "ts": 1796562000000
+   }
+  ]
+ }
+]

@@ -2256,6 +2256,31 @@ function escapeServerHtml(value) {
 // SERVER STARTUP
 // ─────────────────────────────────────────────
 
+/* ── Discord companion bot (optional, owner-operated) ────────────────
+   Boots only when DISCORD_BOT_TOKEN is set. Runs in-process so it can
+   reuse the durable stores; crash-isolated — a bot failure can never
+   take the site API down with it. See bot/README.md. */
+if (process.env.DISCORD_BOT_TOKEN) {
+  try {
+    require('./bot/discord-bot.js').start({
+      token: process.env.DISCORD_BOT_TOKEN,
+      guildId: process.env.DISCORD_GUILD_ID || '',
+      siteUrl: process.env.SITE_URL || 'https://freef1.netlify.app',
+      discordInvite: 'https://discord.gg/KYXHCAzhN4',
+      readLocalJson,
+      writeLocalJson,
+      upstash: UNIQUE_VISITOR_REMOTE_ENABLED ? upstashRequest : null,
+      redisKey: 'freef1:discordbot:v1',
+      fileKey: path.join(DATA_DIR, 'discord-bot.json'),
+      log: (...a) => console.log('[Bot]', ...a),
+    });
+  } catch (error) {
+    console.error('[Bot] failed to start:', error.message);
+  }
+} else {
+  console.log('[Bot] Discord bot disabled (DISCORD_BOT_TOKEN not set)');
+}
+
 const server = app.listen(PORT, () => {
   console.log(`[Server] Running on http://localhost:${PORT}`);
   console.log(`[Main]  Site:  http://localhost:${PORT}/  (${DEV_DIR})`);
