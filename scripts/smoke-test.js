@@ -14,6 +14,21 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'freef1-data-'));
 fs.writeFileSync(path.join(siteDir, 'index.html'), '<!doctype html><title>FreeF1 Smoke</title><h1>OK</h1>');
 fs.writeFileSync(path.join(siteDir, 'maintenance.html'), '<!doctype html><title>FreeF1 Pit Stop</title><h1>Changing the tires</h1>');
 
+// Mock OpenF1 upstream: flips between free-tier-open and the CORS-less 401 lock
+// that the real API now returns while a session is live.
+const openf1Port = 35567 + Math.floor(Math.random() * 1000);
+const openf1State = { mode: 'ok' };
+const openf1Mock = require('http').createServer((req, res) => {
+  if (openf1State.mode === 'lock') {
+    res.statusCode = 401; // deliberately no CORS headers, like the real lock
+    res.setHeader('content-type', 'application/json');
+    return res.end(JSON.stringify({ detail: 'Live F1 session in progress.' }));
+  }
+  res.setHeader('content-type', 'application/json');
+  res.end(JSON.stringify([{ session_key: 1, session_name: 'Race', meeting_key: 7, location: 'Test', country_name: 'Testland', date_start: '2026-01-01T00:00:00Z', date_end: '2026-01-01T02:00:00Z' }]));
+});
+openf1Mock.listen(openf1Port, '127.0.0.1');
+
 const env = {
   ...process.env,
   PORT: String(port),
@@ -24,6 +39,8 @@ const env = {
   ADMIN_SECRET: 'smoke-test-secret',
   VISITOR_SECRET: 'smoke-visitor-secret',
   GEO_API: 'http://127.0.0.1:9',
+  OPENF1_API: `http://127.0.0.1:${openf1Port}/v1`,
+  OPENF1_TTL_MS: '1',
   DATA_DIR: dataDir,
   UPSTASH_REDIS_REST_URL: '',
   UPSTASH_REDIS_REST_TOKEN: '',
@@ -102,6 +119,29 @@ async function waitForServer() {
     });
     assert.equal(heartbeat.response.status, 200);
     assert.equal(heartbeat.body.active, 1);
+
+    // Player health events: known types ingest, unknown types are rejected.
+    const blockedEvent = await request(`http://127.0.0.1:${port}/api/visitors/event`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-visitor-token': visitorToken.body.token,
+        'x-user-id': 'smoke-user'
+      },
+      body: JSON.stringify({ type: 'stream_blocked' })
+    });
+    assert.equal(blockedEvent.response.status, 204);
+
+    const unknownEvent = await request(`http://127.0.0.1:${port}/api/visitors/event`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-visitor-token': visitorToken.body.token,
+        'x-user-id': 'smoke-user'
+      },
+      body: JSON.stringify({ type: 'not_a_real_event' })
+    });
+    assert.equal(unknownEvent.response.status, 400);
 
     const login = await request(`http://127.0.0.1:${port}/admin/api/login`, {
       method: 'POST',
@@ -219,8 +259,33 @@ async function waitForServer() {
     });
     assert.equal(rejected.response.status, 403);
 
+    // OpenF1 proxy — fresh upstream data passes through untouched
+    const ofFresh = await request(`http://127.0.0.1:${port}/api/openf1/sessions?year=2026`);
+    assert.equal(ofFresh.response.status, 200);
+    assert.ok(Array.isArray(ofFresh.body));
+    assert.equal(ofFresh.response.headers.get('x-openf1-stale'), null);
+
+    // Upstream locks the free tier (CORS-less 401): proxy serves last-known-good
+    openf1State.mode = 'lock';
+    await sleep(10);
+    const ofStale = await request(`http://127.0.0.1:${port}/api/openf1/sessions?year=2026`);
+    assert.equal(ofStale.response.status, 200);
+    assert.equal(ofStale.response.headers.get('x-openf1-stale'), '1');
+    assert.ok(Array.isArray(ofStale.body));
+
+    // Locked endpoint with no snapshot yet -> structured 503, never a browser CORS failure
+    const ofLocked = await request(`http://127.0.0.1:${port}/api/openf1/team_radio?session_key=999`);
+    assert.equal(ofLocked.response.status, 503);
+    assert.equal(ofLocked.body.code, 'live');
+
+    // Unknown upstream endpoints are rejected at the proxy
+    const ofUnknown = await request(`http://127.0.0.1:${port}/api/openf1/positions`);
+    assert.equal(ofUnknown.response.status, 404);
+    openf1State.mode = 'ok';
+
     console.log('Smoke tests passed');
   } finally {
+    openf1Mock.close();
     child.kill('SIGTERM');
     await sleep(100);
     fs.rmSync(siteDir, { recursive: true, force: true });
