@@ -858,7 +858,13 @@ function renderStreamPreview(url, type) {
   if (!streamPreview || !url || previewUrl === url) return;
   previewUrl = url;
   if (type === 'youtube' || type === 'embed') {
-    streamPreview.innerHTML = `<iframe src="${escapeHtml(url)}" allow="autoplay; fullscreen" allowFullScreen referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin"></iframe>`;
+    // No `sandbox` attribute here on purpose: the embeds' ad layer probes
+    // window.open() on first click and, when it returns null (sandboxed
+    // without allow-popups), its bid server answers showSbxMsg and the
+    // preview is buried under a "Notice for webmaster: remove Sandbox from
+    // iframe" overlay. The preview is admin-authenticated and cross-origin
+    // isolation already shields the panel from the framed page.
+    streamPreview.innerHTML = `<iframe src="${escapeHtml(url)}" allow="autoplay; fullscreen" allowFullScreen referrerpolicy="no-referrer"></iframe>`;
   } else if (type === 'mp4') {
     streamPreview.innerHTML = `<video controls autoplay playsinline preload="metadata" style="width:100%;height:100%;border-radius:var(--radius-sm)"><source src="${escapeHtml(url)}"></video>`;
   }

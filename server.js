@@ -41,6 +41,23 @@ const MAINTENANCE_FILE = path.join(DATA_DIR, 'maintenance.json');
 const UNIQUE_VISITORS_FILE = path.join(DATA_DIR, 'unique-visitors.json');
 const ANALYTICS_FILE = path.join(DATA_DIR, 'analytics.json');
 const ANALYTICS_REDIS_KEY = process.env.ANALYTICS_REDIS_KEY || 'freef1:analytics:v1';
+
+// ── OpenF1 proxy (see /api/openf1/:path) ──
+// OpenF1 locks the free tier with a CORS-less 401 while a session is live, which
+// browsers surface as an opaque "Failed to fetch". Proxying server-side removes
+// CORS from the picture, collapses every visitor onto one cached upstream call
+// (the free tier rate-limits per IP), and lets us serve last-known-good
+// snapshots through lock windows.
+const OPENF1_UPSTREAM = String(process.env.OPENF1_API || 'https://api.openf1.org/v1').replace(/\/+$/, '');
+const OPENF1_API_KEY = process.env.OPENF1_API_KEY || '';
+const OPENF1_TTL_MS_OVERRIDE = Math.max(0, Number.parseInt(process.env.OPENF1_TTL_MS || '0', 10) || 0);
+const OPENF1_PATHS = new Set(['sessions', 'meetings', 'drivers', 'team_radio', 'race_control']);
+const OPENF1_TTL_MS = { sessions: 600_000, meetings: 600_000, drivers: 6 * 3_600_000, team_radio: 300_000, race_control: 300_000 };
+const OPENF1_SNAPSHOT_TTL_S = 7 * 86_400;
+const OPENF1_SNAPSHOT_MAX_BYTES = 1_500_000;
+const openf1Cache = new Map();     // url -> { data, at }
+const openf1Snapshots = new Map(); // url -> { data, at } last-known-good per URL
+const openf1Inflight = new Map();  // url -> Promise (request coalescing)
 const PRODUCTION_MODE = process.env.NODE_ENV === 'production' || process.env.REQUIRE_PRODUCTION_SECRETS === '1';
 const insecureProductionConfig = [
   !process.env.ADMIN_USER ? 'ADMIN_USER' : null,
@@ -1120,7 +1137,7 @@ function newAnalyticsBucket() {
     newVisitors: 0, returning: 0, pageViews: 0,
     peakOnline: 0, onlineSum: 0, onlineSamples: 0,
     device: {}, browser: {}, os: {}, country: {}, pages: {}, source: {}, team: {},
-    fullscreen: 0, nostream: 0, streamReady: 0, streamReadyMs: 0, streamTimeout: 0
+    fullscreen: 0, nostream: 0, streamReady: 0, streamReadyMs: 0, streamTimeout: 0, streamBlocked: 0
   };
 }
 
@@ -1243,6 +1260,8 @@ function recordViewerEvent(type, value, entry) {
     case 'fullscreen': mutateAnalytics(now, bucket => { bucket.fullscreen++; }); return true;
     case 'nostream': mutateAnalytics(now, bucket => { bucket.nostream++; }); return true;
     case 'stream_timeout': mutateAnalytics(now, bucket => { bucket.streamTimeout++; }); return true;
+    // No feed source committed a document on this device (network-level block).
+    case 'stream_blocked': mutateAnalytics(now, bucket => { bucket.streamBlocked++; }); return true;
     case 'stream_ready': {
       const ms = Number(value);
       if (!Number.isFinite(ms) || ms < 0) return false;
@@ -1770,6 +1789,114 @@ app.get('/api/stream/status', (req, res) => {
     type: streamOverride.type,
     startedAt: streamOverride.startedAt
   });
+});
+
+// ─────────────────────────────────────────────
+// PUBLIC — OpenF1 proxy (CORS-safe, cached, snapshot-protected)
+// ─────────────────────────────────────────────
+
+function openf1Ttl(openf1Path) { return OPENF1_TTL_MS_OVERRIDE || OPENF1_TTL_MS[openf1Path] || 60_000; }
+function openf1SnapshotKey(url) { return `freef1:openf1:snap:${crypto.createHash('sha1').update(url).digest('hex')}`; }
+
+async function openf1SnapshotLoad(url) {
+  const local = openf1Snapshots.get(url);
+  if (local) return local;
+  if (!UNIQUE_VISITOR_REMOTE_ENABLED) return null;
+  try {
+    const payload = await upstashRequest(['GET', openf1SnapshotKey(url)]);
+    const raw = payload && payload.result;
+    if (typeof raw !== 'string') return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.data)) return null;
+    openf1Snapshots.set(url, parsed);
+    return parsed;
+  } catch (error) {
+    return null;
+  }
+}
+
+function openf1SnapshotSave(url, data) {
+  const snapshot = { data, at: Date.now() };
+  openf1Snapshots.set(url, snapshot);
+  if (!UNIQUE_VISITOR_REMOTE_ENABLED) return;
+  const raw = JSON.stringify(snapshot);
+  if (raw.length > OPENF1_SNAPSHOT_MAX_BYTES) return;
+  upstashRequest(['SET', openf1SnapshotKey(url), raw, 'EX', OPENF1_SNAPSHOT_TTL_S]).catch(() => {});
+}
+
+async function openf1FetchUpstream(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 9000);
+  timeout.unref?.();
+  try {
+    const headers = { accept: 'application/json' };
+    if (OPENF1_API_KEY) headers.authorization = `Bearer ${OPENF1_API_KEY}`;
+    return await fetch(url, { headers, cache: 'no-store', signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function openf1Resolve(url, openf1Path) {
+  const hit = openf1Cache.get(url);
+  if (hit && Date.now() - hit.at < openf1Ttl(openf1Path)) return { data: hit.data, stale: false };
+  let pending = openf1Inflight.get(url);
+  if (!pending) {
+    pending = (async () => {
+      let response = null;
+      try { response = await openf1FetchUpstream(url); } catch (_) { response = null; }
+      if (response && response.ok) {
+        try {
+          const data = await response.json();
+          openf1Cache.set(url, { data, at: Date.now() });
+          openf1SnapshotSave(url, data);
+          return { data, stale: false };
+        } catch (error) {
+          const parseError = new Error('OpenF1 returned unreadable JSON');
+          parseError.code = 'upstream';
+          throw parseError;
+        }
+      }
+      const status = response ? response.status : 0;
+      response && response.body && typeof response.body.cancel === 'function' && response.body.cancel().catch(() => {});
+      const locked = status === 401 || status === 403;
+      const snapshot = await openf1SnapshotLoad(url);
+      if (snapshot) return { data: snapshot.data, stale: true };
+      const error = new Error(locked
+        ? 'OpenF1 free tier locked while a live session is in progress'
+        : status === 429 ? 'OpenF1 rate limit hit' : 'OpenF1 upstream unreachable');
+      error.code = locked ? 'live' : status === 429 ? 'rate' : 'upstream';
+      throw error;
+    })();
+    openf1Inflight.set(url, pending);
+    const clear = () => openf1Inflight.delete(url);
+    pending.then(clear, clear);
+  }
+  return pending;
+}
+
+app.get('/api/openf1/:path', async (req, res) => {
+  const openf1Path = req.params.path;
+  if (!OPENF1_PATHS.has(openf1Path)) return res.status(404).json({ error: 'Unknown OpenF1 endpoint' });
+  if (!consumeVisitorRateLimit(`openf1:${getClientIp(req)}`)) {
+    res.setHeader('Retry-After', '30');
+    return res.status(429).json({ error: 'Too many requests. Try again later.' });
+  }
+  const query = String(req.originalUrl).split('?')[1] || '';
+  if (query.length > 512) return res.status(400).json({ error: 'Query string too long' });
+  for (const [key, value] of new URLSearchParams(query)) {
+    if (!/^[a-z_]+$/.test(key) || String(value).length > 120) return res.status(400).json({ error: 'Invalid query' });
+  }
+  const url = `${OPENF1_UPSTREAM}/${openf1Path}${query ? `?${query}` : ''}`;
+  try {
+    const { data, stale } = await openf1Resolve(url, openf1Path);
+    res.setHeader('Cache-Control', 'no-store');
+    if (stale) res.setHeader('X-OpenF1-Stale', '1');
+    return res.json(data);
+  } catch (error) {
+    const code = error.code === 'live' || error.code === 'rate' ? error.code : 'upstream';
+    return res.status(503).json({ code, error: error.message });
+  }
 });
 
 // Public SSE endpoint — sends public stream, maintenance and news updates (no visitor data)
