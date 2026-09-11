@@ -38,7 +38,7 @@ const Analytics = (() => {
 
   // ── Data folding ────────────────────────────────────────
   function emptyTotals() {
-    return { sessions: 0, ended: 0, durationMs: 0, durHist: [0, 0, 0, 0, 0, 0], newVisitors: 0, returning: 0, pageViews: 0, peakOnline: 0, onlineSum: 0, onlineSamples: 0, device: {}, browser: {}, os: {}, country: {}, pages: {}, source: {}, team: {}, fullscreen: 0, nostream: 0, streamReady: 0, streamReadyMs: 0, streamTimeout: 0, streamBlocked: 0 };
+    return { sessions: 0, ended: 0, durationMs: 0, durHist: [0, 0, 0, 0, 0, 0], newVisitors: 0, returning: 0, pageViews: 0, peakOnline: 0, onlineSum: 0, onlineSamples: 0, device: {}, browser: {}, os: {}, country: {}, pages: {}, source: {}, team: {}, fullscreen: 0, nostream: 0, streamReady: 0, streamReadyMs: 0, streamTimeout: 0, streamBlocked: 0, streamHijack: 0 };
   }
   function addInto(total, bucket) {
     if (!bucket) return total;
@@ -225,6 +225,7 @@ const Analytics = (() => {
       ['Player loads', F.fmtInt(attempts), attempts ? `${F.fmtPct(totals.streamReady, attempts)} ready` : 'waiting for a stream'],
       ['Avg time to first frame', readyAvg ? F.fmtDuration(readyAvg) : '—', 'iframe commit → visible'],
       ['Blocked on device', F.fmtInt(totals.streamBlocked || 0), attempts ? F.fmtPct(totals.streamBlocked || 0, attempts) + ' of loads' : 'no source committed (network-level block)'],
+      ['Ad tab-swap hijacks', F.fmtInt(totals.streamHijack || 0), 'player frame navigated to an ad site; viewer offered Resume'],
       ['Source nav timeouts', F.fmtInt(totals.streamTimeout), 'individual embed attempts that never committed'],
       ['Fullscreen taps', F.fmtInt(totals.fullscreen), totals.sessions ? `${(totals.fullscreen / totals.sessions).toFixed(2)} per session` : ''],
       ['"No stream" impressions', F.fmtInt(totals.nostream), 'visits outside a live session'],
@@ -275,14 +276,14 @@ const Analytics = (() => {
     if (!data) return;
     const spec = RANGES[range];
     const points = buildSeries(spec);
-    const header = ['period_start_utc', 'sessions', 'page_views', 'new_visitors', 'returning', 'completed_sessions', 'avg_session_seconds', 'peak_online', 'avg_online', 'fullscreen', 'feed_switches', 'stream_ready', 'stream_timeout', 'stream_blocked', 'nostream_impressions'];
+    const header = ['period_start_utc', 'sessions', 'page_views', 'new_visitors', 'returning', 'completed_sessions', 'avg_session_seconds', 'peak_online', 'avg_online', 'fullscreen', 'feed_switches', 'stream_ready', 'stream_timeout', 'stream_blocked', 'stream_hijack', 'nostream_impressions'];
     const lines = [header.join(',')];
     for (const p of points) {
       const b = p.b || {};
       lines.push([
         new Date(p.t).toISOString(), b.sessions || 0, b.pageViews || 0, b.newVisitors || 0, b.returning || 0, b.ended || 0,
         b.ended ? Math.round((b.durationMs || 0) / b.ended / 1000) : 0, b.peakOnline || 0, b.onlineSamples ? ((b.onlineSum || 0) / b.onlineSamples).toFixed(2) : 0,
-        b.fullscreen || 0, Object.values(b.source || {}).reduce((s, v) => s + v, 0), b.streamReady || 0, b.streamTimeout || 0, b.streamBlocked || 0, b.nostream || 0
+        b.fullscreen || 0, Object.values(b.source || {}).reduce((s, v) => s + v, 0), b.streamReady || 0, b.streamTimeout || 0, b.streamBlocked || 0, b.streamHijack || 0, b.nostream || 0
       ].join(','));
     }
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });

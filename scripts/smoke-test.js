@@ -132,6 +132,17 @@ async function waitForServer() {
     });
     assert.equal(blockedEvent.response.status, 204);
 
+    const hijackEvent = await request(`http://127.0.0.1:${port}/api/visitors/event`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-visitor-token': visitorToken.body.token,
+        'x-user-id': 'smoke-user'
+      },
+      body: JSON.stringify({ type: 'stream_hijack' })
+    });
+    assert.equal(hijackEvent.response.status, 204);
+
     const unknownEvent = await request(`http://127.0.0.1:${port}/api/visitors/event`, {
       method: 'POST',
       headers: {
@@ -163,6 +174,7 @@ async function waitForServer() {
     const initialSiteStatus = await request(`http://127.0.0.1:${port}/api/site/status`);
     assert.equal(initialSiteStatus.response.status, 200);
     assert.equal(initialSiteStatus.body.maintenance.active, false);
+    assert.equal(initialSiteStatus.body.maintenance.eta, 'Before lights out', 'default pit-board eta exposed publicly');
 
     const initialNews = await request(`http://127.0.0.1:${port}/api/news`);
     assert.equal(initialNews.response.status, 200);
@@ -197,12 +209,13 @@ async function waitForServer() {
     const enableMaintenance = await request(`http://127.0.0.1:${port}/admin/api/maintenance`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie },
-      body: JSON.stringify({ active: true, message: "We'll be back before the test race." })
+      body: JSON.stringify({ active: true, message: "We'll be back before the test race.", eta: 'Before the formation lap.' })
     });
     assert.equal(enableMaintenance.response.status, 200);
     assert.equal(enableMaintenance.body.success, true);
     assert.equal(enableMaintenance.body.maintenance.active, true);
     assert.equal(enableMaintenance.body.maintenance.message, "We'll be back before the test race.");
+    assert.equal(enableMaintenance.body.maintenance.eta, 'Before the formation lap.', 'eta round-trips through the admin API');
 
     const maintenanceHome = await request(`http://127.0.0.1:${port}/`);
     assert.equal(maintenanceHome.response.status, 503);
@@ -216,6 +229,7 @@ async function waitForServer() {
     });
     assert.equal(disableMaintenance.response.status, 200);
     assert.equal(disableMaintenance.body.maintenance.active, false);
+    assert.equal(disableMaintenance.body.maintenance.eta, 'Before the formation lap.', 'eta persists across mode changes');
 
     const restoredHome = await request(`http://127.0.0.1:${port}/`);
     assert.equal(restoredHome.response.status, 200);

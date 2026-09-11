@@ -39,6 +39,8 @@ const maintenanceStatus = $('maintenanceStatus');
 const maintenanceStatusTitle = $('maintenanceStatusTitle');
 const maintenanceStatusText = $('maintenanceStatusText');
 const maintenanceMessage = $('maintenanceMessage');
+const maintenanceEta = $('maintenanceEta');
+const maintenanceSaveBtn = $('maintenanceSaveBtn');
 const maintenanceToggleBtn = $('maintenanceToggleBtn');
 const maintenanceNote = $('maintenanceNote');
 const serverTimeEl    = $('serverTime');
@@ -366,8 +368,12 @@ function updateMaintenanceStatus(maintenance) {
   if (maintenanceMessage && document.activeElement !== maintenanceMessage) {
     maintenanceMessage.value = state.message || "We'll be back before the race.";
   }
+  if (maintenanceEta && document.activeElement !== maintenanceEta) {
+    maintenanceEta.value = state.eta || 'Before lights out';
+  }
   if (maintenanceToggleBtn) {
     maintenanceToggleBtn.disabled = false;
+    if (maintenanceSaveBtn) maintenanceSaveBtn.disabled = false;
     maintenanceToggleBtn.classList.toggle('is-active', maintenanceActive);
     maintenanceToggleBtn.setAttribute('aria-pressed', String(maintenanceActive));
     maintenanceToggleBtn.textContent = maintenanceActive ? 'Return Website to Live' : 'Enable Maintenance Mode';
@@ -720,6 +726,7 @@ function handleMaintenanceUpdate(data) {
 async function loadMaintenanceStatus(notifyOnError = false) {
   if (!maintenanceToggleBtn) return false;
   maintenanceToggleBtn.disabled = true;
+  if (maintenanceSaveBtn) maintenanceSaveBtn.disabled = true;
   maintenanceToggleBtn.textContent = 'Checking Website Mode…';
 
   try {
@@ -739,6 +746,7 @@ async function loadMaintenanceStatus(notifyOnError = false) {
   } catch (error) {
     maintenanceStateKnown = false;
     maintenanceToggleBtn.disabled = false;
+    if (maintenanceSaveBtn) maintenanceSaveBtn.disabled = true;
     maintenanceToggleBtn.classList.remove('is-active');
     maintenanceToggleBtn.textContent = 'Retry Website Mode';
     if (maintenanceNote) maintenanceNote.textContent = 'Could not verify the current website mode. Click Retry instead of using an unconfirmed state.';
@@ -752,6 +760,7 @@ async function toggleMaintenanceMode() {
   if (!maintenanceStateKnown && !(await loadMaintenanceStatus(true))) return;
   const nextActive = !maintenanceActive;
   const message = maintenanceMessage?.value.trim() || "We'll be back before the race.";
+  const eta = maintenanceEta?.value.trim() || 'Before lights out';
 
   if (nextActive && !window.confirm('Enable maintenance mode now? Every public visitor will be moved to the pit-stop page.')) return;
 
@@ -763,7 +772,7 @@ async function toggleMaintenanceMode() {
       method: 'POST',
       cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ active: nextActive, message })
+      body: JSON.stringify({ active: nextActive, message, eta })
     });
     const data = await response.json();
     if (!response.ok || !data.success) throw new Error(data.error || 'Maintenance update failed.');
@@ -784,6 +793,44 @@ async function toggleMaintenanceMode() {
   }
 }
 
+/* Push the message + pit-board ETA live WITHOUT flipping the mode: the
+   server keeps startedAt when 'active' is unchanged, and the SSE broadcast
+   updates every open maintenance page instantly. */
+async function saveMaintenanceDetails() {
+  if (!maintenanceSaveBtn) return;
+  if (!maintenanceStateKnown && !(await loadMaintenanceStatus(true))) return;
+  const message = maintenanceMessage?.value.trim() || "We'll be back before the race.";
+  const eta = maintenanceEta?.value.trim() || 'Before lights out';
+
+  maintenanceSaveBtn.disabled = true;
+  maintenanceSaveBtn.textContent = 'Updating Pit Board…';
+  try {
+    const response = await fetch(`${API_BASE}/maintenance`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: maintenanceActive, message, eta })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || 'Pit board update failed.');
+    if (currentStats) currentStats.maintenance = data.maintenance;
+    updateMaintenanceStatus(data.maintenance);
+    showToast(maintenanceActive
+      ? 'Pit board updated — live on the maintenance page.'
+      : 'Details saved. They will show when maintenance mode is enabled.', 'success');
+  } catch (error) {
+    showToast(error.message || 'Could not update the pit board.', 'error');
+    updateMaintenanceStatus({
+      active: maintenanceActive,
+      message: maintenanceMessage?.value || "We'll be back before the race.",
+      eta: maintenanceEta?.value || 'Before lights out'
+    });
+  } finally {
+    maintenanceSaveBtn.textContent = 'Update Pit Board';
+  }
+}
+
+maintenanceSaveBtn?.addEventListener('click', saveMaintenanceDetails);
 maintenanceToggleBtn?.addEventListener('click', toggleMaintenanceMode);
 
 // ─────────────────────────────────────────────

@@ -229,9 +229,11 @@ const streamOverride = {
 };
 
 const DEFAULT_MAINTENANCE_MESSAGE = "We'll be back before the race.";
+const DEFAULT_MAINTENANCE_ETA = 'Before lights out';
 const maintenanceMode = {
   active: false,
   message: DEFAULT_MAINTENANCE_MESSAGE,
+  eta: DEFAULT_MAINTENANCE_ETA,
   startedAt: null,
   updatedAt: null
 };
@@ -706,10 +708,22 @@ function normalizeMaintenanceMessage(value) {
   return message || DEFAULT_MAINTENANCE_MESSAGE;
 }
 
+/* "Estimated return" pit-board label on the maintenance page. Free text but
+   short by nature: control chars stripped, whitespace collapsed, 60 chars. */
+function normalizeMaintenanceEta(value) {
+  const eta = String(value || '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60);
+  return eta || DEFAULT_MAINTENANCE_ETA;
+}
+
 function publicMaintenanceState() {
   return {
     active: Boolean(maintenanceMode.active),
     message: normalizeMaintenanceMessage(maintenanceMode.message),
+    eta: normalizeMaintenanceEta(maintenanceMode.eta),
     startedAt: maintenanceMode.startedAt || null,
     updatedAt: maintenanceMode.updatedAt || null
   };
@@ -719,6 +733,12 @@ function applyMaintenanceState(state) {
   const active = Boolean(state?.active);
   maintenanceMode.active = active;
   maintenanceMode.message = normalizeMaintenanceMessage(state?.message);
+  /* Omitted eta = keep the current board (older cached admin clients POST
+     without the field; wiping it on every toggle would be a nasty surprise).
+     An explicit empty string resets to the default. */
+  maintenanceMode.eta = state?.eta === undefined
+    ? maintenanceMode.eta
+    : normalizeMaintenanceEta(state?.eta);
   maintenanceMode.startedAt = active ? (Number(state?.startedAt) || Date.now()) : null;
   maintenanceMode.updatedAt = Number(state?.updatedAt) || Date.now();
   return publicMaintenanceState();
@@ -1137,7 +1157,7 @@ function newAnalyticsBucket() {
     newVisitors: 0, returning: 0, pageViews: 0,
     peakOnline: 0, onlineSum: 0, onlineSamples: 0,
     device: {}, browser: {}, os: {}, country: {}, pages: {}, source: {}, team: {},
-    fullscreen: 0, nostream: 0, streamReady: 0, streamReadyMs: 0, streamTimeout: 0, streamBlocked: 0
+    fullscreen: 0, nostream: 0, streamReady: 0, streamReadyMs: 0, streamTimeout: 0, streamBlocked: 0, streamHijack: 0
   };
 }
 
@@ -1262,6 +1282,8 @@ function recordViewerEvent(type, value, entry) {
     case 'stream_timeout': mutateAnalytics(now, bucket => { bucket.streamTimeout++; }); return true;
     // No feed source committed a document on this device (network-level block).
     case 'stream_blocked': mutateAnalytics(now, bucket => { bucket.streamBlocked++; }); return true;
+    // Embed ad layer tab-swapped the player frame away from the stream.
+    case 'stream_hijack': mutateAnalytics(now, bucket => { bucket.streamHijack++; }); return true;
     case 'stream_ready': {
       const ms = Number(value);
       if (!Number.isFinite(ms) || ms < 0) return false;
@@ -2033,7 +2055,7 @@ app.get('/admin/api/maintenance', async (req, res, next) => {
 app.post('/admin/api/maintenance', async (req, res, next) => {
   try {
     await maintenanceInitPromise;
-    const { active, message } = req.body || {};
+    const { active, message, eta } = req.body || {};
     if (typeof active !== 'boolean') {
       return res.status(400).json({ error: 'The active field must be true or false.' });
     }
@@ -2041,6 +2063,7 @@ app.post('/admin/api/maintenance', async (req, res, next) => {
     applyMaintenanceState({
       active,
       message,
+      eta,
       startedAt: active
         ? (maintenanceMode.active && maintenanceMode.startedAt ? maintenanceMode.startedAt : Date.now())
         : null,

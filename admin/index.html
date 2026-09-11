@@ -142,9 +142,22 @@
               </div>
               <div class="url-hint">Shown underneath “We’re changing the tires” · 180 characters maximum</div>
 
-              <button class="btn-sm btn-maintenance" id="maintenanceToggleBtn" type="button" aria-pressed="false" disabled>
+              <div class="form-group" style="margin-top:14px;margin-bottom:0">
+                <label for="maintenanceEta">Estimated Return (pit board)</label>
+                <input class="url-input" type="text" id="maintenanceEta" maxlength="60"
+                  value="Before lights out"
+                  placeholder="Before lights out">
+              </div>
+              <div class="url-hint">Shown on the pit-stop page board next to “Estimated return” · 60 characters maximum · e.g. “14:30 SAST”, “About 20 minutes”</div>
+
+              <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+                <button class="btn-sm btn-ghost" id="maintenanceSaveBtn" type="button" disabled>
+                  Update Pit Board
+                </button>
+                <button class="btn-sm btn-maintenance" id="maintenanceToggleBtn" type="button" aria-pressed="false" disabled>
                 Checking Website Mode…
               </button>
+              </div>
               <p class="maintenance-note" id="maintenanceNote">Activation is instant. Open visitors will be sent to the pit-stop page automatically.</p>
             </div>
           </div>
