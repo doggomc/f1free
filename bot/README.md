@@ -44,8 +44,8 @@ same dual store the maintenance mode uses).
 |---|---|---|
 | `/emojis` | anywhere | uploads the 22 white number emojis + the red alert dot (also auto-runs when panels are posted) |
 | `/rolemenu` | a roles channel | posts the **two-part supporter panel** (GRID 1/2, GRID 2/2). Reacting with a number grants that `NN \| CODE` role; removing the reaction takes it off |
-| `/alertsmenu [role]` | `#stream-alerts` | posts the alerts opt-in panel; reaction grants the ping role (creates **Stream Alerts** if you don't pass one) |
-| `/live [round] [session]` | anywhere | force-posts the LIVE embed for a session (testing / specials) |
+| `/alertsmenu [channel] [role]` | a roles channel | posts the alerts opt-in panel where you run it; `channel:` picks where session alerts get posted (defaults to the command channel); reaction grants the ping role (creates **Stream Alerts** if you don't pass one) |
+| `/live [round] [session]` | anywhere | test-fires the LIVE embed into the configured alerts channel — the way to prove the alert pipeline end-to-end before a race weekend |
 | `/website` | **everyone** | stylish link embed: Open APEX + Server invite buttons |
 
 Re-running `/rolemenu` or `/alertsmenu` deletes the old panel messages and

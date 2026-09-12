@@ -55,8 +55,8 @@ SEASON.forEach(ev => ev.sessions.forEach(s => { s.ts = Date.parse(s.start); }));
 const TEAMS = [
   { name: 'Ferrari',         color: 0xDC0000, drivers: [[16, 'LEC'], [44, 'HAM']] },
   { name: 'Mercedes',        color: 0x00D2BE, drivers: [[12, 'ANT'], [63, 'RUS']] },
-  { name: 'McLaren',         color: 0xFF8000, drivers: [[1, 'NOR'], [81, 'PIA']] },
-  { name: 'Red Bull Racing', color: 0x1E41FF, drivers: [[3, 'VER'], [6, 'HAD']] },
+  { name: 'Mclaren',         color: 0xFF8000, drivers: [[1, 'NOR'], [81, 'PIA']] },
+  { name: 'Red Bull',        color: 0x1E41FF, drivers: [[3, 'VER'], [6, 'HAD']] },
   { name: 'Aston Martin',    color: 0x006F62, drivers: [[14, 'ALO'], [18, 'STR']] },
   { name: 'Williams',        color: 0x005AFF, drivers: [[23, 'ALB'], [55, 'SAI']] },
   { name: 'Haas',            color: 0xE6E6E6, drivers: [[31, 'OCO'], [87, 'BEA']] },
@@ -71,27 +71,28 @@ const PANEL_SPLIT = 5; // teams in part one
 
 /* ───────────────────────── embed builders (pure, testable) ───────────────────────── */
 
-function driverPanelEmbed(teamsSlice, partLabel) {
+function driverPanelEmbed(teamsSlice, continued, siteUrl) {
   const lines = teamsSlice.map(t =>
-    `**${t.name.toUpperCase()}**\n` + t.drivers.map(([n, c]) => `\`${String(n).padStart(2, ' ')}\`  ${c}`).join('    ')
+    `**${t.name}**\n\n` + t.drivers.map(([n, c]) => `${String(n).padStart(2, ' ')} ${c}`).join(' | ')
   ).join('\n\n');
   return {
     color: APEX_RED,
-    title: `SUPPORTER ROLES — ${partLabel}`,
-    description: `React with a driver's number to wear their colours.\nRemove your reaction to take the role off.\n\n${lines}`,
-    footer: { text: 'APEX · freef1.netlify.app · independent fan project' },
+    description:
+      `**Team Liveries**${continued ? '\n\n*(continued)*' : ''}\n\n` +
+      `- React with a driver's number to wear their colours.\n\n` +
+      `- Remove your reaction to take the role off.\n\n` +
+      `${lines}\n\n*${siteUrl}*`,
   };
 }
 
-function alertsPanelEmbed(roleName) {
+function alertsPanelEmbed(siteUrl) {
   return {
     color: APEX_RED,
-    title: 'STREAM ALERTS',
     description:
-      `React below to join **${roleName}** — the role that gets pinged\n` +
-      `the moment a session goes live.\n\n` +
-      `Remove your reaction to opt out.`,
-    footer: { text: 'APEX · freef1.netlify.app · independent fan project' },
+      `**Stream Alerts**\n\n` +
+      `- React below to get pinged when a session is starting\n\n` +
+      `- Remove your reaction to opt out.\n\n` +
+      `*${siteUrl}*`,
   };
 }
 
@@ -136,14 +137,14 @@ function websiteEmbed(siteUrl, inviteUrl) {
 
 function watchRow(siteUrl, label = 'Watch on APEX') {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setStyle(ButtonStyle.Primary).setLabel(label).setURL(siteUrl)
+    new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel(label).setURL(siteUrl)
   );
 }
 
 function websiteRow(siteUrl, inviteUrl) {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setStyle(ButtonStyle.Primary).setLabel('Open APEX').setURL(siteUrl),
-    new ButtonBuilder().setStyle(ButtonStyle.Secondary).setLabel('Server invite').setURL(inviteUrl)
+    new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Open APEX').setURL(siteUrl),
+    new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Server invite').setURL(inviteUrl)
   );
 }
 
@@ -263,9 +264,8 @@ function start(deps) {
     }
 
     const halves = [TEAMS.slice(0, PANEL_SPLIT), TEAMS.slice(PANEL_SPLIT)];
-    const labels = ['GRID 1/2', 'GRID 2/2'];
     for (let i = 0; i < 2; i++) {
-      const msg = await channel.send({ embeds: [driverPanelEmbed(halves[i], labels[i])] });
+      const msg = await channel.send({ embeds: [driverPanelEmbed(halves[i], i === 1, deps.siteUrl)] });
       st.panels[i === 0 ? 'd1' : 'd2'] = { channelId: channel.id, messageId: msg.id };
       for (const [num] of halves[i].flatMap(t => t.drivers)) {
         try { await msg.react(st.emojiIds[String(num)]); await new Promise(r => setTimeout(r, REACT_GAP_MS)); }
@@ -275,7 +275,7 @@ function start(deps) {
     store.save();
   }
 
-  async function postAlertsPanel(guild, channel, st, role) {
+  async function postAlertsPanel(guild, channel, st, role, alertsChannel) {
     await ensureEmojis(guild, st);
     let target = role;
     if (!target) {
@@ -288,10 +288,10 @@ function start(deps) {
     if (old) {
       try { const ch = guild.channels.cache.get(old.channelId); const msg = await ch?.messages.fetch(old.messageId); await msg?.delete(); } catch (_) {}
     }
-    const msg = await channel.send({ embeds: [alertsPanelEmbed(target.name)] });
+    const msg = await channel.send({ embeds: [alertsPanelEmbed(deps.siteUrl)] });
     try { await msg.react(st.emojiIds.live); } catch (e) { log('alerts react failed:', e.message); }
     st.panels.alerts = { channelId: channel.id, messageId: msg.id };
-    st.alerts = { channelId: channel.id, roleId: target.id };
+    st.alerts = { channelId: (alertsChannel || channel).id, roleId: target.id };
     store.save();
   }
 
@@ -393,10 +393,13 @@ function start(deps) {
     { name: 'rolemenu', description: 'Owner: post the supporter-role reaction panels (two parts).', dm_permission: false },
     {
       name: 'alertsmenu', description: 'Owner: post the stream-alerts opt-in panel in this channel.', dm_permission: false,
-      options: [{ type: 8, name: 'role', description: 'Ping role to grant (defaults to Stream Alerts)', required: false }],
+      options: [
+        { type: 7, name: 'channel', description: 'Where session alerts get posted (defaults to this channel)', required: false, channel_types: [0] },
+        { type: 8, name: 'role', description: 'Ping role to grant (defaults to Stream Alerts)', required: false },
+      ],
     },
     {
-      name: 'live', description: 'Owner: force-post the LIVE embed for a session.', dm_permission: false,
+      name: 'live', description: 'Owner: test-fire a LIVE embed into the alerts channel (current/next session).', dm_permission: false,
       options: [
         { type: 4, name: 'round', description: 'Round number (defaults to current/next)', required: false },
         { type: 3, name: 'session', description: 'Session slug: fp1 fp2 fp3 sprint-qualifying sprint qualifying race', required: false },
@@ -435,16 +438,18 @@ function start(deps) {
 
       if (cmd === 'alertsmenu') {
         await interaction.deferReply({ ephemeral: true });
-        await postAlertsPanel(guild, interaction.channel, st, interaction.options.getRole('role'));
-        return interaction.editReply({ content: `Alerts panel posted in ${interaction.channel}. Sessions will ping here.` });
+        const alertsChannel = interaction.options.getChannel('channel') || interaction.channel;
+        await postAlertsPanel(guild, interaction.channel, st, interaction.options.getRole('role'), alertsChannel);
+        return interaction.editReply({ content: `Alerts panel posted in ${interaction.channel}. Session alerts will go to ${alertsChannel}.` });
       }
 
       if (cmd === 'live') {
         await interaction.deferReply({ ephemeral: true });
         const found = findSession(interaction.options.getInteger('round'), interaction.options.getString('session')) || nextSession();
         if (!found) return interaction.editReply({ content: 'No session found.' });
-        const msg = await interaction.channel.send({ embeds: [sessionEmbed(found.ev, found.sess, 'live', deps.siteUrl)], components: [watchRow(deps.siteUrl)] });
-        return interaction.editReply({ content: `Posted: ${msg.url}` });
+        const alertsCh = (st.alerts && guild.channels.cache.get(st.alerts.channelId)) || interaction.channel;
+        const msg = await alertsCh.send({ embeds: [sessionEmbed(found.ev, found.sess, 'live', deps.siteUrl)], components: [watchRow(deps.siteUrl)] });
+        return interaction.editReply({ content: `Posted to ${alertsCh}: ${msg.url}` });
       }
     } catch (e) {
       log('command failed:', e.message);
