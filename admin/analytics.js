@@ -26,7 +26,12 @@ const Analytics = (() => {
   const DEVICE_COLORS = { Desktop: '#60a5fa', Mobile: '#00d57e', Tablet: '#ffb020' };
 
   let data = null;
-  let range = localStorage.getItem('freef1_analytics_range') || '7d';
+  const DEFAULT_RANGE = '7d';
+  let range = (() => {
+    let stored = null;
+    try { stored = localStorage.getItem('freef1_analytics_range'); } catch (_) {}
+    return stored && stored in RANGES ? stored : DEFAULT_RANGE;
+  })();
   let timer = 0;
   let loading = false;
   let resizeTimer = 0;
@@ -76,10 +81,13 @@ const Analytics = (() => {
     return points;
   }
 
+  /* Deltas compare against the window immediately before the selection. The
+     server pre-aggregates it (so the client does not have to download two
+     ranges); the local scan is only a fallback for an older backend. */
   function previousTotals(spec) {
-    // Same-length window immediately before the selected range (for deltas).
-    const now = data.generatedAt || Date.now();
     const total = emptyTotals();
+    if (data.previous) return addInto(total, data.previous);
+    const now = data.generatedAt || Date.now();
     if (spec.granularity === 'hour') {
       const end = Math.floor(now / 3_600_000) * 3_600_000 - spec.hours * 3_600_000;
       const start = end - (spec.hours - 1) * 3_600_000;
@@ -90,6 +98,19 @@ const Analytics = (() => {
       for (const b of data.daily) if (b.t >= start && b.t <= end) addInto(total, b);
     }
     return total;
+  }
+
+  /* Weekday x hour averages need the whole 14-day retention, so the server
+     sends them pre-folded; scan locally only if an older backend omits them. */
+  function heatCells() {
+    if (data.overview && Array.isArray(data.overview.heatmap)) return data.overview.heatmap;
+    const sums = Array.from({ length: 7 }, () => Array(24).fill(0));
+    const counts = Array.from({ length: 7 }, () => Array(24).fill(0));
+    for (const b of data.hourly) {
+      const d = new Date(b.t); const day = (d.getDay() + 6) % 7, hour = d.getHours();
+      sums[day][hour] += b.onlineSamples ? b.onlineSum / b.onlineSamples : 0; counts[day][hour]++;
+    }
+    return sums.map((row, d) => row.map((v, h) => (counts[d][h] ? v / counts[d][h] : 0)));
   }
 
   function delta(current, previous) {
@@ -113,7 +134,11 @@ const Analytics = (() => {
   // ── Rendering ───────────────────────────────────────────
   function render() {
     if (!data) return;
-    const spec = RANGES[range] || RANGES['7d'];
+    // Batch every layout read into one phase before any chart paints, and drop
+    // any stale tooltip left floating over a chart that is about to be rebuilt.
+    F.prepare(document);
+    F.hideTip();
+    const spec = RANGES[range] || RANGES[DEFAULT_RANGE];
     const points = buildSeries(spec);
     const totals = points.reduce((acc, p) => addInto(acc, p.b), emptyTotals());
     const prev = previousTotals(spec);
@@ -196,13 +221,7 @@ const Analytics = (() => {
     F.histogram($('chartDurationHist'), { labels: DURATION_LABELS, values: totals.durHist, color: '#a78bfa' });
 
     // Heat-map: average concurrent viewers by weekday × hour ---------------------
-    const cells = Array.from({ length: 7 }, () => Array(24).fill(0)), counts = Array.from({ length: 7 }, () => Array(24).fill(0));
-    for (const b of data.hourly) {
-      const d = new Date(b.t); const day = (d.getDay() + 6) % 7, hour = d.getHours();
-      cells[day][hour] += b.onlineSamples ? b.onlineSum / b.onlineSamples : 0; counts[day][hour]++;
-    }
-    const heat = cells.map((row, d) => row.map((v, h) => (counts[d][h] ? v / counts[d][h] : 0)));
-    F.heatmap($('chartHeat'), { cells: heat, title: 'Avg viewers online', format: v => v.toFixed(1) });
+    F.heatmap($('chartHeat'), { cells: heatCells(), title: 'Avg viewers online', format: v => v.toFixed(1) });
     const heatNote = $('chartHeatNote');
     if (heatNote) heatNote.textContent = `avg viewers online · weekday × hour · ${Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time'} · last ${Math.round((data.retention?.hourlyHours || 336) / 24)} days`;
 
@@ -237,7 +256,21 @@ const Analytics = (() => {
     });
 
     // Busiest hours table ----------------------------------------------------------
-    const busiest = [...data.hourly].filter(b => (b.peakOnline || 0) > 0).sort((a, b) => (b.peakOnline || 0) - (a.peakOnline || 0) || (b.sessions || 0) - (a.sessions || 0)).slice(0, 8);
+    // Pre-ranked by the server (it can see the whole retention window); the
+    // local sort is a fallback for a backend that does not send `overview`.
+    const busiest = data.overview && Array.isArray(data.overview.busiest)
+      ? data.overview.busiest
+      : [...data.hourly]
+        .filter(b => (b.peakOnline || 0) > 0)
+        .sort((a, b) => (b.peakOnline || 0) - (a.peakOnline || 0) || (b.sessions || 0) - (a.sessions || 0))
+        .slice(0, 8);
+    // `country` is a pre-sorted code list from the server, or a count map when
+    // the fallback path built the rows locally.
+    const topCountries = b => {
+      const value = b.country;
+      const codes = Array.isArray(value) ? value : Object.entries(value || {}).sort((x, y) => y[1] - x[1]).map(([cc]) => cc);
+      return codes.slice(0, 3).map(cc => flag(cc)).join(' ') || '—';
+    };
     const tbody = $('busiestBody');
     tbody.innerHTML = busiest.length ? busiest.map(b => `
       <tr>
@@ -246,7 +279,7 @@ const Analytics = (() => {
         <td class="num">${avgOnline(b).toFixed(1)}</td>
         <td class="num">${F.fmtInt(b.sessions || 0)}</td>
         <td class="num">${F.fmtDuration(avgDuration(b))}</td>
-        <td>${Object.entries(b.country || {}).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([cc]) => flag(cc)).join(' ') || '—'}</td>
+        <td>${topCountries(b)}</td>
       </tr>`).join('') : '<tr><td colspan="6"><div class="empty-state">No busy hours recorded yet</div></td></tr>';
 
     $('analyticsUpdated').textContent = `Updated ${F.timeFmt.format(Date.now())}`;
@@ -257,8 +290,11 @@ const Analytics = (() => {
     if (loading || (!force && document.hidden)) return;
     loading = true;
     try {
-      const response = await fetch('/admin/api/analytics', { cache: 'no-store' });
-      if (response.status === 401) return;
+      // Ask the server for the window being drawn: it then trims the payload
+      // and pre-aggregates the previous period, the heat-map and the busiest
+      // hours instead of shipping the whole 14-day/90-day retention.
+      const response = await fetch(`/admin/api/analytics?range=${encodeURIComponent(range)}`, { cache: 'no-store' });
+      if (response.status === 401) { stop(); return; }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       data = await response.json();
       render();
@@ -267,6 +303,7 @@ const Analytics = (() => {
       const box = $('analyticsError');
       box.textContent = `Analytics unavailable: ${error.message || error}`;
       box.hidden = false;
+      if (globalThis.__FREEF1_DEBUG__) console.error('[Analytics] render failed:', error);
     } finally {
       loading = false;
     }
@@ -296,8 +333,16 @@ const Analytics = (() => {
 
   function start() {
     if (timer) return;
+    if (!(range in RANGES)) range = '7d';
     document.querySelectorAll('#analyticsRange .range-btn').forEach(btn => btn.addEventListener('click', () => {
-      range = btn.dataset.range; localStorage.setItem('freef1_analytics_range', range); render();
+      const next = btn.dataset.range;
+      if (!(next in RANGES) || next === range) return;
+      range = next;
+      try { localStorage.setItem('freef1_analytics_range', range); } catch (_) {}
+      document.querySelectorAll('#analyticsRange .range-btn').forEach(b => b.classList.toggle('active', b.dataset.range === range));
+      // The current snapshot only covers the old window: refetch before
+      // redrawing so KPI deltas and the series match the new range.
+      load(true);
     }));
     $('analyticsRefresh')?.addEventListener('click', () => load(true));
     $('analyticsExport')?.addEventListener('click', exportCsv);

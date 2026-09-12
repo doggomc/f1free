@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
   <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"></noscript>
-  <link rel="stylesheet" href="/admin/admin.css?v=20260906-analytics1">
+  <link rel="stylesheet" href="/admin/admin.css?v=20260912-sources1">
 </head>
 <body>
 
@@ -50,6 +50,9 @@
         <div class="nav-user" id="navStatus">CONNECTING…</div>
         <button class="btn-logout" id="logoutBtn">Logout</button>
       </div>
+      <!-- Live SSE indicator. admin.js drives #connBarFill; the element was
+           styled in admin.css but missing here, so the bar never rendered. -->
+      <div class="conn-bar" id="connBar" aria-hidden="true"><div class="conn-bar-fill" id="connBarFill"></div></div>
     </nav>
 
     <!-- Main Content -->
@@ -78,7 +81,7 @@
           <div class="stat-sub" id="maintenanceSub">Public site is available</div>
         </div>
         <div class="stat-card accent-amber">
-          <div class="stat-label">Server Time</div>
+          <div class="stat-label" id="serverTimeLabel">Server Time</div>
           <div class="stat-value amber" id="serverTime">--:--:--</div>
           <div class="stat-sub" id="serverDate">--</div>
         </div>
@@ -250,6 +253,24 @@
             </div>
           </div>
 
+          <!-- Feed Sources Panel -->
+          <div class="panel">
+            <div class="panel-head">
+              <div class="panel-title">Feed Sources</div>
+              <div class="panel-badge normal" id="sourcesBadge">—</div>
+            </div>
+            <div class="source-panel">
+              <p class="url-hint">Switch a feed off to hide it from the public source chips and skip it in the automatic fallback chain. The order is set by the site; changes apply to every open viewer instantly.</p>
+              <div class="source-list" id="sourceList">
+                <div class="empty-state">Loading feed sources…</div>
+              </div>
+              <div class="source-foot">
+                <span class="url-hint" id="sourcesStore">STORE: —</span>
+                <button class="btn-sm btn-ghost" id="sourcesRefreshBtn" type="button" title="Reload the feed list">↻</button>
+              </div>
+            </div>
+          </div>
+
           <!-- System Status Panel -->
           <div class="panel">
             <div class="panel-head">
@@ -269,8 +290,16 @@
                 <span class="sys-val" id="sseStatus" style="color:var(--amber)">Connecting…</span>
               </div>
               <div class="system-item">
-                <span class="sys-key">Visitor Store</span>
+                <span class="sys-key">Active / Unique</span>
                 <span class="sys-val" id="sysVisitorStore">—</span>
+              </div>
+              <div class="system-item">
+                <span class="sys-key">Unique Store</span>
+                <span class="sys-val" id="sysUniqueStore">—</span>
+              </div>
+              <div class="system-item">
+                <span class="sys-key">Environment</span>
+                <span class="sys-val" id="sysNodeEnv">—</span>
               </div>
               <div class="system-item">
                 <span class="sys-key">News Store</span>
@@ -279,6 +308,10 @@
               <div class="system-item">
                 <span class="sys-key">Analytics Store</span>
                 <span class="sys-val" id="sysAnalyticsStore">—</span>
+              </div>
+              <div class="system-item">
+                <span class="sys-key">Source Store</span>
+                <span class="sys-val" id="sysSourceStore">—</span>
               </div>
               <div class="system-item">
                 <span class="sys-key">Override Mode</span>
@@ -421,8 +454,8 @@
   <!-- Toast Container -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="/admin/charts.js?v=20260906-analytics1" defer></script>
-  <script src="/admin/analytics.js?v=20260906-analytics1" defer></script>
-  <script src="/admin/admin.js?v=20260906-analytics1" defer></script>
+  <script src="/admin/charts.js?v=20260912-sources1" defer></script>
+  <script src="/admin/analytics.js?v=20260912-sources1" defer></script>
+  <script src="/admin/admin.js?v=20260912-sources1" defer></script>
 </body>
 </html>

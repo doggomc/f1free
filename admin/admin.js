@@ -56,9 +56,16 @@ const playOverrideBtn   = $('playOverrideBtn');
 const stopOverrideBtn   = $('stopOverrideBtn');
 const normalStreamBtn   = $('normalStreamBtn');
 const streamPreview     = $('streamPreview');
+const serverTimeLabel   = $('serverTimeLabel');
 const sysUptime         = $('sysUptime');
 const sysVisitorStore   = $('sysVisitorStore');
+const sysUniqueStore    = $('sysUniqueStore');
 const sysNewsStore      = $('sysNewsStore');
+const sysSourceStore    = $('sysSourceStore');
+const sourceList        = $('sourceList');
+const sourcesBadge      = $('sourcesBadge');
+const sourcesStore      = $('sourcesStore');
+const sourcesRefreshBtn = $('sourcesRefreshBtn');
 const sysAnalyticsStore = $('sysAnalyticsStore');
 const sysOverrideStatus = $('sysOverrideStatus');
 const sysMaintenanceStatus = $('sysMaintenanceStatus');
@@ -94,6 +101,16 @@ let maintenanceActive = false;
 let maintenanceStateKnown = false;
 let previewUrl = '';
 let newsItems = [];
+let feedSources = [];
+let disabledSources = new Set();
+let sourceSaveInFlight = false;
+/* Server clock offset. The dashboard runs in the viewer's timezone while the
+   service runs on UTC, so "Server Time" is rendered from the server's own
+   timestamp instead of the browser clock. */
+let serverClockOffsetMs = 0;
+let serverTimeZone = 'UTC';
+let serverTimeFormatter = null;
+let serverDateFormatter = null;
 
 // ─────────────────────────────────────────────
 // AUTH
@@ -116,6 +133,10 @@ function showLogin() {
   isAdmin = false;
   authScreen.classList.remove('hidden');
   appEl.classList.remove('open');
+  clearTimeout(visitorRenderTimer);
+  visitorRenderTimer = null;
+  visitorRenderPending = false;
+  visitorIndex = new Map();
   if (sse) { sse.close(); sse = null; sseConnected = false; }
   if (typeof Analytics !== 'undefined') Analytics.stop();
 }
@@ -128,6 +149,7 @@ function showDashboard() {
   pollStats();
   loadMaintenanceStatus();
   loadNews();
+  loadSources();
   if (typeof Analytics !== 'undefined') Analytics.start();
 }
 
@@ -235,6 +257,14 @@ function connectSSE() {
     if (data) handleNewsUpdate(data);
   });
 
+  sse.addEventListener('sources_update', e => {
+    const data = readSseEvent(e);
+    if (!data) return;
+    if (Array.isArray(data.sources) && data.sources.length) feedSources = data.sources;
+    disabledSources = new Set((Array.isArray(data.disabled) ? data.disabled : []).map(String));
+    renderSources();
+  });
+
   sse.addEventListener('error', () => {
     sseConnected = false;
     updateConnectionBar(false);
@@ -262,11 +292,45 @@ function updateConnectionBar(connected) {
 // ─────────────────────────────────────────────
 function handleStatsUpdate(data) {
   currentStats = data;
+  syncServerClock(data?.server);
+  // A full snapshot supersedes any queued incremental repaint.
+  visitorIndex = indexVisitors(data.visitors);
+  visitorRenderPending = false;
   updateStatCards(data);
   updateVisitorTable(data);
   updateStreamStatus(data.override);
   updateMaintenanceStatus(data.maintenance);
   updateSystemInfo(data);
+}
+
+/* ── Server clock ──────────────────────────────────────────
+   The stats payload carries the server's own `now` and IANA timezone. The
+   offset is re-derived on every snapshot so a drifting browser clock can
+   never make "Server Time" lie, and the value is formatted in the server's
+   zone (UTC on Render) rather than the viewer's. */
+function syncServerClock(server) {
+  const serverNow = Number(server?.now);
+  if (Number.isFinite(serverNow) && serverNow > 0) serverClockOffsetMs = serverNow - Date.now();
+  const timeZone = server?.timezone || 'UTC';
+  if (timeZone !== serverTimeZone || !serverTimeFormatter) {
+    serverTimeZone = timeZone;
+    try {
+      serverTimeFormatter = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone });
+      serverDateFormatter = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: '2-digit', month: 'short', timeZone });
+    } catch (_) {
+      // Unknown/legacy timeZone value — fall back to the viewer's zone.
+      serverTimeZone = 'UTC';
+      serverTimeFormatter = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      serverDateFormatter = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
+    }
+    if (serverTimeLabel) serverTimeLabel.textContent = `Server Time · ${serverTimeZone}`;
+  }
+}
+
+function renderServerClock() {
+  const now = new Date(Date.now() + serverClockOffsetMs);
+  if (serverTimeEl) serverTimeEl.textContent = serverTimeFormatter.format(now);
+  if (serverDateEl) serverDateEl.textContent = serverDateFormatter.format(now);
 }
 
 function updateStatCards(data) {
@@ -287,9 +351,7 @@ function updateStatCards(data) {
   }
   if (tableBadge) tableBadge.textContent = `● ${online} Live`;
 
-  const now = new Date();
-  if (serverTimeEl) serverTimeEl.textContent = now.toLocaleTimeString('en-GB');
-  if (serverDateEl) serverDateEl.textContent = now.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
+  renderServerClock();
 }
 
 function updateStreamStatus(override) {
@@ -391,6 +453,9 @@ function updateStreamButtons(active) {
   if (normalStreamBtn)  normalStreamBtn.disabled = !active;
 }
 
+const STORE_COLORS = { UPSTASH: 'var(--green)', FILE: 'var(--amber)' };
+const storeColor = store => STORE_COLORS[String(store || '').toUpperCase()] || '#ff6b62';
+
 function updateSystemInfo(data) {
   const uptimeMs = data?.server?.uptimeMs ?? (data?.server?.startedAt ? Date.now() - data.server.startedAt : 0);
   if (sysUptime) sysUptime.textContent = formatDuration(uptimeMs);
@@ -398,16 +463,16 @@ function updateSystemInfo(data) {
     const active = data?.activeSessions ?? data?.visitors?.length ?? 0;
     sysVisitorStore.textContent = `${active} active / ${data?.totalUnique ?? '—'} unique`;
   }
-  if (sysNewsStore) {
-    const store = String(data?.server?.newsStore || 'unknown').toUpperCase();
-    sysNewsStore.textContent = store;
-    sysNewsStore.style.color = store === 'UPSTASH' ? 'var(--green)' : store === 'FILE' ? 'var(--amber)' : '#ff6b62';
-  }
-  if (sysAnalyticsStore) {
-    const store = String(data?.server?.analyticsStore || 'unknown').toUpperCase();
-    sysAnalyticsStore.textContent = store;
-    sysAnalyticsStore.style.color = store === 'UPSTASH' ? 'var(--green)' : store === 'FILE' ? 'var(--amber)' : '#ff6b62';
-  }
+  const renderStore = (element, value) => {
+    if (!element) return;
+    const store = String(value || 'unknown').toUpperCase();
+    element.textContent = store;
+    element.style.color = storeColor(store);
+  };
+  renderStore(sysUniqueStore, data?.server?.uniqueVisitorStore);
+  renderStore(sysNewsStore, data?.server?.newsStore);
+  renderStore(sysAnalyticsStore, data?.server?.analyticsStore);
+  renderStore(sysSourceStore, data?.server?.sourceStore);
   if (sysOverrideStatus) {
     sysOverrideStatus.textContent = data?.override?.active ? 'OVERRIDE' : 'NORMAL';
     sysOverrideStatus.style.color = data?.override?.active ? '#ff6b62' : 'var(--green)';
@@ -418,7 +483,11 @@ function updateSystemInfo(data) {
     sysMaintenanceStatus.style.color = active ? '#ff6b62' : 'var(--green)';
   }
   if (sysSessionActive) sysSessionActive.textContent = isAdmin ? 'Yes' : 'No';
-  if (sysNodeEnv) sysNodeEnv.textContent = String(data?.server?.nodeEnv || 'production').toUpperCase();
+  if (sysNodeEnv) {
+    const env = String(data?.server?.nodeEnv || 'production').toUpperCase();
+    sysNodeEnv.textContent = env;
+    sysNodeEnv.style.color = env === 'PRODUCTION' ? 'var(--green)' : 'var(--amber)';
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -606,6 +675,110 @@ adminNewsList?.addEventListener('click', event => {
 });
 
 // ─────────────────────────────────────────────
+// FEED SOURCES
+// ─────────────────────────────────────────────
+function renderSources() {
+  if (!sourceList) return;
+  const enabled = feedSources.filter(source => !disabledSources.has(source.id)).length;
+  if (sourcesBadge) {
+    sourcesBadge.textContent = `${enabled}/${feedSources.length} Enabled`;
+    sourcesBadge.className = `panel-badge ${enabled ? 'normal' : 'live'}`;
+  }
+  if (!feedSources.length) {
+    sourceList.innerHTML = '<div class="empty-state">No feed sources reported by the server.</div>';
+    return;
+  }
+  sourceList.replaceChildren(...feedSources.map(source => {
+    const disabled = disabledSources.has(source.id);
+    const row = document.createElement('div');
+    row.className = 'source-row' + (disabled ? ' is-off' : '');
+    const name = document.createElement('span');
+    name.className = 'source-name';
+    name.textContent = source.label;
+    const id = document.createElement('span');
+    id.className = 'source-id mono';
+    id.textContent = source.id;
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'source-switch' + (disabled ? '' : ' on');
+    toggle.setAttribute('role', 'switch');
+    toggle.setAttribute('aria-checked', String(!disabled));
+    toggle.setAttribute('aria-label', `${disabled ? 'Enable' : 'Disable'} ${source.label}`);
+    toggle.dataset.sourceId = source.id;
+    toggle.innerHTML = '<i></i>';
+    const state = document.createElement('span');
+    state.className = 'source-state';
+    state.textContent = disabled ? 'Hidden' : 'Live';
+    row.append(name, id, state, toggle);
+    return row;
+  }));
+}
+
+async function loadSources(notifyOnError = false) {
+  if (!sourceList) return false;
+  try {
+    const response = await fetch(`${API_BASE}/stream/sources`, { cache: 'no-store', headers: { Accept: 'application/json' } });
+    if (response.status === 401) { showLogin(); return false; }
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Feed source endpoint is unavailable.');
+    feedSources = Array.isArray(data.sources) ? data.sources : [];
+    disabledSources = new Set((Array.isArray(data.disabled) ? data.disabled : []).map(String));
+    if (sourcesStore) {
+      const durable = Boolean(data.durable);
+      sourcesStore.textContent = durable ? 'STORE: DURABLE' : 'STORE: MEMORY ONLY';
+      sourcesStore.style.color = durable ? 'var(--green)' : '#ff6b62';
+    }
+    renderSources();
+    return true;
+  } catch (error) {
+    sourceList.innerHTML = '<div class="empty-state">Could not load feed sources.</div>';
+    if (notifyOnError) showToast(error.message || 'Could not load feed sources.', 'error');
+    return false;
+  }
+}
+
+/* One toggle = one save, because during a race you want it applied now.
+   The switch is optimistic and rolls back if the server rejects the change. */
+async function toggleSource(sourceId) {
+  if (sourceSaveInFlight || !feedSources.length) return;
+  const next = new Set(disabledSources);
+  const wasDisabled = next.has(sourceId);
+  if (wasDisabled) next.delete(sourceId); else next.add(sourceId);
+
+  sourceSaveInFlight = true;
+  disabledSources = next;
+  renderSources();
+  try {
+    const response = await fetch(`${API_BASE}/stream/sources`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disabled: [...next] })
+    });
+    const data = await response.json();
+    if (response.status === 401) { showLogin(); return; }
+    if (!response.ok || !data.success) throw new Error(data.error || 'Feed source update failed.');
+    disabledSources = new Set((Array.isArray(data.disabled) ? data.disabled : []).map(String));
+    renderSources();
+    if (!data.durable) showToast('Saved in memory only. Configure Upstash to keep this after a server restart.', 'warning');
+  } catch (error) {
+    // Roll back to the server-confirmed state.
+    if (wasDisabled) next.add(sourceId); else next.delete(sourceId);
+    disabledSources = next;
+    renderSources();
+    showToast(error.message || 'Could not update the feed source.', 'error');
+  } finally {
+    sourceSaveInFlight = false;
+  }
+}
+
+sourceList?.addEventListener('click', event => {
+  const button = event.target.closest('.source-switch');
+  if (button) toggleSource(button.dataset.sourceId);
+});
+sourcesRefreshBtn?.addEventListener('click', () => loadSources(true));
+
+// ─────────────────────────────────────────────
 // VISITOR TABLE
 // ─────────────────────────────────────────────
 function updateVisitorTable(data) {
@@ -620,7 +793,7 @@ function updateVisitorTable(data) {
 
   visitors.forEach(visitor => {
     const key = String(visitor.id || visitor.ip || visitor.lastSeen);
-    const online = now - (visitor.lastSeen || 0) <= 60000;
+    const online = now - (visitor.lastSeen || 0) <= ONLINE_WINDOW_MS;
     const flag = visitor.countryCode ? getFlag(visitor.countryCode) : '🌐';
     const country = visitor.country || visitor.countryCode || 'Unknown';
     const device = String(visitor.deviceType || '—');
@@ -673,24 +846,62 @@ function refreshVisitorTimes() {
   });
 }
 
+/* Visitor rows are mutated in place and the table is repainted at most once
+   per coalesce window. Every visitor heartbeat broadcasts an SSE event, so
+   repainting synchronously meant one full sort + re-render per heartbeat per
+   viewer — hundreds of DOM rebuilds a minute on a busy race weekend. */
+let visitorIndex = new Map();
+let visitorRenderTimer = null;
+let visitorRenderPending = false;
+const VISITOR_RENDER_COALESCE_MS = 250;
+// Matches the server's HEARTBEAT_TIMEOUT default (60s) for the online pill.
+const ONLINE_WINDOW_MS = 60_000;
+
+function indexVisitors(visitors) {
+  const index = new Map();
+  for (const visitor of visitors || []) index.set(String(visitor.id || visitor.ip), visitor);
+  return index;
+}
+
+function scheduleVisitorRender() {
+  if (!isAdmin || document.hidden) return;
+  visitorRenderPending = true;
+  if (visitorRenderTimer) return;
+  // A timer (not rAF) so a hidden tab still settles before it is revealed.
+  visitorRenderTimer = setTimeout(() => {
+    visitorRenderTimer = null;
+    if (!visitorRenderPending || !currentStats) return;
+    visitorRenderPending = false;
+    updateStatCards(currentStats);
+    updateVisitorTable(currentStats);
+  }, VISITOR_RENDER_COALESCE_MS);
+}
+
 function handleVisitorUpdate(type, visitor) {
   if (!visitor || !currentStats) return;
-  const key = visitor.id || visitor.ip;
-  const idx = currentStats.visitors.findIndex(v => (v.id || v.ip) === key);
+  if (!Array.isArray(currentStats.visitors)) currentStats.visitors = [];
+  const key = String(visitor.id || visitor.ip);
+  const existing = visitorIndex.get(key);
 
   if (type === 'offline') {
-    if (idx >= 0) currentStats.visitors.splice(idx, 1);
-  } else if (idx >= 0) {
-    currentStats.visitors[idx] = { ...currentStats.visitors[idx], ...visitor };
+    if (existing) {
+      const idx = currentStats.visitors.indexOf(existing);
+      if (idx >= 0) currentStats.visitors.splice(idx, 1);
+      visitorIndex.delete(key);
+    }
+  } else if (existing) {
+    Object.assign(existing, visitor);
   } else {
     currentStats.visitors.unshift(visitor);
+    visitorIndex.set(key, visitor);
   }
 
-  currentStats.onlineCount = currentStats.visitors.filter(v => Date.now() - (v.lastSeen || 0) <= 60000).length;
+  const now = Date.now();
+  currentStats.onlineCount = currentStats.visitors.filter(v => now - (v.lastSeen || 0) <= ONLINE_WINDOW_MS).length;
   currentStats.activeSessions = currentStats.visitors.length;
-  currentStats.totalUnique = Math.max(currentStats.totalUnique || 0, currentStats.visitors.length);
-  updateStatCards(currentStats);
-  updateVisitorTable(currentStats);
+  // totalUnique is an all-time counter owned by the server — never derive it
+  // from the number of rows currently on screen.
+  scheduleVisitorRender();
 }
 
 function handleStreamStatusUpdate(data) {
@@ -956,9 +1167,7 @@ setInterval(pollStats, REFRESH_MS);
 // ─────────────────────────────────────────────
 setInterval(() => {
   if (!isAdmin || document.hidden) return;
-  const now = new Date();
-  if (serverTimeEl) serverTimeEl.textContent = now.toLocaleTimeString('en-GB');
-  if (serverDateEl) serverDateEl.textContent = now.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
+  renderServerClock();
   if (currentStats?.server?.startedAt && sysUptime) sysUptime.textContent = formatDuration(Date.now() - currentStats.server.startedAt);
   refreshVisitorTimes();
 }, 1000);

@@ -38,6 +38,10 @@ const {
   Client, GatewayIntentBits, Partials, ActionRowBuilder,
   ButtonBuilder, ButtonStyle, REST, Routes, Events,
 } = require('discord.js');
+/* Optional voice relay. Loaded lazily so the bot still boots (and the site
+   still serves) when the voice packages are not installed. See
+   bot/STREAMING.md for why this is audio-only. */
+const relayModule = require('./voice-relay.js');
 
 const OWNER_ID = '915483308522086460';
 const SOON_MINUTES = 10;          // lead time for the "starting soon" alert
@@ -208,11 +212,23 @@ function start(deps) {
     },
   };
 
+  /* Voice relay: joins a race-control channel and plays the race audio.
+     Everything degrades gracefully when the voice packages are absent. */
+  const relay = relayModule.create({
+    log,
+    getState: () => store.load(),
+    save: () => store.save()
+  });
+  if (!relayModule.isAvailable()) {
+    log('voice relay disabled — install @discordjs/voice @discordjs/opus ffmpeg-static to enable /watchparty');
+  }
+
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.GuildMessageReactions,
+      GatewayIntentBits.GuildVoiceStates, // required for the audio relay
     ],
     partials: [Partials.Message, Partials.Reaction],
   });
@@ -406,6 +422,20 @@ function start(deps) {
       ],
     },
     { name: 'emojis', description: 'Owner: upload any missing number emojis to this server.', dm_permission: false },
+    {
+      name: 'watchparty', description: 'Owner: relay the race AUDIO into a voice channel (bots cannot stream video).', dm_permission: false,
+      options: [
+        {
+          type: 1, name: 'start', description: 'Join a voice channel and play the race audio',
+          options: [
+            { type: 3, name: 'audio', description: 'Audio URL (HTTP/HTTPS/HLS/m3u8/MP3). Defaults to APEX_AUDIO_URL.', required: false },
+            { type: 7, name: 'channel', description: 'Voice channel to join (defaults to yours)', required: false, channel_types: [2] }
+          ]
+        },
+        { type: 1, name: 'stop', description: 'Leave the voice channel and stop the relay' },
+        { type: 1, name: 'status', description: 'Show whether the audio relay is running' }
+      ]
+    },
     { name: 'website', description: 'The APEX stream hub — link embed.' },
   ];
 
@@ -443,6 +473,63 @@ function start(deps) {
         return interaction.editReply({ content: `Alerts panel posted in ${interaction.channel}. Session alerts will go to ${alertsChannel}.` });
       }
 
+      if (cmd === 'watchparty') {
+        const subcommand = interaction.options.getSubcommand();
+        const guildId = guild.id;
+
+        if (subcommand === 'status') {
+          const current = relay.status(guildId);
+          if (!current) return interaction.reply({ content: 'The audio relay is not running.', ephemeral: true });
+          const seconds = Math.round((Date.now() - current.startedAt) / 1000);
+          return interaction.reply({
+            content: `Audio relay is **${current.state}** in <#${current.channelId}> for ${Math.floor(seconds / 60)}m ${seconds % 60}s.`,
+            ephemeral: true
+          });
+        }
+
+        if (subcommand === 'stop') {
+          const stopped = relay.stop(guildId, { clearSaved: true });
+          return interaction.reply({
+            content: stopped ? 'Left the voice channel and stopped the relay.' : 'The relay was not running.',
+            ephemeral: true
+          });
+        }
+
+        // start
+        if (!relayModule.isAvailable()) {
+          return interaction.reply({
+            content: 'Voice packages are missing. Install them and restart:\n`npm i @discordjs/voice @discordjs/opus ffmpeg-static`',
+            ephemeral: true
+          });
+        }
+
+        const channel = interaction.options.getChannel('channel') || interaction.member?.voice?.channel;
+        if (!channel) return interaction.reply({ content: 'Join a voice channel first, or pass one with `channel:`.', ephemeral: true });
+        if (!channel.joinable) return interaction.reply({ content: `I do not have permission to join ${channel}.`, ephemeral: true });
+        if (!channel.speakable) return interaction.reply({ content: `I do not have permission to speak in ${channel}.`, ephemeral: true });
+
+        const url = (interaction.options.getString('audio') || deps.audioUrl || '').trim();
+        if (!url) {
+          return interaction.reply({
+            content: 'No audio source configured. Pass one with `audio:` or set `APEX_AUDIO_URL` on the server.',
+            ephemeral: true
+          });
+        }
+        if (!/^https?:\/\//i.test(url)) {
+          return interaction.reply({ content: 'The audio source must be an http(s) URL.', ephemeral: true });
+        }
+
+        await interaction.deferReply({ ephemeral: true });
+        try {
+          await relay.start(guild, channel, url);
+          return interaction.editReply({
+            content: `Race audio is live in ${channel}\nSource: \`${url}\`\n\nVideo stays on the site — Discord bots cannot stream video into a voice channel (see bot/STREAMING.md).`
+          });
+        } catch (error) {
+          return interaction.editReply({ content: `Could not start the relay: ${error.message}` });
+        }
+      }
+
       if (cmd === 'live') {
         await interaction.deferReply({ ephemeral: true });
         const found = findSession(interaction.options.getInteger('round'), interaction.options.getString('session')) || nextSession();
@@ -477,6 +564,16 @@ function start(deps) {
       const st = await store.guild(guild.id);
       discoverDriverRoles(guild, st);
       log(`guild: ${guild.name} — ${Object.keys(st.driverRoles).length} grid roles mapped`);
+
+      // Resume an audio relay that was running before the restart.
+      if (st.relay && st.relay.channelId && st.relay.url && relayModule.isAvailable()) {
+        const channel = guild.channels.cache.get(st.relay.channelId);
+        if (channel) {
+          relay.start(guild, channel, st.relay.url).catch(e => log(`relay resume failed in ${guild.name}: ${e.message}`));
+        } else {
+          delete st.relay; store.save();
+        }
+      }
     }
     setInterval(() => { tick().catch(e => log('tick failed:', e.message)); }, TICK_MS);
     tick().catch(e => log('tick failed:', e.message));

@@ -56,6 +56,39 @@ const Charts = (() => {
     return nice * exp;
   }
 
+  /* ── Width memo / read-write batching ──────────────────────
+     Each chart used to clear its own container (write) and then read
+     container.clientWidth (read) before painting, so a dashboard render
+     interleaved ~12 write/read pairs and forced a synchronous layout on
+     every one of them.
+
+     Call `prepare()` once at the top of a render pass: it measures every
+     chart container up front in a single read phase, so the paint phase
+     below is write-only and forces no layout at all. */
+  const widthCache = new Map();
+  const measureWidth = container => Math.max(320, container.clientWidth || 640);
+
+  const prepare = (root, selector = '.chart-body') => {
+    widthCache.clear();
+    const scope = root && root.querySelectorAll ? root : document;
+    for (const container of scope.querySelectorAll(selector)) widthCache.set(container, measureWidth(container));
+  };
+
+  const chartWidth = container => {
+    const cached = widthCache.get(container);
+    if (cached !== undefined) return cached;
+    // Un-prepared container: measure lazily (correct, just not batched).
+    const width = measureWidth(container);
+    widthCache.set(container, width);
+    return width;
+  };
+
+  const invalidateWidths = () => widthCache.clear();
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', invalidateWidths, { passive: true });
+    window.addEventListener('orientationchange', invalidateWidths, { passive: true });
+  }
+
   // ── Tooltip (one shared element) ─────────────────────────
   let tip = null;
   function showTip(host, x, y, content) {
@@ -74,7 +107,7 @@ const Charts = (() => {
   // series: [{ name, color, values: number[] , dashed?, fill? }], xs: timestamps[]
   function lineChart(container, { xs, series, height = 220, xFormat, yFormat = fmtCompact, tooltipFormat, stepped = false, xTicks = 6, emptyText = 'No data yet', markers = [] }) {
     container.innerHTML = '';
-    const width = Math.max(320, container.clientWidth || 640);
+    const width = chartWidth(container);
     const pad = { top: 14, right: 16, bottom: 26, left: 40 };
     const innerW = width - pad.left - pad.right, innerH = height - pad.top - pad.bottom;
     const svg = el('svg', { viewBox: `0 0 ${width} ${height}`, width: '100%', height, class: 'chart-svg', role: 'img' });
@@ -170,7 +203,7 @@ const Charts = (() => {
   // series: [{ name, color, values }], xs: labels
   function barChart(container, { xs, series, height = 220, xFormat, yFormat = fmtCompact, tooltipFormat, xTicks = 8, emptyText = 'No data yet' }) {
     container.innerHTML = '';
-    const width = Math.max(320, container.clientWidth || 640);
+    const width = chartWidth(container);
     const pad = { top: 14, right: 16, bottom: 26, left: 40 };
     const innerW = width - pad.left - pad.right, innerH = height - pad.top - pad.bottom;
     const svg = el('svg', { viewBox: `0 0 ${width} ${height}`, width: '100%', height, class: 'chart-svg', role: 'img' });
@@ -282,7 +315,7 @@ const Charts = (() => {
     const flat = cells.flat().filter(Number.isFinite);
     const max = Math.max(0, ...flat);
     if (!max) { container.appendChild(html('div', 'chart-empty-block', emptyText)); return; }
-    const width = Math.max(320, container.clientWidth || 640);
+    const width = chartWidth(container);
     const left = 34, top = 18, cellW = (width - left - 6) / 24, cellH = 20;
     const height = top + cellH * 7 + 6;
     const svg = el('svg', { viewBox: `0 0 ${width} ${height}`, width: '100%', height, class: 'chart-svg heat-svg' });
@@ -306,7 +339,7 @@ const Charts = (() => {
     container.innerHTML = '';
     const total = values.reduce((s, v) => s + v, 0);
     if (!total) { container.appendChild(html('div', 'chart-empty-block', emptyText)); return; }
-    const width = Math.max(320, container.clientWidth || 640);
+    const width = chartWidth(container);
     const pad = { top: 22, right: 10, bottom: 24, left: 10 };
     const innerW = width - pad.left - pad.right, innerH = height - pad.top - pad.bottom;
     const svg = el('svg', { viewBox: `0 0 ${width} ${height}`, width: '100%', height, class: 'chart-svg' });
@@ -334,5 +367,5 @@ const Charts = (() => {
     container.appendChild(svg);
   }
 
-  return { lineChart, barChart, rankedBars, donut, heatmap, histogram, sparkline, PALETTE, fmtInt, fmtCompact, fmtDuration, fmtPct, timeFmt, dayFmt, dayHourFmt, fullDayFmt, hideTip };
+  return { lineChart, barChart, rankedBars, donut, heatmap, histogram, sparkline, PALETTE, fmtInt, fmtCompact, fmtDuration, fmtPct, timeFmt, dayFmt, dayHourFmt, fullDayFmt, hideTip, invalidateWidths, prepare };
 })();

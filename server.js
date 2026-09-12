@@ -41,6 +41,8 @@ const MAINTENANCE_FILE = path.join(DATA_DIR, 'maintenance.json');
 const UNIQUE_VISITORS_FILE = path.join(DATA_DIR, 'unique-visitors.json');
 const ANALYTICS_FILE = path.join(DATA_DIR, 'analytics.json');
 const ANALYTICS_REDIS_KEY = process.env.ANALYTICS_REDIS_KEY || 'freef1:analytics:v1';
+const SOURCE_CONFIG_FILE = path.join(DATA_DIR, 'stream-sources.json');
+const SOURCE_REDIS_KEY = process.env.SOURCE_REDIS_KEY || 'freef1:stream-sources:v1';
 
 // ── OpenF1 proxy (see /api/openf1/:path) ──
 // OpenF1 locks the free tier with a CORS-less 401 while a session is live, which
@@ -58,6 +60,10 @@ const OPENF1_SNAPSHOT_MAX_BYTES = 1_500_000;
 const openf1Cache = new Map();     // url -> { data, at }
 const openf1Snapshots = new Map(); // url -> { data, at } last-known-good per URL
 const openf1Inflight = new Map();  // url -> Promise (request coalescing)
+// Reported to the admin dashboard so it can render a true server clock.
+const SERVER_TIMEZONE = (() => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (_) { return 'UTC'; }
+})();
 const PRODUCTION_MODE = process.env.NODE_ENV === 'production' || process.env.REQUIRE_PRODUCTION_SECRETS === '1';
 const insecureProductionConfig = [
   !process.env.ADMIN_USER ? 'ADMIN_USER' : null,
@@ -245,6 +251,28 @@ let maintenanceInitPromise = Promise.resolve(false);
 const newsItems = [];
 let newsStoreReady = false;
 let newsInitPromise = Promise.resolve(false);
+
+/* ── Feed sources (public player) ──────────────────────────
+   `id` values must match the `sources` array in the public site's app.js —
+   that array owns the URLs/suffixes and stays the offline fallback. The
+   server only owns which feeds are switched on, so an admin can pull a dead
+   provider mid-session without redeploying Netlify. */
+const FEED_SOURCES = [
+  { id: 'sky-uk-2', label: 'Sky UK 2' },
+  { id: 'sky-uk-3', label: 'Sky UK 3' },
+  { id: 'f1tv', label: 'F1TV' },
+  { id: 'appletv', label: 'AppleTV' },
+  { id: 'sky-uk', label: 'Sky UK' },
+  { id: 'streame', label: 'Streame' },
+  { id: 'f1tv-alt', label: 'F1TV Alt' },
+  { id: 'dazn', label: 'DAZN' },
+  { id: 'sky-sports-f1', label: 'Sky Sports F1' },
+  { id: 'wikisport', label: 'WikiSport' }
+];
+const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
+const sourceConfig = { disabled: new Set(), updatedAt: null };
+let sourceStoreReady = false;
+let sourceInitPromise = Promise.resolve(false);
 
 // SSE clients for admin dashboard
 const sseClients = new Set();
@@ -940,6 +968,76 @@ function newsStoreIsDurable() {
   return newsStoreReady;
 }
 
+// ─────────────────────────────────────────────
+// FEED SOURCE AVAILABILITY
+// ─────────────────────────────────────────────
+
+function publicSourceConfig() {
+  return {
+    sources: FEED_SOURCES.map(source => ({ id: source.id, label: source.label })),
+    disabled: [...sourceConfig.disabled],
+    updatedAt: sourceConfig.updatedAt
+  };
+}
+
+function applySourceConfig(state) {
+  const disabled = new Set();
+  if (Array.isArray(state?.disabled)) {
+    for (const id of state.disabled) {
+      const key = String(id || '').trim().slice(0, 40);
+      if (FEED_SOURCE_IDS.has(key)) disabled.add(key);
+    }
+  }
+  sourceConfig.disabled = disabled;
+  sourceConfig.updatedAt = Number(state?.updatedAt) || Date.now();
+  return publicSourceConfig();
+}
+
+async function syncSourceConfig() {
+  if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
+    const stored = readLocalJson(SOURCE_CONFIG_FILE);
+    if (stored) applySourceConfig(stored);
+    sourceStoreReady = fileStoreReady;
+    return fileStoreReady;
+  }
+  try {
+    const payload = await upstashRequest(['GET', SOURCE_REDIS_KEY]);
+    if (payload?.result) applySourceConfig(JSON.parse(payload.result));
+    sourceStoreReady = true;
+    return true;
+  } catch (error) {
+    warnUniqueStore(error);
+    sourceStoreReady = false;
+    return false;
+  }
+}
+
+async function persistSourceConfig() {
+  if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
+    const saved = writeLocalJson(SOURCE_CONFIG_FILE, publicSourceConfig());
+    sourceStoreReady = saved;
+    return saved;
+  }
+  try {
+    const payload = await upstashRequest(['SET', SOURCE_REDIS_KEY, JSON.stringify(publicSourceConfig())]);
+    if (payload?.result !== 'OK') throw new Error('Upstash did not confirm the source update');
+    sourceStoreReady = true;
+    return true;
+  } catch (error) {
+    warnUniqueStore(error);
+    sourceStoreReady = false;
+    return false;
+  }
+}
+
+function broadcastSourceConfig() {
+  const payload = publicSourceConfig();
+  broadcastSSE('sources_update', payload);
+  broadcastPublicSSE('sources_update', payload);
+  scheduleStatsBroadcast(0);
+  return payload;
+}
+
 // Keep the local snapshot in sync if the service is ever scaled beyond one
 // process. This is a single lightweight request every five minutes.
 const uniqueVisitorSyncTimer = UNIQUE_VISITOR_REMOTE_ENABLED
@@ -950,10 +1048,12 @@ if (UNIQUE_VISITOR_REMOTE_ENABLED) {
   syncUniqueVisitorCount();
   maintenanceInitPromise = syncMaintenanceState();
   newsInitPromise = syncNewsStore();
+  sourceInitPromise = syncSourceConfig();
 } else {
   loadLocalUniqueVisitors();
   maintenanceInitPromise = syncMaintenanceState();
   newsInitPromise = syncNewsStore();
+  sourceInitPromise = syncSourceConfig();
   if (UPSTASH_REDIS_REST_URL || UPSTASH_REDIS_REST_TOKEN) {
     console.warn('[Visitors] Both Upstash variables are required for remote persistence; using local JSON storage instead.');
   } else if (fileStoreReady) {
@@ -1499,7 +1599,82 @@ function flushAnalytics(force = false) {
   return run;
 }
 
-function getAnalyticsSnapshot() {
+/* ── Audience analytics: range shapes (shared with admin/analytics.js) ──
+   Hourly buckets are the expensive part of the payload (up to 336 of them),
+   so the dashboard asks for the window it is actually drawing instead of the
+   whole retention period, and the server pre-aggregates the two views that
+   legitimately need everything (the weekday x hour heat-map and the busiest
+   hours table). */
+const ANALYTICS_RANGES = {
+  '24h': { hours: 24, granularity: 'hour' },
+  '7d': { hours: 7 * 24, granularity: 'hour' },
+  '14d': { hours: 14 * 24, granularity: 'hour' },
+  '30d': { days: 30, granularity: 'day' },
+  '90d': { days: 90, granularity: 'day' }
+};
+const ANALYTICS_DEFAULT_RANGE = '7d';
+
+function analyticsHourStart(ts) { return analyticsHourKey(ts) * 3_600_000; }
+
+/* Sum every bucket in [startHour, endHour] (inclusive hour keys) into one
+   aggregate. Reuses the hydration merge so the shapes can never drift. */
+function aggregateHourlyRange(startHourKey, endHourKey) {
+  const total = mergeAnalyticsBucket(newAnalyticsBucket(), null);
+  for (const [key, bucket] of analytics.hourly) {
+    if (key < startHourKey || key > endHourKey) continue;
+    mergeAnalyticsBucket(total, compactAnalyticsBucket(bucket));
+  }
+  return compactAnalyticsBucket(total);
+}
+
+function aggregateDailyRange(startDayKey, endDayKey) {
+  const total = mergeAnalyticsBucket(newAnalyticsBucket(), null);
+  for (const [key, bucket] of analytics.daily) {
+    if (key < startDayKey || key > endDayKey) continue;
+    mergeAnalyticsBucket(total, compactAnalyticsBucket(bucket));
+  }
+  return compactAnalyticsBucket(total);
+}
+
+/* Weekday x hour average concurrent viewers, plus the busiest hours table.
+   Both are computed from the full hourly retention exactly once per request
+   so the browser never has to download 336 buckets to draw them. */
+function analyticsOverview() {
+  const sums = Array.from({ length: 7 }, () => Array(24).fill(0));
+  const counts = Array.from({ length: 7 }, () => Array(24).fill(0));
+  const busiest = [];
+
+  for (const [key, bucket] of analytics.hourly) {
+    const date = new Date(key * 3_600_000);
+    const day = (date.getDay() + 6) % 7; // Monday-first
+    const hour = date.getHours();
+    sums[day][hour] += bucket.onlineSamples ? bucket.onlineSum / bucket.onlineSamples : 0;
+    counts[day][hour]++;
+    if ((bucket.peakOnline || 0) > 0) {
+      busiest.push({
+        t: key * 3_600_000,
+        peakOnline: bucket.peakOnline || 0,
+        onlineSum: bucket.onlineSum || 0,
+        onlineSamples: bucket.onlineSamples || 0,
+        sessions: bucket.sessions || 0,
+        ended: bucket.ended || 0,
+        durationMs: bucket.durationMs || 0,
+        country: Object.entries(bucket.country || {})
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([code]) => code)
+      });
+    }
+  }
+
+  busiest.sort((a, b) => (b.peakOnline - a.peakOnline) || (b.sessions - a.sessions));
+  return {
+    heatmap: sums.map((row, day) => row.map((value, hour) => (counts[day][hour] ? value / counts[day][hour] : 0))),
+    busiest: busiest.slice(0, 8)
+  };
+}
+
+function getAnalyticsSnapshot(rangeKey = null) {
   const now = Date.now();
   let openSessions = 0, openSessionMs = 0;
   for (const visitor of activeUsers.values()) {
@@ -1507,16 +1682,50 @@ function getAnalyticsSnapshot() {
     openSessions++;
     openSessionMs += now - visitor.connectedAt;
   }
+
+  const spec = ANALYTICS_RANGES[rangeKey] || null;
+  let hourly = [...analytics.hourly].sort((a, b) => a[0] - b[0]);
+  let daily = [...analytics.daily].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  let previous = null;
+
+  if (spec) {
+    if (spec.granularity === 'hour') {
+      const end = analyticsHourKey(now);
+      const start = end - (spec.hours - 1);
+      // The previous window is aggregated server-side so the client can keep
+      // drawing deltas without downloading twice as many buckets.
+      previous = aggregateHourlyRange(start - spec.hours, start - 1);
+      hourly = hourly.filter(([key]) => key >= start && key <= end);
+      // Daily buckets are still handy for the range label/CSV continuity but
+      // only the ones that overlap the window can matter.
+      daily = daily.slice(-Math.max(1, Math.ceil(spec.hours / 24) + 1));
+    } else {
+      const dayKey = ts => analyticsDayKey(ts);
+      const endDay = dayKey(now);
+      const startDay = dayKey(now - (spec.days - 1) * 86_400_000);
+      const prevEnd = dayKey(now - spec.days * 86_400_000);
+      const prevStart = dayKey(now - (spec.days * 2 - 1) * 86_400_000);
+      previous = aggregateDailyRange(prevStart, prevEnd);
+      daily = daily.filter(([key]) => key >= startDay && key <= endDay);
+      hourly = [];
+    }
+  }
+
   return {
     generatedAt: now,
     since: analytics.since,
+    range: spec ? rangeKey : 'all',
     retention: { hourlyHours: ANALYTICS_HOURLY_RETENTION_HOURS, dailyDays: ANALYTICS_DAILY_RETENTION_DAYS, liveMinutes: ANALYTICS_LIVE_POINTS },
     store: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, analyticsStoreReady),
     serverStartedAt: SERVER_STARTED_AT,
     current: { online: countOnlineUsers(now), openSessions, openSessionMs },
     live: analytics.live,
-    hourly: [...analytics.hourly].sort((a, b) => a[0] - b[0]).map(([key, bucket]) => ({ t: key * 3_600_000, ...compactAnalyticsBucket(bucket) })),
-    daily: [...analytics.daily].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([key, bucket]) => ({ d: key, t: Date.parse(`${key}T00:00:00Z`), ...compactAnalyticsBucket(bucket) }))
+    hourly: hourly.map(([key, bucket]) => ({ t: key * 3_600_000, ...compactAnalyticsBucket(bucket) })),
+    daily: daily.map(([key, bucket]) => ({ d: key, t: Date.parse(`${key}T00:00:00Z`), ...compactAnalyticsBucket(bucket) })),
+    // Only sent for a range-scoped request: everything that needs the whole
+    // retention period, pre-aggregated.
+    previous: spec ? previous : null,
+    overview: spec ? analyticsOverview() : null
   };
 }
 
@@ -1602,13 +1811,20 @@ function getStats() {
       startedAt: streamOverride.startedAt
     } : { active: false },
     maintenance: publicMaintenanceState(),
+    sources: publicSourceConfig(),
     server: {
       startedAt: SERVER_STARTED_AT,
       uptimeMs: now - SERVER_STARTED_AT,
+      // Authoritative server clock: the dashboard sits in the viewer's
+      // timezone while the service runs on UTC, so "Server Time" must not be
+      // rendered from the browser's Date.
+      now,
+      timezone: SERVER_TIMEZONE,
       nodeEnv: process.env.NODE_ENV || 'development',
       uniqueVisitorStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, uniqueVisitorStoreReady),
       maintenanceStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, maintenanceStoreReady),
       newsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, newsStoreReady),
+      sourceStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, sourceStoreReady),
       analyticsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, analyticsStoreReady)
     }
   };
@@ -1653,7 +1869,8 @@ app.get('/healthz', (req, res) => {
     uptimeMs: Date.now() - SERVER_STARTED_AT,
     uniqueVisitorStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, uniqueVisitorStoreReady),
     maintenanceStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, maintenanceStoreReady),
-    newsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, newsStoreReady)
+    newsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, newsStoreReady),
+    sourceStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, sourceStoreReady)
   });
 });
 
@@ -1811,6 +2028,18 @@ app.get('/api/stream/status', (req, res) => {
     type: streamOverride.type,
     startedAt: streamOverride.startedAt
   });
+});
+
+// Feed availability for the public player. No auth: it only ever reveals
+// which of the site's own sources are switched on.
+app.get('/api/stream/sources', async (req, res, next) => {
+  try {
+    await sourceInitPromise;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(publicSourceConfig());
+  } catch (error) {
+    next(error);
+  }
 });
 
 // ─────────────────────────────────────────────
@@ -2031,7 +2260,10 @@ app.get('/admin/api/visitors', (req, res) => {
 
 app.get('/admin/api/analytics', async (req, res) => {
   await analyticsInitPromise;
-  res.json(getAnalyticsSnapshot());
+  const requested = String(req.query.range || '').toLowerCase();
+  const rangeKey = requested in ANALYTICS_RANGES ? requested : ANALYTICS_DEFAULT_RANGE;
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(getAnalyticsSnapshot(rangeKey));
 });
 
 app.get('/admin/api/stream/status', (req, res) => {
@@ -2184,6 +2416,39 @@ app.post('/admin/api/stream/normal', (req, res) => {
   res.json(stopStreamOverride('Returned to normal stream'));
 });
 
+app.get('/admin/api/stream/sources', async (req, res, next) => {
+  try {
+    await sourceInitPromise;
+    res.json({ ...publicSourceConfig(), durable: sourceStoreReady });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* Body: { disabled: ["dazn", "wikisport"] }. Unknown ids are ignored rather
+   than rejected, so a site deploy that renames a feed cannot break the panel —
+   the site simply keeps showing whatever it knows about. */
+app.post('/admin/api/stream/sources', async (req, res, next) => {
+  try {
+    await sourceInitPromise;
+    const body = req.body || {};
+    if (body.disabled !== undefined && !Array.isArray(body.disabled)) {
+      return res.status(400).json({ error: 'The disabled field must be an array of source ids.' });
+    }
+    const wanted = (body.disabled || []).map(id => String(id || '').trim().slice(0, 40));
+    const unknown = wanted.filter(id => !FEED_SOURCE_IDS.has(id));
+    if (unknown.length) {
+      return res.status(400).json({ error: `Unknown source id(s): ${unknown.join(', ')}` });
+    }
+    applySourceConfig({ disabled: wanted, updatedAt: Date.now() });
+    const durable = await persistSourceConfig();
+    const config = broadcastSourceConfig();
+    res.json({ success: true, ...config, durable });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // ─────────────────────────────────────────────
 // ADMIN — SSE ENDPOINT
 // ─────────────────────────────────────────────
@@ -2206,6 +2471,7 @@ app.get('/admin/api/events', (req, res) => {
   const payload = `event: init\ndata: ${JSON.stringify(getStats())}\n\n`;
   res.write(payload);
   res.write(`event: news_update\ndata: ${JSON.stringify({ news: getAdminNewsItems(), durable: newsStoreIsDurable() })}\n\n`);
+  res.write(`event: sources_update\ndata: ${JSON.stringify(publicSourceConfig())}\n\n`);
 
   req.on('close', () => {
     sseClients.delete(res);
@@ -2272,6 +2538,9 @@ if (process.env.DISCORD_BOT_TOKEN) {
       upstash: UNIQUE_VISITOR_REMOTE_ENABLED ? upstashRequest : null,
       redisKey: 'freef1:discordbot:v1',
       fileKey: path.join(DATA_DIR, 'discord-bot.json'),
+      // Default audio source for /watchparty start. Discord bots can relay
+      // audio into a voice channel, never video — see bot/STREAMING.md.
+      audioUrl: String(process.env.APEX_AUDIO_URL || '').trim(),
       log: (...a) => console.log('[Bot]', ...a),
     });
   } catch (error) {
