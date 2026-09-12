@@ -150,6 +150,29 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
     $('links').querySelector('.chip.active')?.textContent === 'Sky UK 3',
     $('links').querySelector('.chip.active')?.textContent);
 
+  // Structural integrity. A stray closing tag once closed #player early, which
+  // ended the home view prematurely and left the championship grid and the
+  // stage buttons outside it — so they stayed on screen when routing to
+  // News/Info/Discord. Assert the containment the router depends on.
+  const viewIds = ['viewHome', 'viewNews', 'viewInfo', 'viewDiscord'];
+  check('all four views exist', viewIds.every(id => $(id)), viewIds.filter(id => !$(id)).join(', '));
+  check('all four views are siblings',
+    new Set(viewIds.map(id => $(id).parentElement)).size === 1,
+    viewIds.map(id => `${id}<${$(id).parentElement?.tagName}>`).join(' '));
+  check('championship grid lives inside the home view',
+    $('viewHome').contains($('grid')) && $('viewHome').contains($('driverGrid')),
+    `grid in home: ${$('viewHome').contains($('grid'))}`);
+  check('stage action buttons live inside the home view', (() => {
+    const btn = window.document.querySelector('.stage-actions #championshipBtn');
+    return Boolean(btn) && $('viewHome').contains(btn);
+  })());
+  check('stream-start affordance is inside the player',
+    $('player').contains($('streamStart')), `player children: ${$('player').children.length}`);
+  check('player is inside the stage and the stage is inside the home view',
+    $('player').parentElement?.classList.contains('stage') && $('viewHome').contains($('player')));
+  check('hiding the home view hides the grid with it',
+    !$('viewNews').contains($('grid')) && !$('viewInfo').contains($('grid')) && !$('viewDiscord').contains($('grid')));
+
   // Cross-browser playback. The providers' anti-sandbox detectors blank the
   // player when a sandbox attribute is present, so it must never come back.
   const probeFrame = window.makeStreamIframe('https://example.test/embed', undefined);
