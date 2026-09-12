@@ -781,11 +781,8 @@ async function syncMaintenanceState() {
   }
 
   try {
-    const payload = await upstashRequest(['GET', MAINTENANCE_REDIS_KEY]);
-    if (payload?.result) {
-      const stored = JSON.parse(payload.result);
-      applyMaintenanceState(stored);
-    }
+    const { found, value: stored } = await readUpstashJson(MAINTENANCE_REDIS_KEY);
+    if (found) applyMaintenanceState(stored);
     maintenanceStoreReady = true;
     scheduleStatsBroadcast();
     return true;
@@ -915,6 +912,28 @@ function deleteNewsRecord(id) {
   return true;
 }
 
+/* Reads a JSON blob out of Upstash. A value that will not parse must not be
+   allowed to strand a store in the "connecting" state forever — the old code
+   threw on JSON.parse, flipped the store's ready flag off, and never retried,
+   so one bad blob meant news (or maintenance, or the feed list) stayed dead
+   until someone happened to write to it again. Instead: quarantine the bad
+   value under a timestamped key so it can be inspected by hand, report
+   `found: false`, and let the caller fall back to defaults — the next save
+   then repairs the store naturally. */
+async function readUpstashJson(key) {
+  const payload = await upstashRequest(['GET', key]);
+  const raw = payload?.result;
+  if (raw === null || raw === undefined || raw === '') return { found: false, value: undefined };
+  try {
+    return { found: true, value: JSON.parse(raw) };
+  } catch (error) {
+    const quarantineKey = `${key}:corrupt:${Date.now()}`;
+    upstashRequest(['RENAME', key, quarantineKey]).catch(() => {});
+    console.warn(`[Storage] ${key} held an unparseable value (${error.message}); quarantined as ${quarantineKey}.`);
+    return { found: false, value: undefined, corrupt: true };
+  }
+}
+
 async function syncNewsStore() {
   if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
     const stored = readLocalJson(NEWS_FILE);
@@ -928,9 +947,8 @@ async function syncNewsStore() {
   }
 
   try {
-    const payload = await upstashRequest(['GET', NEWS_REDIS_KEY]);
-    if (payload?.result) {
-      const stored = JSON.parse(payload.result);
+    const { found, value: stored } = await readUpstashJson(NEWS_REDIS_KEY);
+    if (found) {
       const restored = Array.isArray(stored)
         ? stored.map(item => normalizeNewsRecord(item)).filter(item => item.title && item.body).slice(0, NEWS_MAX_ITEMS)
         : [];
@@ -1001,8 +1019,8 @@ async function syncSourceConfig() {
     return fileStoreReady;
   }
   try {
-    const payload = await upstashRequest(['GET', SOURCE_REDIS_KEY]);
-    if (payload?.result) applySourceConfig(JSON.parse(payload.result));
+    const { found, value: state } = await readUpstashJson(SOURCE_REDIS_KEY);
+    if (found) applySourceConfig(state);
     sourceStoreReady = true;
     return true;
   } catch (error) {
@@ -1062,6 +1080,45 @@ if (UNIQUE_VISITOR_REMOTE_ENABLED) {
     console.warn('[Storage] Local JSON storage is unavailable; mutable state will remain in memory.');
   }
 }
+
+/* A store that failed its boot-time sync used to stay "connecting" forever —
+   one transient Upstash blip during startup left news (or maintenance, or the
+   feed-source list) dead until someone happened to write to it again. Retry
+   the failures on a slow timer until every store reports ready. */
+const STORE_RESYNC_INTERVAL_MS = 60_000;
+let storeResyncTimer = null;
+
+function pendingStoreSyncs() {
+  return [
+    { name: 'maintenance', isReady: () => maintenanceStoreReady, sync: syncMaintenanceState },
+    { name: 'news', isReady: () => newsStoreReady, sync: syncNewsStore },
+    { name: 'sources', isReady: () => sourceStoreReady, sync: syncSourceConfig }
+  ];
+}
+
+async function resyncPendingStores() {
+  if (!UNIQUE_VISITOR_REMOTE_ENABLED) return;
+  for (const store of pendingStoreSyncs()) {
+    if (store.isReady()) continue;
+    try {
+      if (await store.sync()) {
+        console.log(`[Storage] ${store.name} store reconnected.`);
+        broadcastSourceConfig();
+      }
+    } catch (error) {
+      // sync* already logs through warnUniqueStore; swallow to keep the timer alive.
+    }
+  }
+}
+
+function startStoreResyncTimer() {
+  if (storeResyncTimer || !UNIQUE_VISITOR_REMOTE_ENABLED) return;
+  storeResyncTimer = setInterval(resyncPendingStores, STORE_RESYNC_INTERVAL_MS);
+  storeResyncTimer?.unref?.();
+}
+
+startStoreResyncTimer();
+
 
 // ─────────────────────────────────────────────
 // VISITOR TRACKING

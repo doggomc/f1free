@@ -82,6 +82,10 @@ window.fetch = async (url, options) => {
   return emptyJson({});
 };
 
+// Stand in for a page the viewer has not interacted with yet: every modern
+// browser blocks autoplay with sound in that state.
+Object.defineProperty(window.navigator, 'userActivation', { configurable: true, value: { hasBeenActive: false } });
+
 window.addEventListener('error', event => runtimeErrors.push(String(event.error || event.message)));
 
 (async () => {
@@ -94,7 +98,8 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   order: sources.map(s => s.label),
   ids: sources.map(s => s.id),
   disabled: [...disabledSources]
-});`);
+});
+;window.__teams = () => teams.map(t => ({ id: t.id, name: t.name, color: t.color, text: t.text }));`);
   } catch (error) {
     bootError = error;
   }
@@ -144,6 +149,69 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   check('selection falls back off a disabled first feed',
     $('links').querySelector('.chip.active')?.textContent === 'Sky UK 3',
     $('links').querySelector('.chip.active')?.textContent);
+
+  // Cross-browser playback. The providers' anti-sandbox detectors blank the
+  // player when a sandbox attribute is present, so it must never come back.
+  const probeFrame = window.makeStreamIframe('https://example.test/embed', undefined);
+  const allowAttr = probeFrame.getAttribute('allow') || '';
+  check('stream iframe carries no sandbox attribute', !probeFrame.hasAttribute('sandbox'),
+    `sandbox="${probeFrame.getAttribute('sandbox')}"`);
+  check('stream iframe grants autoplay and fullscreen',
+    /\bautoplay\b/.test(allowAttr) && /\bfullscreen\b/.test(allowAttr), allowAttr);
+  check('stream iframe delegates permissions to nested player frames',
+    /autoplay \*/.test(allowAttr) && /fullscreen \*/.test(allowAttr), allowAttr);
+  check('stream iframe allows encrypted media', /encrypted-media/.test(allowAttr), allowAttr);
+  check('autoplay is reported as blocked before any interaction', window.pageHasActivation() === false);
+  check('start affordance is offered only when playback is blocked', (() => {
+    const el = $('streamStart');
+    window.updateStreamStartAffordance(false); const offWhenNoFeed = el.hidden;
+    window.updateStreamStartAffordance(true); const onWhenFeedIsUp = !el.hidden;
+    return offWhenNoFeed && onWhenFeedIsUp;
+  })());
+  check('start button reloads the feed under a user gesture', (() => {
+    const framesBefore = $('player').querySelectorAll('iframe').length;
+    $('streamStartBtn').click();
+    return $('player').querySelectorAll('iframe').length >= framesBefore &&
+      $('loaderText').textContent === 'Establishing feed…' && $('streamStart').hidden;
+  })(), `${$('loaderText').textContent} / hidden=${$('streamStart').hidden}`);
+  check('video override sets inline playback attributes', (() => {
+    const v = window.document.createElement('video');
+    v.controls = true; v.autoplay = true; v.playsInline = true;
+    v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', '');
+    return v.playsInline === true && v.hasAttribute('webkit-playsinline');
+  })());
+
+  // Livery contrast. White text on a light livery (Haas #E6E6E6) was
+  // invisible; every accent must now keep its ink above the 4.5:1 AA floor.
+  const expandHex = hex => { const h = hex.slice(1); return h.length === 3 ? h.split('').map(x => x + x).join('') : h; };
+  const lumOf = hex => { const n = parseInt(expandHex(hex), 16); return window.relLuminance((n >> 16) & 255, (n >> 8) & 255, n & 255); };
+  const inks = window.__teams().map(t => {
+    const ink = window.inkOn(t.color);
+    return { name: t.name, color: t.color, ink, ratio: window.contrastRatio(lumOf(t.color), lumOf(ink)) };
+  });
+  const worst = inks.reduce((w, r) => (r.ratio < w.ratio ? r : w));
+  check('every livery keeps its ink at 4.5:1 contrast or better', worst.ratio >= 4.5,
+    `worst: ${worst.name} ${worst.color} -> ${worst.ink} at ${worst.ratio.toFixed(2)}:1`);
+  check('Haas flips to dark ink on its white livery', window.inkOn('#E6E6E6') === '#000', window.inkOn('#E6E6E6'));
+  check('Ferrari keeps white ink on its red livery', window.inkOn('#DC0000') === '#fff', window.inkOn('#DC0000'));
+  check('light secondary liveries also flip to dark ink',
+    window.inkOn('#B4A07A') === '#000' && window.inkOn('#6692FF') === '#000',
+    `${window.inkOn('#B4A07A')} / ${window.inkOn('#6692FF')}`);
+  // The hand-picked `text` values are not authoritative — they pick white for
+  // Alpine, which is only 3.77:1. The computed choice must be at least as good.
+  check('computed ink is never worse than the hand-picked text value',
+    inks.every(({ name, color, ratio }) => {
+      const t = window.__teams().find(x => x.name === name);
+      const handPicked = t.text === '#000' ? '#000' : '#fff';
+      return ratio >= window.contrastRatio(lumOf(color), lumOf(handPicked)) - 1e-9;
+    }), inks.map(i => `${i.name}:${i.ink}@${i.ratio.toFixed(2)}`).join(' '));
+  check('applying the Haas livery sets a dark --team-ink', (() => {
+    window.applyTeamTheme('haas');
+    const ink = window.document.documentElement.style.getPropertyValue('--team-ink').trim();
+    const team = window.document.documentElement.style.getPropertyValue('--team').trim();
+    window.applyTeamTheme('default');
+    return ink === '#000' && team === '#E6E6E6';
+  })());
 
   // Router: /news, /info, /discord views
   const click = el => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
