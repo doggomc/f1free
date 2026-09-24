@@ -545,6 +545,9 @@ td .pill-sm {
   transition: width 1s linear;
 }
 .conn-bar-fill.disconnected { background: var(--red); }
+.override-conflict {
+  color: var(--amber); font-size: .72rem; line-height: 1.45; margin: 0;
+}
 
 /* ─── Performance, accessibility and phone layout ───────────── */
 button,input,a{-webkit-tap-highlight-color:transparent}

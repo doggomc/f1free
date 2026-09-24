@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
   <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"></noscript>
-  <link rel="stylesheet" href="/admin/admin.css?v=20260912-livery1">
+  <link rel="stylesheet" href="/admin/admin.css?v=20260924-admin1">
 </head>
 <body>
 
@@ -68,7 +68,7 @@
         <div class="stat-card accent-blue">
           <div class="stat-label">Unique Visitors</div>
           <div class="stat-value blue" id="uniqueCount">0</div>
-          <div class="stat-sub">Total sessions recorded</div>
+          <div class="stat-sub">All-time unique visitors</div>
         </div>
         <div class="stat-card accent-red">
           <div class="stat-label">Stream Override</div>
@@ -91,7 +91,7 @@
       <div class="content-grid">
 
         <!-- Left Column: Visitor Table -->
-        <div class="panel" style="margin-bottom:20px">
+        <div class="panel" id="panel-sessions" style="margin-bottom:20px">
           <div class="panel-head">
             <div class="panel-title">Active Sessions</div>
             <div class="panel-badge live" id="tableBadge">● Live</div>
@@ -202,7 +202,7 @@
           </div>
 
           <!-- Stream Control Panel -->
-          <div class="panel">
+          <div class="panel" id="panel-stream">
             <div class="panel-head">
               <div class="panel-title">Stream Control</div>
               <div class="panel-badge normal" id="streamBadge">Normal</div>
@@ -240,10 +240,12 @@
 
               <!-- Action Buttons -->
               <div class="btn-row">
-                <button class="btn-sm btn-red" id="playOverrideBtn">▶ Play Override</button>
-                <button class="btn-sm btn-ghost" id="stopOverrideBtn" disabled>■ Stop Override</button>
-                <button class="btn-sm btn-ghost" id="normalStreamBtn" disabled>↩ Return to Normal</button>
+                <button class="btn-sm btn-red" id="playOverrideBtn" type="button" title="Play this URL for every viewer">▶ Play Override</button>
+                <button class="btn-sm btn-ghost" id="stopOverrideBtn" type="button" title="Stop playback but keep this URL" disabled>■ Stop Override</button>
+                <button class="btn-sm btn-ghost" id="normalStreamBtn" type="button" title="Stop playback and clear the saved URL" disabled>↩ Return to Normal</button>
               </div>
+              <p class="url-hint">Stop keeps the URL so you can play it again. Return to Normal clears it. Viewers go back to the site feed either way.</p>
+              <p class="override-conflict" id="overrideConflict" hidden>Maintenance is on, so viewers are on the pit page and will not see this override until the site is live again.</p>
 
               <!-- Meta -->
               <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
@@ -254,7 +256,7 @@
           </div>
 
           <!-- Feed Sources Panel -->
-          <div class="panel">
+          <div class="panel" id="panel-sources">
             <div class="panel-head">
               <div class="panel-title">Feed Sources</div>
               <div class="panel-badge normal" id="sourcesBadge">—</div>
@@ -312,6 +314,10 @@
               <div class="system-item">
                 <span class="sys-key">Source Store</span>
                 <span class="sys-val" id="sysSourceStore">—</span>
+              </div>
+              <div class="system-item">
+                <span class="sys-key">Override Store</span>
+                <span class="sys-val" id="sysOverrideStore">—</span>
               </div>
               <div class="system-item">
                 <span class="sys-key">Override Mode</span>
@@ -454,8 +460,8 @@
   <!-- Toast Container -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="/admin/charts.js?v=20260912-livery1" defer></script>
-  <script src="/admin/analytics.js?v=20260912-livery1" defer></script>
-  <script src="/admin/admin.js?v=20260912-livery1" defer></script>
+  <script src="/admin/charts.js?v=20260924-admin1" defer></script>
+  <script src="/admin/analytics.js?v=20260924-admin1" defer></script>
+  <script src="/admin/admin.js?v=20260924-admin1" defer></script>
 </body>
 </html>

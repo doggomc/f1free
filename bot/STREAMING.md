@@ -112,10 +112,15 @@ optional packages are absent.
 
 - One relay per guild; relays are per-process (fine on a single Render
   instance, needs coordination if you ever scale out).
-- Re-encoding costs CPU. On Render's free/Starter tiers, expect ~5–10 % of a
-  vCPU for a single 96 kbps Opus stream.
-- Discord rate-limits voice connection churn — the retry backoff is
-  5 × 2 s, then it gives up and you re-run `/watchparty start`.
+- Re-encoding costs CPU while people are in the channel. On Render's
+  free/Starter tiers, expect ~5–10 % of a vCPU for a single 96 kbps Opus
+  stream. An empty room pauses the player; ffmpeg blocks on the full pipe
+  and that cost drops to ~0 until someone rejoins.
+- Discord rate-limits voice connection churn. A source that ends (every
+  chequered flag) is retried up to 5 times, backing off 2 s × attempt.
+  The budget is persisted, so a redeploy mid-retry cannot reset it and
+  loop. After that it gives up, forgets the saved relay, and you re-run
+  `/watchparty start`.
 
 ---
 
@@ -153,10 +158,12 @@ another app. Say the word and it can be scaffolded.
 
 Not "streaming", but it is what actually gets people to a race:
 
-- `STARTING SOON` embed 10 minutes out with a role ping.
-- The same message **edits itself** into `LIVE NOW` with a Watch button at
-  lights-out — one message, no channel spam, deduped through the durable store.
-- `/website`, `/live`, reaction roles for driver liveries and stream alerts.
+- `STARTING SOON` embed (amber) at the configured lead time, with a role ping.
+- The same message **edits itself** into `LIVE NOW` (green) at lights-out,
+  then into `ENDED` (red) at the chequered flag — one message, no channel
+  spam, deduped through the durable store.
+- `/website`, `/live`, `/config`, `/status`. Supporter roles and stream
+  alerts are button toggles; already-posted reaction panels still work.
 
 Keep this. It is the highest value-per-byte feature in the bot.
 

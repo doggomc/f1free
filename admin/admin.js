@@ -62,6 +62,8 @@ const sysVisitorStore   = $('sysVisitorStore');
 const sysUniqueStore    = $('sysUniqueStore');
 const sysNewsStore      = $('sysNewsStore');
 const sysSourceStore    = $('sysSourceStore');
+const sysOverrideStore  = $('sysOverrideStore');
+const overrideConflict  = $('overrideConflict');
 const sourceList        = $('sourceList');
 const sourcesBadge      = $('sourcesBadge');
 const sourcesStore      = $('sourcesStore');
@@ -100,6 +102,7 @@ let overrideActive = false;
 let maintenanceActive = false;
 let maintenanceStateKnown = false;
 let previewUrl = '';
+let savedOverrideInput = '';
 let newsItems = [];
 let feedSources = [];
 let disabledSources = new Set();
@@ -367,12 +370,13 @@ function updateStreamStatus(override) {
       <div class="time-ago">LIVE</div>`;
     if (streamTypeLabel) streamTypeLabel.textContent = `TYPE: ${(override.type || 'custom').toUpperCase()}`;
     if (streamStartedLabel) streamStartedLabel.textContent = `STARTED: ${formatTimeAgo(override.startedAt)}`;
+    rememberOverrideInput(override);
+    updateStreamButtons(true, true);
     if (streamBadge) {
       streamBadge.textContent = 'Override';
       streamBadge.className = 'panel-badge live';
     }
     overrideActive = true;
-    updateStreamButtons(true);
     if (override.url && previewUrl !== override.url) renderStreamPreview(override.url, override.type);
   } else {
     streamStatusEl.className = 'stream-status active-normal';
@@ -385,14 +389,17 @@ function updateStreamStatus(override) {
       <div class="time-ago">● LIVE</div>`;
     if (streamTypeLabel) streamTypeLabel.textContent = 'TYPE: NORMAL';
     if (streamStartedLabel) streamStartedLabel.textContent = 'STARTED: —';
+    rememberOverrideInput(override);
+    const hasSaved = Boolean(savedOverrideInput || override?.playbackUrl || override?.input);
     if (streamBadge) {
       streamBadge.textContent = 'Normal';
       streamBadge.className = 'panel-badge normal';
     }
     overrideActive = false;
-    updateStreamButtons(false);
+    updateStreamButtons(false, hasSaved);
     if (previewUrl) clearStreamPreview();
   }
+  syncOverrideConflict();
 }
 
 function updateMaintenanceStatus(maintenance) {
@@ -447,10 +454,22 @@ function updateMaintenanceStatus(maintenance) {
   }
 }
 
-function updateStreamButtons(active) {
+function updateStreamButtons(active, hasSaved = false) {
   if (playOverrideBtn)  playOverrideBtn.disabled = active;
   if (stopOverrideBtn)  stopOverrideBtn.disabled = !active;
-  if (normalStreamBtn)  normalStreamBtn.disabled = !active;
+  if (normalStreamBtn)  normalStreamBtn.disabled = !active && !hasSaved;
+}
+
+function rememberOverrideInput(override) {
+  if (!override || !Object.prototype.hasOwnProperty.call(override, 'input')) return;
+  savedOverrideInput = override.input || '';
+  if (!streamUrlInput || document.activeElement === streamUrlInput) return;
+  streamUrlInput.value = savedOverrideInput;
+}
+
+function syncOverrideConflict() {
+  if (!overrideConflict) return;
+  overrideConflict.hidden = !(overrideActive && maintenanceActive);
 }
 
 const STORE_COLORS = { UPSTASH: 'var(--green)', FILE: 'var(--amber)' };
@@ -473,6 +492,7 @@ function updateSystemInfo(data) {
   renderStore(sysNewsStore, data?.server?.newsStore);
   renderStore(sysAnalyticsStore, data?.server?.analyticsStore);
   renderStore(sysSourceStore, data?.server?.sourceStore);
+  renderStore(sysOverrideStore, data?.server?.overrideStore);
   if (sysOverrideStatus) {
     sysOverrideStatus.textContent = data?.override?.active ? 'OVERRIDE' : 'NORMAL';
     sysOverrideStatus.style.color = data?.override?.active ? '#ff6b62' : 'var(--green)';
@@ -755,8 +775,11 @@ async function toggleSource(sourceId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ disabled: [...next] })
     });
-    const data = await response.json();
-    if (response.status === 401) { showLogin(); return; }
+    const data = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      showLogin();
+      throw new Error('Session expired. Sign in again.');
+    }
     if (!response.ok || !data.success) throw new Error(data.error || 'Feed source update failed.');
     disabledSources = new Set((Array.isArray(data.disabled) ? data.disabled : []).map(String));
     renderSources();
@@ -796,9 +819,10 @@ function updateVisitorTable(data) {
     const online = now - (visitor.lastSeen || 0) <= ONLINE_WINDOW_MS;
     const flag = visitor.countryCode ? getFlag(visitor.countryCode) : '🌐';
     const country = visitor.country || visitor.countryCode || 'Unknown';
+    const place = visitor.city ? `${visitor.city}, ${country}` : country;
     const device = String(visitor.deviceType || '—');
     const deviceSlug = /^(mobile|tablet|desktop)$/i.test(device) ? device.toLowerCase() : 'unknown';
-    const signature = JSON.stringify([visitor.ip, country, visitor.countryCode, visitor.browser, visitor.os, device, visitor.page, online]);
+    const signature = JSON.stringify([visitor.ip, place, visitor.countryCode, visitor.browser, visitor.os, device, visitor.page, online]);
     let row = existingRows.get(key);
     if (!row) {
       row = document.createElement('tr');
@@ -810,7 +834,7 @@ function updateVisitorTable(data) {
       row.dataset.signature = signature;
       row.innerHTML = `
         <td class="ip" data-label="IP Address">${escapeHtml(visitor.ip || key)}</td>
-        <td class="country" data-label="Location"><span class="flag">${flag}</span>${escapeHtml(country)}</td>
+        <td class="country" data-label="Location"><span class="flag">${flag}</span>${escapeHtml(place)}</td>
         <td data-label="Browser">${escapeHtml(visitor.browser || '—')}</td>
         <td data-label="OS">${escapeHtml(visitor.os || '—')}</td>
         <td class="device-${deviceSlug}" data-label="Device">${escapeHtml(device)}</td>
@@ -837,13 +861,27 @@ function renderEmptyVisitors() {
 }
 
 function refreshVisitorTimes() {
-  if (!currentStats?.visitors?.length) return;
+  if (!visitorTableBody || !currentStats?.visitors?.length) return;
+  const now = Date.now();
   const visitors = new Map(currentStats.visitors.map(visitor => [String(visitor.id || visitor.ip || visitor.lastSeen), visitor]));
+  let online = 0;
   visitorTableBody.querySelectorAll('tr[data-key]').forEach(row => {
     const visitor = visitors.get(row.dataset.key);
+    if (!visitor) return;
     const cell = row.querySelector('.timestamp-cell');
-    if (visitor && cell) cell.textContent = formatTimeAgo(visitor.lastSeen);
+    if (cell) cell.textContent = formatTimeAgo(visitor.lastSeen);
+    const isOnline = now - (visitor.lastSeen || 0) <= ONLINE_WINDOW_MS;
+    if (isOnline) online++;
+    if (row.dataset.online === (isOnline ? '1' : '0')) return;
+    row.dataset.online = isOnline ? '1' : '0';
+    const status = row.querySelector('.status-cell');
+    if (status) {
+      status.innerHTML = `<span class="pill-sm status-pill ${isOnline ? 'pill-online' : 'pill-offline'}"><span class="${isOnline ? 'dot-online' : 'dot-offline'}"></span>${isOnline ? 'Online' : 'Offline'}</span>`;
+    }
   });
+  if (onlineCountEl) onlineCountEl.textContent = String(online);
+  if (tableBadge) tableBadge.textContent = `● ${online} Live`;
+  currentStats.onlineCount = online;
 }
 
 /* Visitor rows are mutated in place and the table is repainted at most once
@@ -905,16 +943,18 @@ function handleVisitorUpdate(type, visitor) {
 }
 
 function handleStreamStatusUpdate(data) {
-  if (!currentStats) return;
-  currentStats.override = data;
+  if (currentStats) currentStats.override = data;
   updateStreamStatus(data);
-  updateStatCards(currentStats);
+  if (currentStats) updateStatCards(currentStats);
 }
 
 function handleStreamOverrideUpdate(data) {
   const changed = Boolean(data.active) !== overrideActive || (data.url || '') !== previewUrl;
   handleStreamStatusUpdate(data);
-  if (changed) showToast(data.active ? 'Stream override activated.' : 'Stream override deactivated — normal feed restored.', data.active ? 'warning' : 'success');
+  if (!changed) return;
+  if (data.active) showToast('Stream override activated.', 'warning');
+  else if (data.input) showToast('Override stopped. The URL is still saved.', 'success');
+  else showToast('Returned to the normal feed. Saved URL cleared.', 'success');
 }
 
 function handleMaintenanceUpdate(data) {
@@ -1047,6 +1087,33 @@ maintenanceToggleBtn?.addEventListener('click', toggleMaintenanceMode);
 // ─────────────────────────────────────────────
 // STREAM CONTROLS
 // ─────────────────────────────────────────────
+function applyOverridePayload(data) {
+  if (!data) return false;
+  const changed = Boolean(data.active) !== overrideActive || (data.url || '') !== previewUrl || (data.input || '') !== savedOverrideInput;
+  handleStreamStatusUpdate(data);
+  return changed;
+}
+
+async function postStreamAction(path, body) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body || {})
+  });
+  const data = await response.json().catch(() => ({}));
+  if (response.status === 401) {
+    showLogin();
+    throw new Error('Session expired. Sign in again.');
+  }
+  if (!response.ok || !data.success) throw new Error(data.error || 'Stream update failed.');
+  return data;
+}
+
+function noteOverrideResult(data, changed, activeMessage, idleMessage) {
+  if (changed) showToast(data.override?.active ? activeMessage : idleMessage, data.override?.active ? 'warning' : 'success');
+  if (data.durable === false) showToast('Saved in memory only. Configure Upstash to keep the override after a restart.', 'warning');
+}
+
 async function activateStreamOverride() {
   const url = streamUrlInput.value.trim();
   if (!url) { showToast('Enter a stream URL first.', 'error'); return; }
@@ -1056,23 +1123,14 @@ async function activateStreamOverride() {
   playOverrideBtn.textContent = 'Activating…';
 
   try {
-    const r = await fetch(`${API_BASE}/stream/override`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
-    });
-    const d = await r.json();
-    if (d.success) {
-      showToast('Stream override activated.', 'warning');
-      if (d.override?.url && streamPreview) renderStreamPreview(d.override.url, d.override.type);
-    } else {
-      showToast(d.error || 'Failed to activate override.', 'error');
-    }
-  } catch (_) {
-    showToast('Network error activating override.', 'error');
+    const data = await postStreamAction('/stream/override', { url });
+    const changed = applyOverridePayload(data.override);
+    noteOverrideResult(data, changed, 'Stream override activated.', 'Stream override updated.');
+  } catch (error) {
+    showToast(error.message || 'Network error activating override.', 'error');
   } finally {
-    playOverrideBtn.disabled = false;
     playOverrideBtn.textContent = '▶ Play Override';
+    updateStreamButtons(overrideActive, Boolean(savedOverrideInput));
   }
 }
 
@@ -1080,17 +1138,14 @@ async function stopStreamOverride() {
   stopOverrideBtn.disabled = true;
   stopOverrideBtn.textContent = 'Stopping…';
   try {
-    const r = await fetch(`${API_BASE}/stream/stop`, { method: 'POST' });
-    const d = await r.json();
-    if (d.success) {
-      showToast('Stream override stopped.', 'success');
-      clearStreamPreview();
-    }
-  } catch (_) {
-    showToast('Network error stopping override.', 'error');
+    const data = await postStreamAction('/stream/stop');
+    const changed = applyOverridePayload(data.override);
+    noteOverrideResult(data, changed, 'Stream override activated.', 'Override stopped. The URL is still saved.');
+  } catch (error) {
+    showToast(error.message || 'Network error stopping override.', 'error');
   } finally {
-    stopOverrideBtn.disabled = false;
     stopOverrideBtn.textContent = '■ Stop Override';
+    updateStreamButtons(overrideActive, Boolean(savedOverrideInput));
   }
 }
 
@@ -1098,24 +1153,28 @@ async function returnToNormalStream() {
   normalStreamBtn.disabled = true;
   normalStreamBtn.textContent = 'Restoring…';
   try {
-    const r = await fetch(`${API_BASE}/stream/normal`, { method: 'POST' });
-    const d = await r.json();
-    if (d.success) {
-      showToast('Returned to normal stream.', 'success');
-      clearStreamPreview();
-    }
-  } catch (_) {
-    showToast('Network error restoring stream.', 'error');
+    const data = await postStreamAction('/stream/normal');
+    const changed = applyOverridePayload(data.override);
+    noteOverrideResult(data, changed, 'Stream override activated.', 'Returned to the normal feed. Saved URL cleared.');
+  } catch (error) {
+    showToast(error.message || 'Network error restoring stream.', 'error');
   } finally {
-    normalStreamBtn.disabled = false;
     normalStreamBtn.textContent = '↩ Return to Normal';
+    updateStreamButtons(overrideActive, Boolean(savedOverrideInput));
   }
 }
+
+const VIDEO_MIME = { mp4: 'video/mp4', webm: 'video/webm' };
 
 function renderStreamPreview(url, type) {
   if (!streamPreview || !url || previewUrl === url) return;
   previewUrl = url;
-  if (type === 'youtube' || type === 'embed') {
+  const mime = VIDEO_MIME[type];
+  if (mime) {
+    streamPreview.innerHTML = `<video controls autoplay playsinline preload="metadata" style="width:100%;height:100%;border-radius:var(--radius-sm)"><source src="${escapeHtml(url)}" type="${mime}"></video>`;
+    return;
+  }
+  if (type === 'youtube' || type === 'embed' || type) {
     // No `sandbox` attribute here on purpose: the embeds' ad layer probes
     // window.open() on first click and, when it returns null (sandboxed
     // without allow-popups), its bid server answers showSbxMsg and the
@@ -1123,8 +1182,6 @@ function renderStreamPreview(url, type) {
     // iframe" overlay. The preview is admin-authenticated and cross-origin
     // isolation already shields the panel from the framed page.
     streamPreview.innerHTML = `<iframe src="${escapeHtml(url)}" allow="autoplay; fullscreen" allowFullScreen referrerpolicy="no-referrer"></iframe>`;
-  } else if (type === 'mp4') {
-    streamPreview.innerHTML = `<video controls autoplay playsinline preload="metadata" style="width:100%;height:100%;border-radius:var(--radius-sm)"><source src="${escapeHtml(url)}"></video>`;
   }
 }
 
@@ -1250,6 +1307,7 @@ function showToast(message, type = 'info') {
 // ─────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────
+window.__adminUnauth = () => { if (isAdmin) showLogin(); };
 checkAuthStatus();
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && isAdmin) {

@@ -223,7 +223,7 @@ const Analytics = (() => {
     // Heat-map: average concurrent viewers by weekday × hour ---------------------
     F.heatmap($('chartHeat'), { cells: heatCells(), title: 'Avg viewers online', format: v => v.toFixed(1) });
     const heatNote = $('chartHeatNote');
-    if (heatNote) heatNote.textContent = `avg viewers online · weekday × hour · ${Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time'} · last ${Math.round((data.retention?.hourlyHours || 336) / 24)} days`;
+    if (heatNote) heatNote.textContent = `avg viewers online · weekday × hour · ${data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'} · last ${Math.round((data.retention?.hourlyHours || 336) / 24)} days`;
 
     // Audience breakdowns ----------------------------------------------------------
     F.donut($('chartDevice'), { rows: toRows(totals.device, l => DEVICE_COLORS[l] || '#a78bfa') });
@@ -293,8 +293,9 @@ const Analytics = (() => {
       // Ask the server for the window being drawn: it then trims the payload
       // and pre-aggregates the previous period, the heat-map and the busiest
       // hours instead of shipping the whole 14-day/90-day retention.
-      const response = await fetch(`/admin/api/analytics?range=${encodeURIComponent(range)}`, { cache: 'no-store' });
-      if (response.status === 401) { stop(); return; }
+      const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      const response = await fetch(`/admin/api/analytics?range=${encodeURIComponent(range)}&tz=${encodeURIComponent(zone)}`, { cache: 'no-store' });
+      if (response.status === 401) { stop(); window.__adminUnauth?.(); return; }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       data = await response.json();
       render();
@@ -331,9 +332,10 @@ const Analytics = (() => {
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
-  function start() {
-    if (timer) return;
-    if (!(range in RANGES)) range = '7d';
+  let listening = false;
+  function bindControls() {
+    if (listening) return;
+    listening = true;
     document.querySelectorAll('#analyticsRange .range-btn').forEach(btn => btn.addEventListener('click', () => {
       const next = btn.dataset.range;
       if (!(next in RANGES) || next === range) return;
@@ -347,7 +349,13 @@ const Analytics = (() => {
     $('analyticsRefresh')?.addEventListener('click', () => load(true));
     $('analyticsExport')?.addEventListener('click', exportCsv);
     window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(render, 150); });
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && timer) load(); });
+  }
+
+  function start() {
+    if (timer) return;
+    if (!(range in RANGES)) range = '7d';
+    bindControls();
     load(true);
     timer = setInterval(load, REFRESH_MS);
   }

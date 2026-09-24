@@ -66,19 +66,46 @@ function create({ log = (...a) => console.log('[Relay]', ...a), getState, save =
     if (!state.guilds[guildId]) state.guilds[guildId] = defaultGuild();
     return state.guilds[guildId];
   }
-  /** guildId -> { connection, player, resource, ffmpeg, channelId, url, startedAt } */
+  /** guildId -> { connection, player, resource, ffmpeg, channelId, url, startedAt, paused } */
   const sessions = new Map();
+  /* Retry budget lives OUTSIDE start(): each retry must not reset it, or a
+     source that connects and instantly EOFs (a commentary feed at the
+     chequered flag) would reconnect forever against Discord's voice
+     rate limits. attempt is threaded through the recursion instead. */
+  const MAX_ATTEMPTS = 5;
 
   function stopSession(guildId, { clearSaved = false } = {}) {
     const session = sessions.get(guildId);
-    if (!session) return false;
+    if (!session || session.stopping) return false;
+    session.stopping = true;
+    sessions.delete(guildId); // first, so disconnect handlers cannot re-enter
+    if (session.healthyTimer) clearTimeout(session.healthyTimer);
     try { session.player?.stop(true); } catch (_) {}
     try { session.ffmpeg?.kill('SIGKILL'); } catch (_) {}
     try { session.connection?.destroy(); } catch (_) {}
-    sessions.delete(guildId);
     if (clearSaved) {
       guildState(guildId).then(state => { if (state) { delete state.relay; save(); } }).catch(() => {});
     }
+    return true;
+  }
+
+  /* Pause when the voice room has no humans. player.pause() stops reading
+     the pipe; ffmpeg blocks on the full buffer and CPU drops to ~0.
+     Unpause resumes the same process — no reconnect, no retry-budget hit. */
+  function setPaused(guildId, paused) {
+    const session = sessions.get(guildId);
+    if (!session || session.stopping) return false;
+    const next = Boolean(paused);
+    if (session.paused === next) return true;
+    session.paused = next;
+    try {
+      if (next) session.player.pause();
+      else if (session.player.state?.status === 'paused') session.player.unpause();
+      else session.player.play(session.resource);
+    } catch (error) {
+      log(`pause toggle failed in ${guildId}: ${error.message}`);
+    }
+    log(`relay ${next ? 'paused (empty room)' : 'resumed'} in ${guildId}`);
     return true;
   }
 
@@ -87,8 +114,10 @@ function create({ log = (...a) => console.log('[Relay]', ...a), getState, save =
    * @param {object} guild     discord.js Guild
    * @param {object} channel   discord.js VoiceBasedChannel
    * @param {string} url       any ffmpeg-readable audio source
+   * @param {number} [attempt] internal: retry counter, threaded through
+   *                           retries so the budget cannot reset itself
    */
-  async function start(guild, channel, url) {
+  async function start(guild, channel, url, attempt = 1) {
     if (!isAvailable()) {
       const error = new Error(
         'Voice relay is not installed. Run: npm i @discordjs/voice @discordjs/opus ffmpeg-static'
@@ -148,13 +177,18 @@ function create({ log = (...a) => console.log('[Relay]', ...a), getState, save =
 
     const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.Opus });
 
-    const session = { connection, player, resource, ffmpeg, channelId: channel.id, url, startedAt: Date.now() };
-    sessions.set(guild.id, session);
+    let sourceEnded = false;
+    ffmpeg.on('exit', () => { sourceEnded = true; });
 
-    // Reconnect/robustness: if the stream dies, retry a few times before
-    // giving up, because live HLS endpoints drop and come back constantly.
-    let retries = 0;
-    const MAX_RETRIES = 5;
+    const session = {
+      connection, player, resource, ffmpeg,
+      channelId: channel.id, url, startedAt: Date.now(),
+      paused: false,
+      // Mutable so a healthy stretch can hand the next outage a fresh budget
+      // without the Idle closure keeping the attempt it was born with.
+      attempt
+    };
+    sessions.set(guild.id, session);
 
     player.on('error', error => {
       log(`player error in ${guild.id}: ${error.message}`);
@@ -162,21 +196,37 @@ function create({ log = (...a) => console.log('[Relay]', ...a), getState, save =
 
     player.on(AudioPlayerStatus.Idle, () => {
       const current = sessions.get(guild.id);
-      if (!current || current.player !== player) return;
-      if (ffmpeg.exitCode !== null) {
-        // The source ended (or never started).
-        if (!startupError && retries < MAX_RETRIES) {
-          retries++;
-          log(`source ended in ${guild.id}, retry ${retries}/${MAX_RETRIES}`);
-          setTimeout(() => start(guild, channel, url).catch(e => log(`retry failed: ${e.message}`)), 2000 * retries);
+      if (!current || current.player !== player) return; // superseded or stopped
+      if (!sourceEnded && ffmpeg.exitCode === null) {
+        // Brief gap in a live source: keep the connection, replay the
+        // resource. While paused (empty room) do nothing — the full pipe
+        // back-pressures ffmpeg, which is exactly the CPU saving we want.
+        // Cap the replays: a consumed resource idles instantly, and an
+        // uncapped replay would spin the event loop until the process dies.
+        current.gapReplays = (current.gapReplays || 0) + 1;
+        if (current.gapReplays > 3) sourceEnded = true;
+        else {
+          if (!current.paused) { try { player.play(resource); } catch (_) {} }
           return;
         }
-        log(`source stopped in ${guild.id}: ${startupError.trim().split('\n').pop() || 'end of stream'}`);
-        stopSession(guild.id);
+      }
+      // The source ended (or never started). Retry with a budget that
+      // survives recursion AND redeploys: attempt lives on the session and
+      // is persisted, so neither path can reset it back to 1.
+      if (current.attempt < MAX_ATTEMPTS) {
+        const next = current.attempt + 1;
+        log(`source ended in ${guild.id}, retry ${current.attempt}/${MAX_ATTEMPTS - 1}`);
+        setTimeout(() => {
+          if (sessions.get(guild.id) !== session) return; // stopped or superseded meanwhile
+          start(guild, channel, url, next).catch(e => log(`retry failed: ${e.message}`));
+        }, 2000 * current.attempt);
         return;
       }
-      // Brief gap in a live source: keep the connection, replay the resource.
-      try { player.play(resource); } catch (_) {}
+      const detail = startupError.trim().split('\n').pop() || 'end of stream';
+      log(`source stopped in ${guild.id} after ${MAX_ATTEMPTS} attempts: ${detail}`);
+      // Clear the saved relay too: a source that truly ended (chequered
+      // flag) must not be resurrected by the next restart's resume path.
+      stopSession(guild.id, { clearSaved: true });
     });
 
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
@@ -186,8 +236,9 @@ function create({ log = (...a) => console.log('[Relay]', ...a), getState, save =
           entersState(connection, VoiceConnectionStatus.Connecting, 5_000)
         ]);
       } catch (_) {
-        connection.destroy();
-        sessions.delete(guild.id);
+        // Network drop we could not recover. Keep the saved relay so the
+        // next process start can resume; just don't leak ffmpeg here.
+        if (sessions.get(guild.id)?.connection === connection) stopSession(guild.id);
       }
     });
 
@@ -196,9 +247,22 @@ function create({ log = (...a) => console.log('[Relay]', ...a), getState, save =
 
     guildState(guild.id).then(state => {
       if (!state) return;
-      state.relay = { channelId: channel.id, url, startedAt: session.startedAt };
+      // attempts is persisted so a redeploy mid-retry cannot reset the
+      // budget and loop forever against a source that has ended.
+      state.relay = { channelId: channel.id, url, startedAt: session.startedAt, attempts: attempt };
       save();
     }).catch(() => {});
+
+    // A source that stays up is healthy — hand the next outage a fresh budget.
+    session.healthyTimer = setTimeout(() => {
+      if (sessions.get(guild.id) !== session) return;
+      session.attempt = 1;
+      guildState(guild.id).then(state => {
+        if (!state || !state.relay || state.relay.attempts === 1) return;
+        state.relay.attempts = 1;
+        save();
+      }).catch(() => {});
+    }, 20000);
 
     log(`relay started in ${guild.name} → ${channel.name}`);
     return session;
@@ -212,7 +276,8 @@ function create({ log = (...a) => console.log('[Relay]', ...a), getState, save =
       channelId: session.channelId,
       url: session.url,
       startedAt: session.startedAt,
-      state: player ? player.state?.status : 'unknown'
+      state: player ? player.state?.status : 'unknown',
+      paused: Boolean(session.paused)
     };
   }
 
@@ -220,7 +285,7 @@ function create({ log = (...a) => console.log('[Relay]', ...a), getState, save =
     for (const guildId of [...sessions.keys()]) stopSession(guildId);
   }
 
-  return { start, stop: stopSession, status, stopAll, isAvailable, resolveFfmpeg };
+  return { start, stop: stopSession, setPaused, status, stopAll, isAvailable, resolveFfmpeg };
 }
 
 module.exports = { create, isAvailable, resolveFfmpeg, voiceError };

@@ -43,6 +43,8 @@ const ANALYTICS_FILE = path.join(DATA_DIR, 'analytics.json');
 const ANALYTICS_REDIS_KEY = process.env.ANALYTICS_REDIS_KEY || 'freef1:analytics:v1';
 const SOURCE_CONFIG_FILE = path.join(DATA_DIR, 'stream-sources.json');
 const SOURCE_REDIS_KEY = process.env.SOURCE_REDIS_KEY || 'freef1:stream-sources:v1';
+const OVERRIDE_FILE = path.join(DATA_DIR, 'stream-override.json');
+const OVERRIDE_REDIS_KEY = process.env.OVERRIDE_REDIS_KEY || 'freef1:stream-override:v1';
 
 // ── OpenF1 proxy (see /api/openf1/:path) ──
 // OpenF1 locks the free tier with a CORS-less 401 while a session is live, which
@@ -226,13 +228,19 @@ const visitorRateLimits = new Map();
 let fileStoreReady = false;
 const GEO_CACHE_TTL = Number(process.env.GEO_CACHE_TTL_MS || 6 * 60 * 60 * 1000);
 
-// Stream override state
+// Stream override. `input` is the URL the admin typed; `url` is the playback
+// URL viewers actually receive. Both are persisted so a redeploy does not
+// drop a live override or forget the URL that was entered.
 const streamOverride = {
   active: false,
+  input: null,
   url: null,
-  type: null, // 'youtube' | 'mp4' | 'embed' | null
-  startedAt: null
+  type: null, // 'youtube' | 'mp4' | 'webm' | 'embed' | null
+  startedAt: null,
+  updatedAt: null
 };
+let overrideStoreReady = false;
+let overrideInitPromise = Promise.resolve(false);
 
 const DEFAULT_MAINTENANCE_MESSAGE = "We'll be back before the race.";
 const DEFAULT_MAINTENANCE_ETA = 'Before lights out';
@@ -447,9 +455,9 @@ function classifyStreamURL(url) {
     };
   }
 
-  if (/\.(mp4|webm)(\?.*)?$/i.test(parsedUrl.pathname + parsedUrl.search)) {
-    return { type: 'mp4', embedUrl: parsedUrl.href };
-  }
+  const pathAndQuery = parsedUrl.pathname + parsedUrl.search;
+  if (/\.webm(\?.*)?$/i.test(pathAndQuery)) return { type: 'webm', embedUrl: parsedUrl.href };
+  if (/\.mp4(\?.*)?$/i.test(pathAndQuery)) return { type: 'mp4', embedUrl: parsedUrl.href };
 
   // Generic HTTP(S) embed fallback.
   return { type: 'embed', embedUrl: parsedUrl.href };
@@ -477,9 +485,9 @@ function broadcastPublicSSE(event, data) {
 }
 
 function broadcastNewsUpdate() {
-  const payload = { news: getPublicNewsItems() };
-  broadcastSSE('news_update', payload);
-  broadcastPublicSSE('news_update', payload);
+  // Admin keeps drafts. The public site must never receive them.
+  broadcastSSE('news_update', { news: getAdminNewsItems(), durable: newsStoreIsDurable() });
+  broadcastPublicSSE('news_update', { news: getPublicNewsItems() });
 }
 
 let statsBroadcastTimer = null;
@@ -1056,6 +1064,115 @@ function broadcastSourceConfig() {
   return payload;
 }
 
+// ─────────────────────────────────────────────
+// STREAM OVERRIDE PERSISTENCE
+// ─────────────────────────────────────────────
+
+function storedOverrideState() {
+  return {
+    active: Boolean(streamOverride.active),
+    input: streamOverride.input || null,
+    url: streamOverride.url || null,
+    type: streamOverride.type || null,
+    startedAt: streamOverride.startedAt || null,
+    updatedAt: streamOverride.updatedAt || null
+  };
+}
+
+/* Viewers only ever see a live playback URL. A stopped override keeps its
+   URL in the admin panel, but the public payload must not keep playing it. */
+function publicOverrideState() {
+  return streamOverride.active && streamOverride.url ? {
+    active: true,
+    url: streamOverride.url,
+    type: streamOverride.type,
+    startedAt: streamOverride.startedAt || null
+  } : { active: false, url: null, type: null, startedAt: null };
+}
+
+function adminOverrideState() {
+  return {
+    active: Boolean(streamOverride.active),
+    url: streamOverride.active ? streamOverride.url : null,
+    playbackUrl: streamOverride.url || null,
+    input: streamOverride.input || null,
+    type: streamOverride.type || null,
+    startedAt: streamOverride.startedAt || null,
+    updatedAt: streamOverride.updatedAt || null,
+    durable: overrideStoreReady
+  };
+}
+
+function applyOverrideState(state = {}) {
+  const input = String(state.input || '').trim().slice(0, 2000);
+  const classified = input ? classifyStreamURL(input) : { type: null, embedUrl: null };
+  const playback = classified.embedUrl || String(state.url || '').trim() || null;
+  const active = Boolean(state.active) && Boolean(playback);
+  streamOverride.input = input || null;
+  streamOverride.url = playback;
+  streamOverride.type = classified.type || state.type || null;
+  streamOverride.active = active;
+  streamOverride.startedAt = active ? (Number(state.startedAt) || Date.now()) : null;
+  streamOverride.updatedAt = Number(state.updatedAt) || null;
+  return adminOverrideState();
+}
+
+function broadcastOverride() {
+  const admin = adminOverrideState();
+  const pub = publicOverrideState();
+  broadcastSSE('stream_override', admin);
+  broadcastSSE('stream_update', admin);
+  broadcastPublicSSE('stream_override', pub);
+  broadcastPublicSSE('stream_update', pub);
+  scheduleStatsBroadcast(0);
+  return admin;
+}
+
+async function syncOverrideState() {
+  const applyFound = stored => {
+    if (!stored) return false;
+    applyOverrideState(stored);
+    broadcastPublicSSE('stream_override', publicOverrideState());
+    broadcastPublicSSE('stream_update', publicOverrideState());
+    scheduleStatsBroadcast();
+    return true;
+  };
+  if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
+    applyFound(readLocalJson(OVERRIDE_FILE));
+    overrideStoreReady = fileStoreReady;
+    return fileStoreReady;
+  }
+  try {
+    const { found, value: stored } = await readUpstashJson(OVERRIDE_REDIS_KEY);
+    if (found) applyFound(stored);
+    overrideStoreReady = true;
+    return true;
+  } catch (error) {
+    warnUniqueStore(error);
+    overrideStoreReady = false;
+    return false;
+  }
+}
+
+async function persistOverrideState() {
+  const record = storedOverrideState();
+  if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
+    const saved = writeLocalJson(OVERRIDE_FILE, record);
+    overrideStoreReady = saved;
+    return saved;
+  }
+  try {
+    const payload = await upstashRequest(['SET', OVERRIDE_REDIS_KEY, JSON.stringify(record)]);
+    if (payload?.result !== 'OK') throw new Error('Upstash did not confirm the stream override');
+    overrideStoreReady = true;
+    return true;
+  } catch (error) {
+    warnUniqueStore(error);
+    overrideStoreReady = false;
+    return false;
+  }
+}
+
 // Keep the local snapshot in sync if the service is ever scaled beyond one
 // process. This is a single lightweight request every five minutes.
 const uniqueVisitorSyncTimer = UNIQUE_VISITOR_REMOTE_ENABLED
@@ -1067,11 +1184,13 @@ if (UNIQUE_VISITOR_REMOTE_ENABLED) {
   maintenanceInitPromise = syncMaintenanceState();
   newsInitPromise = syncNewsStore();
   sourceInitPromise = syncSourceConfig();
+  overrideInitPromise = syncOverrideState();
 } else {
   loadLocalUniqueVisitors();
   maintenanceInitPromise = syncMaintenanceState();
   newsInitPromise = syncNewsStore();
   sourceInitPromise = syncSourceConfig();
+  overrideInitPromise = syncOverrideState();
   if (UPSTASH_REDIS_REST_URL || UPSTASH_REDIS_REST_TOKEN) {
     console.warn('[Visitors] Both Upstash variables are required for remote persistence; using local JSON storage instead.');
   } else if (fileStoreReady) {
@@ -1092,7 +1211,8 @@ function pendingStoreSyncs() {
   return [
     { name: 'maintenance', isReady: () => maintenanceStoreReady, sync: syncMaintenanceState },
     { name: 'news', isReady: () => newsStoreReady, sync: syncNewsStore },
-    { name: 'sources', isReady: () => sourceStoreReady, sync: syncSourceConfig }
+    { name: 'sources', isReady: () => sourceStoreReady, sync: syncSourceConfig },
+    { name: 'override', isReady: () => overrideStoreReady, sync: syncOverrideState }
   ];
 }
 
@@ -1696,15 +1816,42 @@ function aggregateDailyRange(startDayKey, endDayKey) {
 /* Weekday x hour average concurrent viewers, plus the busiest hours table.
    Both are computed from the full hourly retention exactly once per request
    so the browser never has to download 336 buckets to draw them. */
-function analyticsOverview() {
+const WEEKDAY_INDEX = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+
+function safeTimeZone(value) {
+  const zone = String(value || '').trim().slice(0, 64);
+  if (!zone) return 'UTC';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: zone }).format(0);
+    return zone;
+  } catch (_) {
+    return 'UTC';
+  }
+}
+
+/* Hour and weekday in an explicit zone. `Date#getHours()` is the server
+   process zone (UTC on Render), which made the heat map two hours early for
+   an admin in Johannesburg while the caption claimed local time. */
+function zonedHourParts(ts, timeZone) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    hour: '2-digit',
+    hourCycle: 'h23'
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(new Date(ts)).map(part => [part.type, part.value]));
+  let hour = Number(parts.hour);
+  if (!Number.isFinite(hour) || hour === 24) hour = 0;
+  return { day: WEEKDAY_INDEX[parts.weekday] ?? 0, hour };
+}
+
+function analyticsOverview(timeZone = 'UTC') {
   const sums = Array.from({ length: 7 }, () => Array(24).fill(0));
   const counts = Array.from({ length: 7 }, () => Array(24).fill(0));
   const busiest = [];
 
   for (const [key, bucket] of analytics.hourly) {
-    const date = new Date(key * 3_600_000);
-    const day = (date.getDay() + 6) % 7; // Monday-first
-    const hour = date.getHours();
+    const { day, hour } = zonedHourParts(key * 3_600_000, timeZone);
     sums[day][hour] += bucket.onlineSamples ? bucket.onlineSum / bucket.onlineSamples : 0;
     counts[day][hour]++;
     if ((bucket.peakOnline || 0) > 0) {
@@ -1731,7 +1878,7 @@ function analyticsOverview() {
   };
 }
 
-function getAnalyticsSnapshot(rangeKey = null) {
+function getAnalyticsSnapshot(rangeKey = null, timeZone = 'UTC') {
   const now = Date.now();
   let openSessions = 0, openSessionMs = 0;
   for (const visitor of activeUsers.values()) {
@@ -1781,8 +1928,9 @@ function getAnalyticsSnapshot(rangeKey = null) {
     daily: daily.map(([key, bucket]) => ({ d: key, t: Date.parse(`${key}T00:00:00Z`), ...compactAnalyticsBucket(bucket) })),
     // Only sent for a range-scoped request: everything that needs the whole
     // retention period, pre-aggregated.
+    timezone: timeZone,
     previous: spec ? previous : null,
-    overview: spec ? analyticsOverview() : null
+    overview: spec ? analyticsOverview(timeZone) : null
   };
 }
 
@@ -1861,12 +2009,7 @@ function getStats() {
     activeSessions: activeUsers.size,
     totalUnique: getTotalUniqueVisitors(),
     visitors,
-    override: streamOverride.active ? {
-      active: true,
-      url: streamOverride.url,
-      type: streamOverride.type,
-      startedAt: streamOverride.startedAt
-    } : { active: false },
+    override: adminOverrideState(),
     maintenance: publicMaintenanceState(),
     sources: publicSourceConfig(),
     server: {
@@ -1882,6 +2025,7 @@ function getStats() {
       maintenanceStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, maintenanceStoreReady),
       newsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, newsStoreReady),
       sourceStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, sourceStoreReady),
+      overrideStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, overrideStoreReady),
       analyticsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, analyticsStoreReady)
     }
   };
@@ -1927,7 +2071,8 @@ app.get('/healthz', (req, res) => {
     uniqueVisitorStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, uniqueVisitorStoreReady),
     maintenanceStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, maintenanceStoreReady),
     newsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, newsStoreReady),
-    sourceStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, sourceStoreReady)
+    sourceStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, sourceStoreReady),
+    overrideStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, overrideStoreReady)
   });
 });
 
@@ -2078,13 +2223,14 @@ app.get('/api/news', async (req, res, next) => {
 });
 
 // Public endpoint for the Netlify site to poll stream status
-app.get('/api/stream/status', (req, res) => {
-  res.json({
-    active: streamOverride.active,
-    url: streamOverride.url,
-    type: streamOverride.type,
-    startedAt: streamOverride.startedAt
-  });
+app.get('/api/stream/status', async (req, res, next) => {
+  try {
+    await overrideInitPromise;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(publicOverrideState());
+  } catch (error) {
+    next(error);
+  }
 });
 
 // Feed availability for the public player. No auth: it only ever reveals
@@ -2210,7 +2356,7 @@ app.get('/api/openf1/:path', async (req, res) => {
 // Public SSE endpoint — sends public stream, maintenance and news updates (no visitor data)
 app.get('/api/events', async (req, res, next) => {
   try {
-    await Promise.all([maintenanceInitPromise, newsInitPromise]);
+    await Promise.all([maintenanceInitPromise, newsInitPromise, overrideInitPromise]);
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
@@ -2220,12 +2366,7 @@ app.get('/api/events', async (req, res, next) => {
     publicSseClients.add(res);
 
     // Send initial stream and site state.
-    const initPayload = JSON.stringify(streamOverride.active ? {
-      active: streamOverride.active,
-      url: streamOverride.url,
-      type: streamOverride.type,
-      startedAt: streamOverride.startedAt
-    } : { active: false, url: null, type: null, startedAt: null });
+    const initPayload = JSON.stringify(publicOverrideState());
 
     res.write(`event: stream_override\ndata: ${initPayload}\n\n`);
     res.write(`event: stream_update\ndata: ${initPayload}\n\n`);
@@ -2311,25 +2452,33 @@ app.get('/admin/api/status', (req, res) => {
 // ADMIN — API ENDPOINTS
 // ─────────────────────────────────────────────
 
-app.get('/admin/api/visitors', (req, res) => {
-  res.json(getStats());
+app.get('/admin/api/visitors', async (req, res, next) => {
+  try {
+    await Promise.all([overrideInitPromise, maintenanceInitPromise, sourceInitPromise]);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(getStats());
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get('/admin/api/analytics', async (req, res) => {
   await analyticsInitPromise;
   const requested = String(req.query.range || '').toLowerCase();
   const rangeKey = requested in ANALYTICS_RANGES ? requested : ANALYTICS_DEFAULT_RANGE;
+  const timeZone = safeTimeZone(req.query.tz);
   res.setHeader('Cache-Control', 'no-store');
-  res.json(getAnalyticsSnapshot(rangeKey));
+  res.json(getAnalyticsSnapshot(rangeKey, timeZone));
 });
 
-app.get('/admin/api/stream/status', (req, res) => {
-  res.json({
-    active: streamOverride.active,
-    url: streamOverride.url,
-    type: streamOverride.type,
-    startedAt: streamOverride.startedAt
-  });
+app.get('/admin/api/stream/status', async (req, res, next) => {
+  try {
+    await overrideInitPromise;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(adminOverrideState());
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get('/admin/api/maintenance', async (req, res, next) => {
@@ -2419,58 +2568,61 @@ app.delete('/admin/api/news/:id', async (req, res, next) => {
   }
 });
 
-app.post('/admin/api/stream/override', (req, res) => {
-  const { url } = req.body || {};
-  if (!url || !String(url).trim()) {
-    return res.status(400).json({ error: 'Stream URL is required' });
+app.post('/admin/api/stream/override', async (req, res, next) => {
+  try {
+    await overrideInitPromise;
+    const input = String((req.body || {}).url || '').trim().slice(0, 2000);
+    if (!input) return res.status(400).json({ error: 'Stream URL is required' });
+
+    const { type, embedUrl } = classifyStreamURL(input);
+    if (!embedUrl) return res.status(400).json({ error: 'Unsupported URL format' });
+
+    streamOverride.active = true;
+    streamOverride.input = input;
+    streamOverride.url = embedUrl;
+    streamOverride.type = type;
+    streamOverride.startedAt = Date.now();
+    streamOverride.updatedAt = Date.now();
+
+    const durable = await persistOverrideState();
+    const override = broadcastOverride();
+    res.json({ success: true, override, durable });
+  } catch (error) {
+    next(error);
   }
-
-  const { type, embedUrl } = classifyStreamURL(String(url).trim());
-  if (!embedUrl) return res.status(400).json({ error: 'Unsupported URL format' });
-
-  streamOverride.active = true;
-  streamOverride.url = embedUrl;
-  streamOverride.type = type;
-  streamOverride.startedAt = Date.now();
-
-  const payload = {
-    active: true,
-    url: embedUrl,
-    type,
-    startedAt: streamOverride.startedAt
-  };
-
-  broadcastSSE('stream_override', payload);
-  broadcastSSE('stream_update', payload);
-  scheduleStatsBroadcast();
-  broadcastPublicSSE('stream_override', payload);
-  broadcastPublicSSE('stream_update', payload);
-
-  res.json({ success: true, override: payload });
 });
 
-function stopStreamOverride(message) {
+/* Stop takes viewers back to the site feed but keeps the typed URL so it can
+   be played again. Return to Normal clears that URL as well. */
+async function settleOverride(clear) {
+  await overrideInitPromise;
+  if (clear) {
+    streamOverride.input = null;
+    streamOverride.url = null;
+    streamOverride.type = null;
+  }
   streamOverride.active = false;
-  streamOverride.url = null;
-  streamOverride.type = null;
   streamOverride.startedAt = null;
-
-  const payload = { active: false, url: null, type: null, startedAt: null };
-  broadcastSSE('stream_override', payload);
-  broadcastSSE('stream_update', payload);
-  scheduleStatsBroadcast();
-  broadcastPublicSSE('stream_override', payload);
-  broadcastPublicSSE('stream_update', payload);
-
-  return { success: true, message, override: { active: false } };
+  streamOverride.updatedAt = Date.now();
+  const durable = await persistOverrideState();
+  const override = broadcastOverride();
+  return { success: true, override, durable };
 }
 
-app.post('/admin/api/stream/stop', (req, res) => {
-  res.json(stopStreamOverride('Stream override stopped'));
+app.post('/admin/api/stream/stop', async (req, res, next) => {
+  try {
+    res.json(await settleOverride(false));
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.post('/admin/api/stream/normal', (req, res) => {
-  res.json(stopStreamOverride('Returned to normal stream'));
+app.post('/admin/api/stream/normal', async (req, res, next) => {
+  try {
+    res.json(await settleOverride(true));
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get('/admin/api/stream/sources', async (req, res, next) => {
@@ -2510,10 +2662,16 @@ app.post('/admin/api/stream/sources', async (req, res, next) => {
 // ADMIN — SSE ENDPOINT
 // ─────────────────────────────────────────────
 
-app.get('/admin/api/events', (req, res) => {
+app.get('/admin/api/events', async (req, res, next) => {
   if (!req.session.isAdmin) {
     res.status(401).write('data: {"error":"Not authenticated"}\n\n');
     return res.end();
+  }
+
+  try {
+    await Promise.all([overrideInitPromise, newsInitPromise, sourceInitPromise, maintenanceInitPromise]);
+  } catch (error) {
+    return next(error);
   }
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -2583,9 +2741,10 @@ function escapeServerHtml(value) {
    Boots only when DISCORD_BOT_TOKEN is set. Runs in-process so it can
    reuse the durable stores; crash-isolated — a bot failure can never
    take the site API down with it. See bot/README.md. */
+let discordBot = null;
 if (process.env.DISCORD_BOT_TOKEN) {
   try {
-    require('./bot/discord-bot.js').start({
+    discordBot = require('./bot/discord-bot.js').start({
       token: process.env.DISCORD_BOT_TOKEN,
       guildId: process.env.DISCORD_GUILD_ID || '',
       siteUrl: process.env.SITE_URL || 'https://freef1.netlify.app',
@@ -2643,8 +2802,12 @@ function shutdown(signal) {
   clearInterval(analyticsFlushTimer);
   for (const visitor of activeUsers.values()) recordSessionEnd(visitor);
   const finalFlush = flushAnalytics(true).catch(() => false);
+  // Bot store writes are already immediate; this waits for the last one
+  // so a redeploy cannot drop sent-markers and double-post an alert.
+  const botFlush = discordBot?.flush?.().catch(() => false) || Promise.resolve();
   server.close(async () => {
-    await Promise.allSettled([...pendingUniqueWrites.values(), finalFlush]);
+    await Promise.allSettled([...pendingUniqueWrites.values(), finalFlush, botFlush]);
+    try { discordBot?.stop?.(); } catch (_) {}
     process.exit(0);
   });
   setTimeout(() => process.exit(1), 10_000).unref();
