@@ -171,7 +171,7 @@ function websiteEmbed(siteUrl, inviteUrl) {
       'Ten stream sources with automatic fallback, live race-control\n' +
       'data, standings, news and a pit-stop-fast interface.',
     fields: [
-      { name: 'Streams', value: 'F1TV, AppleTV, DAZN, Sky UK x3, Streame, WikiSport + auto-fallback', inline: false },
+      { name: 'Streams', value: 'F1TV, Sky UK x2, Sky Sports F1, AppleTV, DAZN, WikiSport + auto-fallback', inline: false },
       { name: 'Race control', value: 'Live timing windows, radio feed, standings and results', inline: false },
       { name: 'Community', value: 'Session alerts, supporter roles and watch parties right here', inline: false },
     ],

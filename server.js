@@ -267,14 +267,11 @@ let newsInitPromise = Promise.resolve(false);
    provider mid-session without redeploying Netlify. */
 const FEED_SOURCES = [
   { id: 'sky-uk-2', label: 'Sky UK 2' },
-  { id: 'sky-uk-3', label: 'Sky UK 3' },
-  { id: 'f1tv', label: 'F1TV' },
-  { id: 'appletv', label: 'AppleTV' },
   { id: 'sky-uk', label: 'Sky UK' },
-  { id: 'streame', label: 'Streame' },
-  { id: 'f1tv-alt', label: 'F1TV Alt' },
-  { id: 'dazn', label: 'DAZN' },
+  { id: 'f1tv', label: 'F1TV' },
   { id: 'sky-sports-f1', label: 'Sky Sports F1' },
+  { id: 'appletv', label: 'AppleTV' },
+  { id: 'dazn', label: 'DAZN' },
   { id: 'wikisport', label: 'WikiSport' }
 ];
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));

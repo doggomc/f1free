@@ -62,16 +62,18 @@ window.fetch = async (url, options) => {
   if (u.includes('/api/visitors/heartbeat')) return emptyJson({ active: 3 });
   if (u.includes('/api/site/status')) return emptyJson({ maintenance: { active: false } });
   if (u.includes('/api/stream/status')) return emptyJson({ active: false });
-  // Admin dashboard has switched off the first-choice feed (sky-uk-2) and Streame.
+  // Admin dashboard has switched off the first-choice feed (sky-uk-2) and DAZN.
   if (u.includes('/api/stream/sources')) return emptyJson({
     sources: [
-      { id: 'sky-uk-2', label: 'Sky UK 2' }, { id: 'sky-uk-3', label: 'Sky UK 3' },
-      { id: 'f1tv', label: 'F1TV' }, { id: 'appletv', label: 'AppleTV' },
-      { id: 'sky-uk', label: 'Sky UK' }, { id: 'streame', label: 'Streame' },
-      { id: 'f1tv-alt', label: 'F1TV Alt' }, { id: 'dazn', label: 'DAZN' },
-      { id: 'sky-sports-f1', label: 'Sky Sports F1' }, { id: 'wikisport', label: 'WikiSport' }
+      { id: 'sky-uk-2', label: 'Sky UK 2' },
+      { id: 'sky-uk', label: 'Sky UK' },
+      { id: 'f1tv', label: 'F1TV' },
+      { id: 'sky-sports-f1', label: 'Sky Sports F1' },
+      { id: 'appletv', label: 'AppleTV' },
+      { id: 'dazn', label: 'DAZN' },
+      { id: 'wikisport', label: 'WikiSport' }
     ],
-    disabled: ['sky-uk-2', 'streame'],
+    disabled: ['sky-uk-2', 'dazn'],
     updatedAt: Date.now()
   });
   if (u.includes('/api/news')) return emptyJson({ news: [] });
@@ -131,23 +133,23 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   // app.js is loaded via window.eval, so its top-level const bindings live in
   // lexical scope rather than on window — read them back through eval.
   const feedState = JSON.parse(window.__feedState());
-  check('source order starts Sky UK 2 → Sky UK 3 → F1TV → AppleTV → Sky UK → Streame',
-    ['Sky UK 2', 'Sky UK 3', 'F1TV', 'AppleTV', 'Sky UK', 'Streame']
+  check('source order starts Sky UK 2 → Sky UK → F1TV → Sky Sports F1 → AppleTV → DAZN',
+    ['Sky UK 2', 'Sky UK', 'F1TV', 'Sky Sports F1', 'AppleTV', 'DAZN']
       .every((label, i) => feedState.order[i] === label),
     feedState.order.join(', '));
   check('every source carries a stable id', feedState.ids.every(id => typeof id === 'string' && id.length > 0),
     feedState.ids.join(', '));
   check('disabled set applied from the server',
-    feedState.disabled.length === 2 && feedState.disabled.includes('sky-uk-2') && feedState.disabled.includes('streame'),
+    feedState.disabled.length === 2 && feedState.disabled.includes('sky-uk-2') && feedState.disabled.includes('dazn'),
     feedState.disabled.join(', '));
-  check('two chips hidden for the two disabled feeds', $('links').children.length === 8,
+  check('two chips hidden for the two disabled feeds', $('links').children.length === 5,
     `${$('links').children.length} chips`);
   check('disabled feed labels are absent from the chips', (() => {
     const labels = [...$('links').children].map(c => c.textContent);
-    return !labels.includes('Sky UK 2') && !labels.includes('Streame');
+    return !labels.includes('Sky UK 2') && !labels.includes('DAZN');
   })(), [...$('links').children].map(c => c.textContent).join(', '));
   check('selection falls back off a disabled first feed',
-    $('links').querySelector('.chip.active')?.textContent === 'Sky UK 3',
+    $('links').querySelector('.chip.active')?.textContent === 'Sky UK',
     $('links').querySelector('.chip.active')?.textContent);
 
   // Structural integrity. A stray closing tag once closed #player early, which

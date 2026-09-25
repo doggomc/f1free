@@ -52,11 +52,13 @@ Object.defineProperty(window.document, 'visibilityState', { configurable: true, 
 const fetchCalls = [];
 const sourcePosts = [];
 const FEED_SOURCES = [
-  { id: 'sky-uk-2', label: 'Sky UK 2' }, { id: 'sky-uk-3', label: 'Sky UK 3' },
-  { id: 'f1tv', label: 'F1TV' }, { id: 'appletv', label: 'AppleTV' },
-  { id: 'sky-uk', label: 'Sky UK' }, { id: 'streame', label: 'Streame' },
-  { id: 'f1tv-alt', label: 'F1TV Alt' }, { id: 'dazn', label: 'DAZN' },
-  { id: 'sky-sports-f1', label: 'Sky Sports F1' }, { id: 'wikisport', label: 'WikiSport' }
+  { id: 'sky-uk-2', label: 'Sky UK 2' },
+  { id: 'sky-uk', label: 'Sky UK' },
+  { id: 'f1tv', label: 'F1TV' },
+  { id: 'sky-sports-f1', label: 'Sky Sports F1' },
+  { id: 'appletv', label: 'AppleTV' },
+  { id: 'dazn', label: 'DAZN' },
+  { id: 'wikisport', label: 'WikiSport' }
 ];
 const snapshot = buildSnapshot();
 const analyticsPayload = buildAnalytics();
@@ -290,11 +292,11 @@ try {
   // 8. Feed sources: server-owned availability with per-source toggles.
   const rows = () => [...$('sourceList').querySelectorAll('.source-row')];
   const rowFor = id => rows().find(r => r.querySelector('.source-id').textContent === id);
-  check('feed source list rendered', rows().length === 10, `${rows().length} rows`);
+  check('feed source list rendered', rows().length === 7, `${rows().length} rows`);
   check('feed sources fetched on load', fetchCalls.some(u => u.includes('/admin/api/stream/sources')), fetchCalls.join(' '));
   check('disabled feed is marked off', rowFor('sky-uk-2').classList.contains('is-off') && rowFor('sky-uk-2').querySelector('.source-state').textContent === 'Hidden');
   check('enabled feed is marked live', !rowFor('f1tv').classList.contains('is-off') && rowFor('f1tv').querySelector('.source-state').textContent === 'Live');
-  check('badge counts the enabled feeds', $('sourcesBadge').textContent === '9/10 Enabled', $('sourcesBadge').textContent);
+  check('badge counts the enabled feeds', $('sourcesBadge').textContent === '6/7 Enabled', $('sourcesBadge').textContent);
   check('durable store is reported', $('sourcesStore').textContent.includes('DURABLE'), $('sourcesStore').textContent);
 
   rowFor('f1tv').querySelector('.source-switch').click();
@@ -302,7 +304,7 @@ try {
   check('toggling a feed posts the new disabled set',
     JSON.stringify(sourcePosts[0]) === JSON.stringify(['sky-uk-2', 'f1tv']), JSON.stringify(sourcePosts));
   check('toggled feed turns off', rowFor('f1tv').classList.contains('is-off'));
-  check('badge updates after the toggle', $('sourcesBadge').textContent === '8/10 Enabled', $('sourcesBadge').textContent);
+  check('badge updates after the toggle', $('sourcesBadge').textContent === '5/7 Enabled', $('sourcesBadge').textContent);
 
   rowFor('sky-uk-2').querySelector('.source-switch').click();
   await new Promise(resolve => setTimeout(resolve, 250));
@@ -310,10 +312,10 @@ try {
     JSON.stringify(sourcePosts[1]) === JSON.stringify(['f1tv']), JSON.stringify(sourcePosts));
   check('re-enabled feed turns live', !rowFor('sky-uk-2').classList.contains('is-off'));
 
-  es.emit('sources_update', { sources: FEED_SOURCES, disabled: ['dazn'] });
+  es.emit('sources_update', { sources: FEED_SOURCES, disabled: ['sky-sports-f1'] });
   await new Promise(resolve => setTimeout(resolve, 200));
   check('live sources_update re-renders the panel',
-    rowFor('dazn').classList.contains('is-off') && $('sourcesBadge').textContent === '9/10 Enabled', $('sourcesBadge').textContent);
+    rowFor('sky-sports-f1').classList.contains('is-off') && $('sourcesBadge').textContent === '6/7 Enabled', $('sourcesBadge').textContent);
 
   // Report.
   let failed = 0;
