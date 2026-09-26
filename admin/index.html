@@ -273,6 +273,37 @@
             </div>
           </div>
 
+          <!-- Experimental Features Panel -->
+          <div class="panel" id="panel-experimental">
+            <div class="panel-head">
+              <div class="panel-title">Experimental Features</div>
+              <div class="panel-badge normal" id="experimentalBadge">Enabled</div>
+            </div>
+            <div class="maintenance-panel">
+              <div class="maintenance-status is-live" id="experimentalStatus">
+                <div class="status-indicator online"></div>
+                <div class="status-text">
+                  <strong id="experimentalStatusTitle">Experimental Section Visible</strong>
+                  <small id="experimentalStatusText">The "Experimental" section in the public footer is enabled and visible.</small>
+                </div>
+              </div>
+              <p class="url-hint">Enables or disables the "Experimental" footer column and links to experimental features like the Live 2D Track Map on the public website.</p>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:var(--radius);margin-top:8px">
+                <div style="display:flex;flex-direction:column;gap:2px">
+                  <span style="font-size:.78rem;font-weight:600;color:var(--text)">Live Track Map &amp; Beta Views</span>
+                  <span style="font-size:.65rem;color:var(--muted)">Show "Experimental" in footer navigation</span>
+                </div>
+                <button class="source-switch on" id="experimentalToggle" type="button" role="switch" aria-checked="true" aria-label="Toggle experimental features">
+                  <i></i>
+                </button>
+              </div>
+              <div class="source-foot" style="margin-top:12px">
+                <span class="url-hint" id="experimentalStore">STORE: —</span>
+                <button class="btn-sm btn-ghost" id="experimentalRefreshBtn" type="button" title="Reload experimental status">↻</button>
+              </div>
+            </div>
+          </div>
+
           <!-- System Status Panel -->
           <div class="panel">
             <div class="panel-head">
@@ -318,6 +349,14 @@
               <div class="system-item">
                 <span class="sys-key">Override Store</span>
                 <span class="sys-val" id="sysOverrideStore">—</span>
+              </div>
+              <div class="system-item">
+                <span class="sys-key">Experimental</span>
+                <span class="sys-val" id="sysExperimentalStatus" style="color:var(--green)">ENABLED</span>
+              </div>
+              <div class="system-item">
+                <span class="sys-key">Experimental Store</span>
+                <span class="sys-val" id="sysExperimentalStore">—</span>
               </div>
               <div class="system-item">
                 <span class="sys-key">Override Mode</span>

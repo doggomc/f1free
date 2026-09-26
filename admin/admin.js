@@ -87,6 +87,15 @@ const newsSaveBtn       = $('newsSaveBtn');
 const newsCancelBtn     = $('newsCancelBtn');
 const newsBadge         = $('newsBadge');
 const adminNewsList     = $('adminNewsList');
+const experimentalBadge = $('experimentalBadge');
+const experimentalStatus = $('experimentalStatus');
+const experimentalStatusTitle = $('experimentalStatusTitle');
+const experimentalStatusText = $('experimentalStatusText');
+const experimentalToggle = $('experimentalToggle');
+const experimentalStore = $('experimentalStore');
+const experimentalRefreshBtn = $('experimentalRefreshBtn');
+const sysExperimentalStatus = $('sysExperimentalStatus');
+const sysExperimentalStore = $('sysExperimentalStore');
 
 // ─────────────────────────────────────────────
 // STATE
@@ -153,6 +162,7 @@ function showDashboard() {
   loadMaintenanceStatus();
   loadNews();
   loadSources();
+  loadExperimental();
   if (typeof Analytics !== 'undefined') Analytics.start();
 }
 
@@ -266,6 +276,13 @@ function connectSSE() {
     if (Array.isArray(data.sources) && data.sources.length) feedSources = data.sources;
     disabledSources = new Set((Array.isArray(data.disabled) ? data.disabled : []).map(String));
     renderSources();
+  });
+
+  sse.addEventListener('experimental_update', e => {
+    const data = readSseEvent(e);
+    if (data && typeof data.enabled === 'boolean') {
+      renderExperimentalState(data.enabled);
+    }
   });
 
   sse.addEventListener('error', () => {
@@ -493,6 +510,7 @@ function updateSystemInfo(data) {
   renderStore(sysAnalyticsStore, data?.server?.analyticsStore);
   renderStore(sysSourceStore, data?.server?.sourceStore);
   renderStore(sysOverrideStore, data?.server?.overrideStore);
+  renderStore(sysExperimentalStore, data?.server?.experimentalStore);
   if (sysOverrideStatus) {
     sysOverrideStatus.textContent = data?.override?.active ? 'OVERRIDE' : 'NORMAL';
     sysOverrideStatus.style.color = data?.override?.active ? '#ff6b62' : 'var(--green)';
@@ -501,6 +519,10 @@ function updateSystemInfo(data) {
     const active = Boolean(data?.maintenance?.active);
     sysMaintenanceStatus.textContent = active ? 'MAINTENANCE' : 'LIVE';
     sysMaintenanceStatus.style.color = active ? '#ff6b62' : 'var(--green)';
+  }
+  if (sysExperimentalStatus) {
+    sysExperimentalStatus.textContent = experimentalEnabled ? 'ENABLED' : 'DISABLED';
+    sysExperimentalStatus.style.color = experimentalEnabled ? 'var(--green)' : '#ff6b62';
   }
   if (sysSessionActive) sysSessionActive.textContent = isAdmin ? 'Yes' : 'No';
   if (sysNodeEnv) {
@@ -800,6 +822,94 @@ sourceList?.addEventListener('click', event => {
   if (button) toggleSource(button.dataset.sourceId);
 });
 sourcesRefreshBtn?.addEventListener('click', () => loadSources(true));
+
+// ─────────────────────────────────────────────
+// EXPERIMENTAL FEATURES TOGGLE
+// ─────────────────────────────────────────────
+let experimentalEnabled = true;
+let experimentalSaveInFlight = false;
+
+function renderExperimentalState(enabled) {
+  experimentalEnabled = Boolean(enabled);
+  if (experimentalBadge) {
+    experimentalBadge.textContent = experimentalEnabled ? 'Enabled' : 'Disabled';
+    experimentalBadge.className = `panel-badge ${experimentalEnabled ? 'normal' : 'live'}`;
+  }
+  if (experimentalStatus) {
+    experimentalStatus.className = `maintenance-status ${experimentalEnabled ? 'is-live' : 'is-maint'}`;
+  }
+  if (experimentalStatusTitle) {
+    experimentalStatusTitle.textContent = experimentalEnabled ? 'Experimental Section Visible' : 'Experimental Section Hidden';
+  }
+  if (experimentalStatusText) {
+    experimentalStatusText.textContent = experimentalEnabled
+      ? 'The "Experimental" section in the public footer is enabled and visible.'
+      : 'The "Experimental" section in the public footer is hidden from visitors.';
+  }
+  if (experimentalToggle) {
+    experimentalToggle.classList.toggle('on', experimentalEnabled);
+    experimentalToggle.setAttribute('aria-checked', String(experimentalEnabled));
+  }
+  if (sysExperimentalStatus) {
+    sysExperimentalStatus.textContent = experimentalEnabled ? 'ENABLED' : 'DISABLED';
+    sysExperimentalStatus.style.color = experimentalEnabled ? 'var(--green)' : '#ff6b62';
+  }
+}
+
+async function loadExperimental(notifyOnError = false) {
+  try {
+    const response = await fetch(`${API_BASE}/experimental`, { cache: 'no-store', headers: { Accept: 'application/json' } });
+    if (response.status === 401) { showLogin(); return false; }
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Experimental endpoint unavailable.');
+    renderExperimentalState(data?.experimental?.enabled ?? true);
+    if (experimentalStore) {
+      const durable = Boolean(data.durable);
+      experimentalStore.textContent = durable ? 'STORE: DURABLE' : 'STORE: MEMORY ONLY';
+      experimentalStore.style.color = durable ? 'var(--green)' : '#ff6b62';
+    }
+    return true;
+  } catch (error) {
+    if (notifyOnError) showToast(error.message || 'Could not load experimental status.', 'error');
+    return false;
+  }
+}
+
+async function toggleExperimental() {
+  if (experimentalSaveInFlight) return;
+  const targetState = !experimentalEnabled;
+  experimentalSaveInFlight = true;
+  renderExperimentalState(targetState);
+  try {
+    const response = await fetch(`${API_BASE}/experimental`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: targetState })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      showLogin();
+      throw new Error('Session expired. Sign in again.');
+    }
+    if (!response.ok || !data.success) throw new Error(data.error || 'Failed to update experimental status.');
+    renderExperimentalState(data?.experimental?.enabled ?? targetState);
+    if (experimentalStore) {
+      const durable = Boolean(data.durable);
+      experimentalStore.textContent = durable ? 'STORE: DURABLE' : 'STORE: MEMORY ONLY';
+      experimentalStore.style.color = durable ? 'var(--green)' : '#ff6b62';
+    }
+    showToast(`Experimental section ${targetState ? 'enabled' : 'disabled'}.`, 'success');
+  } catch (error) {
+    renderExperimentalState(!targetState);
+    showToast(error.message || 'Could not toggle experimental status.', 'error');
+  } finally {
+    experimentalSaveInFlight = false;
+  }
+}
+
+experimentalToggle?.addEventListener('click', toggleExperimental);
+experimentalRefreshBtn?.addEventListener('click', () => loadExperimental(true));
 
 // ─────────────────────────────────────────────
 // VISITOR TABLE

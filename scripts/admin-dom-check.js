@@ -79,6 +79,13 @@ window.fetch = async (url, options = {}) => {
     return json({ sources: FEED_SOURCES, disabled: ['sky-uk-2'], updatedAt: Date.now(), durable: true });
   }
   if (pathname.endsWith('/admin/api/maintenance')) return json({ maintenance: snapshot.maintenance, durable: true });
+  if (pathname.endsWith('/admin/api/experimental')) {
+    if (String(options.method || 'GET').toUpperCase() === 'POST') {
+      const body = JSON.parse(options.body || '{}');
+      return json({ success: true, experimental: { enabled: Boolean(body.enabled), updatedAt: Date.now() }, durable: true });
+    }
+    return json({ success: true, experimental: { enabled: true, updatedAt: Date.now() }, durable: true });
+  }
   if (pathname.endsWith('/admin/api/visitors')) return json(snapshot);
   return json({ error: 'unexpected ' + url }, 404);
 };
@@ -316,6 +323,17 @@ try {
   await new Promise(resolve => setTimeout(resolve, 200));
   check('live sources_update re-renders the panel',
     rowFor('sky-sports-f1').classList.contains('is-off') && $('sourcesBadge').textContent === '6/7 Enabled', $('sourcesBadge').textContent);
+
+  // 9. Experimental toggle: enable/disable experimental section
+  check('experimental panel rendered', Boolean($('panel-experimental')));
+  check('experimental toggle initial state is on', $('experimentalToggle').classList.contains('on'));
+  $('experimentalToggle').click();
+  await new Promise(resolve => setTimeout(resolve, 200));
+  check('experimental toggle switches off', !$('experimentalToggle').classList.contains('on') && $('experimentalBadge').textContent === 'Disabled');
+
+  es.emit('experimental_update', { enabled: true });
+  await new Promise(resolve => setTimeout(resolve, 150));
+  check('live experimental_update re-enables the panel', $('experimentalToggle').classList.contains('on') && $('experimentalBadge').textContent === 'Enabled');
 
   // Report.
   let failed = 0;

@@ -45,6 +45,8 @@ const SOURCE_CONFIG_FILE = path.join(DATA_DIR, 'stream-sources.json');
 const SOURCE_REDIS_KEY = process.env.SOURCE_REDIS_KEY || 'freef1:stream-sources:v1';
 const OVERRIDE_FILE = path.join(DATA_DIR, 'stream-override.json');
 const OVERRIDE_REDIS_KEY = process.env.OVERRIDE_REDIS_KEY || 'freef1:stream-override:v1';
+const EXPERIMENTAL_FILE = path.join(DATA_DIR, 'experimental.json');
+const EXPERIMENTAL_REDIS_KEY = process.env.EXPERIMENTAL_REDIS_KEY || 'freef1:experimental:v1';
 
 // ── OpenF1 proxy (see /api/openf1/:path) ──
 // OpenF1 locks the free tier with a CORS-less 401 while a session is live, which
@@ -56,7 +58,7 @@ const OPENF1_UPSTREAM = String(process.env.OPENF1_API || 'https://api.openf1.org
 const OPENF1_API_KEY = process.env.OPENF1_API_KEY || '';
 const OPENF1_TTL_MS_OVERRIDE = Math.max(0, Number.parseInt(process.env.OPENF1_TTL_MS || '0', 10) || 0);
 const OPENF1_PATHS = new Set(['sessions', 'meetings', 'drivers', 'team_radio', 'race_control']);
-const OPENF1_TTL_MS = { sessions: 600_000, meetings: 600_000, drivers: 6 * 3_600_000, team_radio: 300_000, race_control: 300_000 };
+const OPENF1_TTL_MS = { sessions: 60_000, meetings: 60_000, drivers: 3_600_000, team_radio: 10_000, race_control: 10_000 };
 const OPENF1_SNAPSHOT_TTL_S = 7 * 86_400;
 const OPENF1_SNAPSHOT_MAX_BYTES = 1_500_000;
 const openf1Cache = new Map();     // url -> { data, at }
@@ -1170,6 +1172,70 @@ async function persistOverrideState() {
   }
 }
 
+// ─────────────────────────────────────────────
+// EXPERIMENTAL FEATURES (TRACK MAP, ETC.)
+// ─────────────────────────────────────────────
+const experimentalState = {
+  enabled: true,
+  updatedAt: Date.now()
+};
+let experimentalStoreReady = false;
+let experimentalInitPromise = Promise.resolve(false);
+
+function publicExperimentalState() {
+  return {
+    enabled: Boolean(experimentalState.enabled),
+    updatedAt: experimentalState.updatedAt
+  };
+}
+
+function applyExperimentalState(state) {
+  experimentalState.enabled = state?.enabled !== undefined ? Boolean(state.enabled) : true;
+  experimentalState.updatedAt = Number(state?.updatedAt) || Date.now();
+  return publicExperimentalState();
+}
+
+async function syncExperimentalState() {
+  if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
+    const stored = readLocalJson(EXPERIMENTAL_FILE);
+    if (stored) applyExperimentalState(stored);
+    experimentalStoreReady = fileStoreReady;
+    return fileStoreReady;
+  }
+  try {
+    const { found, value: stored } = await readUpstashJson(EXPERIMENTAL_REDIS_KEY);
+    if (found) applyExperimentalState(stored);
+    experimentalStoreReady = true;
+    return true;
+  } catch (error) {
+    warnUniqueStore(error);
+    experimentalStoreReady = false;
+    return false;
+  }
+}
+
+async function persistExperimentalState() {
+  if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
+    const saved = writeLocalJson(EXPERIMENTAL_FILE, publicExperimentalState());
+    experimentalStoreReady = saved;
+    return saved;
+  }
+  try {
+    const payload = await upstashRequest([
+      'SET',
+      EXPERIMENTAL_REDIS_KEY,
+      JSON.stringify(publicExperimentalState())
+    ]);
+    if (payload?.result !== 'OK') throw new Error('Upstash did not confirm experimental update');
+    experimentalStoreReady = true;
+    return true;
+  } catch (error) {
+    warnUniqueStore(error);
+    experimentalStoreReady = false;
+    return false;
+  }
+}
+
 // Keep the local snapshot in sync if the service is ever scaled beyond one
 // process. This is a single lightweight request every five minutes.
 const uniqueVisitorSyncTimer = UNIQUE_VISITOR_REMOTE_ENABLED
@@ -1182,12 +1248,14 @@ if (UNIQUE_VISITOR_REMOTE_ENABLED) {
   newsInitPromise = syncNewsStore();
   sourceInitPromise = syncSourceConfig();
   overrideInitPromise = syncOverrideState();
+  experimentalInitPromise = syncExperimentalState();
 } else {
   loadLocalUniqueVisitors();
   maintenanceInitPromise = syncMaintenanceState();
   newsInitPromise = syncNewsStore();
   sourceInitPromise = syncSourceConfig();
   overrideInitPromise = syncOverrideState();
+  experimentalInitPromise = syncExperimentalState();
   if (UPSTASH_REDIS_REST_URL || UPSTASH_REDIS_REST_TOKEN) {
     console.warn('[Visitors] Both Upstash variables are required for remote persistence; using local JSON storage instead.');
   } else if (fileStoreReady) {
@@ -1209,7 +1277,8 @@ function pendingStoreSyncs() {
     { name: 'maintenance', isReady: () => maintenanceStoreReady, sync: syncMaintenanceState },
     { name: 'news', isReady: () => newsStoreReady, sync: syncNewsStore },
     { name: 'sources', isReady: () => sourceStoreReady, sync: syncSourceConfig },
-    { name: 'override', isReady: () => overrideStoreReady, sync: syncOverrideState }
+    { name: 'override', isReady: () => overrideStoreReady, sync: syncOverrideState },
+    { name: 'experimental', isReady: () => experimentalStoreReady, sync: syncExperimentalState }
   ];
 }
 
@@ -2023,7 +2092,8 @@ function getStats() {
       newsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, newsStoreReady),
       sourceStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, sourceStoreReady),
       overrideStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, overrideStoreReady),
-      analyticsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, analyticsStoreReady)
+      analyticsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, analyticsStoreReady),
+      experimentalStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, experimentalStoreReady)
     }
   };
 }
@@ -2296,12 +2366,17 @@ async function openf1Resolve(url, openf1Path) {
     pending = (async () => {
       let response = null;
       try { response = await openf1FetchUpstream(url); } catch (_) { response = null; }
-      if (response && response.ok) {
+      if (response && (response.ok || response.status === 404)) {
+        if (response.status === 404) {
+          openf1Cache.set(url, { data: [], at: Date.now() });
+          return { data: [], stale: false };
+        }
         try {
           const data = await response.json();
-          openf1Cache.set(url, { data, at: Date.now() });
-          openf1SnapshotSave(url, data);
-          return { data, stale: false };
+          const cleanData = data && data.detail === 'No results found.' ? [] : (Array.isArray(data) ? data : []);
+          openf1Cache.set(url, { data: cleanData, at: Date.now() });
+          openf1SnapshotSave(url, cleanData);
+          return { data: cleanData, stale: false };
         } catch (error) {
           const parseError = new Error('OpenF1 returned unreadable JSON');
           parseError.code = 'upstream';
@@ -2341,7 +2416,11 @@ app.get('/api/openf1/:path', async (req, res) => {
   const url = `${OPENF1_UPSTREAM}/${openf1Path}${query ? `?${query}` : ''}`;
   try {
     const { data, stale } = await openf1Resolve(url, openf1Path);
-    res.setHeader('Cache-Control', 'no-store');
+    if (openf1Path === 'sessions' || openf1Path === 'drivers' || openf1Path === 'meetings') {
+      res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=5, stale-while-revalidate=15');
+    }
     if (stale) res.setHeader('X-OpenF1-Stale', '1');
     return res.json(data);
   } catch (error) {
@@ -2350,10 +2429,83 @@ app.get('/api/openf1/:path', async (req, res) => {
   }
 });
 
+// ── Live Timing & Leaderboard (Real-time Pit-Wall Feed) ──
+let liveTimingCache = { data: null, at: 0 };
+const ESPN_F1_SCOREBOARD = 'https://site.api.espn.com/apis/site/v2/sports/racing/f1/scoreboard';
+
+async function fetchLiveTiming() {
+  const now = Date.now();
+  if (liveTimingCache.data && now - liveTimingCache.at < 5000) {
+    return liveTimingCache.data;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
+  try {
+    const res = await fetch(ESPN_F1_SCOREBOARD, {
+      headers: { accept: 'application/json' },
+      signal: controller.signal
+    });
+    if (!res.ok) throw new Error(`Scoreboard responded with ${res.status}`);
+    const json = await res.json();
+    const event = json.events?.[0];
+    const comp = event?.competitions?.[0];
+    const status = comp?.status?.type?.detail || event?.status?.type?.description || 'Off Track';
+    const totalLaps = comp?.totalLaps || 0;
+    const currentLap = comp?.status?.period || 0;
+    const competitors = (comp?.competitors || []).map((c) => ({
+      position: c.order || 0,
+      name: c.athlete?.displayName || '',
+      shortName: c.athlete?.shortName || '',
+      flag: c.athlete?.flag?.href || '',
+      status: c.status?.type?.description || ''
+    }));
+    const payload = {
+      event: event?.name || '',
+      status,
+      currentLap,
+      totalLaps,
+      competitors,
+      updatedAt: now
+    };
+    liveTimingCache = { data: payload, at: now };
+    return payload;
+  } catch (err) {
+    if (liveTimingCache.data) return liveTimingCache.data;
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+app.get('/api/live/timing', async (req, res) => {
+  if (!consumeVisitorRateLimit(`timing:${getClientIp(req)}`)) {
+    res.setHeader('Retry-After', '10');
+    return res.status(429).json({ error: 'Too many requests. Try again later.' });
+  }
+  try {
+    const data = await fetchLiveTiming();
+    res.setHeader('Cache-Control', 'public, max-age=5');
+    return res.json(data);
+  } catch (err) {
+    return res.status(503).json({ error: 'Live timing temporarily unavailable' });
+  }
+});
+
+// Public endpoint for experimental features toggle state
+app.get('/api/experimental', async (req, res, next) => {
+  try {
+    await experimentalInitPromise;
+    res.setHeader('Cache-Control', 'public, max-age=5, stale-while-revalidate=15');
+    return res.json(publicExperimentalState());
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Public SSE endpoint — sends public stream, maintenance and news updates (no visitor data)
 app.get('/api/events', async (req, res, next) => {
   try {
-    await Promise.all([maintenanceInitPromise, newsInitPromise, overrideInitPromise]);
+    await Promise.all([maintenanceInitPromise, newsInitPromise, overrideInitPromise, experimentalInitPromise]);
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
@@ -2369,6 +2521,7 @@ app.get('/api/events', async (req, res, next) => {
     res.write(`event: stream_update\ndata: ${initPayload}\n\n`);
     res.write(`event: maintenance_update\ndata: ${JSON.stringify(publicMaintenanceState())}\n\n`);
     res.write(`event: news_update\ndata: ${JSON.stringify({ news: getPublicNewsItems() })}\n\n`);
+    res.write(`event: experimental_update\ndata: ${JSON.stringify(publicExperimentalState())}\n\n`);
 
     req.on('close', () => {
       publicSseClients.delete(res);
@@ -2512,6 +2665,36 @@ app.post('/admin/api/maintenance', async (req, res, next) => {
     scheduleStatsBroadcast(0);
 
     res.json({ success: true, maintenance: state, durable });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/admin/api/experimental', async (req, res, next) => {
+  try {
+    await experimentalInitPromise;
+    res.json({ success: true, experimental: publicExperimentalState(), durable: experimentalStoreReady });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/admin/api/experimental', async (req, res, next) => {
+  try {
+    await experimentalInitPromise;
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'The enabled field must be true or false.' });
+    }
+
+    applyExperimentalState({ enabled, updatedAt: Date.now() });
+    const durable = await persistExperimentalState();
+    const state = publicExperimentalState();
+    broadcastSSE('experimental_update', state);
+    broadcastPublicSSE('experimental_update', state);
+    scheduleStatsBroadcast(0);
+
+    res.json({ success: true, experimental: state, durable });
   } catch (error) {
     next(error);
   }
@@ -2666,7 +2849,7 @@ app.get('/admin/api/events', async (req, res, next) => {
   }
 
   try {
-    await Promise.all([overrideInitPromise, newsInitPromise, sourceInitPromise, maintenanceInitPromise]);
+    await Promise.all([overrideInitPromise, newsInitPromise, sourceInitPromise, maintenanceInitPromise, experimentalInitPromise]);
   } catch (error) {
     return next(error);
   }
@@ -2684,6 +2867,7 @@ app.get('/admin/api/events', async (req, res, next) => {
   res.write(payload);
   res.write(`event: news_update\ndata: ${JSON.stringify({ news: getAdminNewsItems(), durable: newsStoreIsDurable() })}\n\n`);
   res.write(`event: sources_update\ndata: ${JSON.stringify(publicSourceConfig())}\n\n`);
+  res.write(`event: experimental_update\ndata: ${JSON.stringify(publicExperimentalState())}\n\n`);
 
   req.on('close', () => {
     sseClients.delete(res);

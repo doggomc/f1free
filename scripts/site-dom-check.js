@@ -52,6 +52,9 @@ if (!window.crypto || !window.crypto.randomUUID) {
   Object.defineProperty(window, 'crypto', { configurable: true, value: { randomUUID: () => 'test-uuid-' + Math.random().toString(36).slice(2) } });
 }
 
+// Freeze clock to a session window so live stream player tests are deterministic
+window.Date.now = () => Date.parse("2026-09-24T08:35:00Z");
+
 const requested = [];
 const emptyJson = body => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
 window.fetch = async (url, options) => {
@@ -62,6 +65,8 @@ window.fetch = async (url, options) => {
   if (u.includes('/api/visitors/heartbeat')) return emptyJson({ active: 3 });
   if (u.includes('/api/site/status')) return emptyJson({ maintenance: { active: false } });
   if (u.includes('/api/stream/status')) return emptyJson({ active: false });
+  if (u.includes('/api/experimental')) return emptyJson({ enabled: true, updatedAt: Date.now() });
+  if (u.includes('/api/live/timing')) return emptyJson({ status: 'Live', currentLap: 14, totalLaps: 51, competitors: [] });
   // Admin dashboard has switched off the first-choice feed (sky-uk-2) and DAZN.
   if (u.includes('/api/stream/sources')) return emptyJson({
     sources: [
@@ -156,8 +161,8 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   // ended the home view prematurely and left the championship grid and the
   // stage buttons outside it — so they stayed on screen when routing to
   // News/Info/Discord. Assert the containment the router depends on.
-  const viewIds = ['viewHome', 'viewNews', 'viewInfo', 'viewDiscord'];
-  check('all four views exist', viewIds.every(id => $(id)), viewIds.filter(id => !$(id)).join(', '));
+  const viewIds = ['viewHome', 'viewNews', 'viewInfo', 'viewDiscord', 'viewPerformance', 'viewAudio'];
+  check('all main views exist', viewIds.every(id => $(id)), viewIds.filter(id => !$(id)).join(', '));
   check('all four views are siblings',
     new Set(viewIds.map(id => $(id).parentElement)).size === 1,
     viewIds.map(id => `${id}<${$(id).parentElement?.tagName}>`).join(' '));
@@ -249,6 +254,23 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   click(window.document.querySelector('.nav-links a[data-route="discord"]'));
   await new Promise(resolve => setTimeout(resolve, 400));
   check('router opens the discord view', !$('viewDiscord').hidden && $('viewInfo').hidden);
+
+  const perfLink = window.document.querySelector('a[data-route="performance"]') || window.document.querySelector('a[data-route="track"]');
+  if (perfLink) {
+    click(perfLink);
+    await new Promise(resolve => setTimeout(resolve, 400));
+    check('router opens the performance view', !$('viewPerformance').hidden && $('viewDiscord').hidden);
+    check('performance timing tower exists', Boolean($('perfTimingTower')), 'perfTimingTower missing');
+    check('performance race control feed exists', Boolean($('perfRcFeed')), 'perfRcFeed missing');
+  }
+
+  const audioLink = window.document.querySelector('a[data-route="audio"]');
+  if (audioLink) {
+    click(audioLink);
+    await new Promise(resolve => setTimeout(resolve, 400));
+    check('router opens the audio view', !$('viewAudio').hidden && $('viewPerformance').hidden);
+    check('audio console card exists', Boolean($('audioPlayerCard')), 'audioPlayerCard missing');
+  }
 
   // escapeHtml hardening
   check('escapeHtml escapes quotes', (() => {

@@ -5,36 +5,24 @@
       "label": "Sky UK 2"
     },
     {
-      "id": "sky-uk-3",
-      "label": "Sky UK 3"
+      "id": "sky-uk",
+      "label": "Sky UK"
     },
     {
       "id": "f1tv",
       "label": "F1TV"
     },
     {
+      "id": "sky-sports-f1",
+      "label": "Sky Sports F1"
+    },
+    {
       "id": "appletv",
       "label": "AppleTV"
     },
     {
-      "id": "sky-uk",
-      "label": "Sky UK"
-    },
-    {
-      "id": "streame",
-      "label": "Streame"
-    },
-    {
-      "id": "f1tv-alt",
-      "label": "F1TV Alt"
-    },
-    {
       "id": "dazn",
       "label": "DAZN"
-    },
-    {
-      "id": "sky-sports-f1",
-      "label": "Sky Sports F1"
     },
     {
       "id": "wikisport",
