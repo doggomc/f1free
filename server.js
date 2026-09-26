@@ -84,7 +84,7 @@ if (PRODUCTION_MODE && insecureProductionConfig.length) {
 
 // Site root — set DEV_DIR to the folder containing your index.html
 // Render example: DEV_DIR=/opt/render/project/Development-FreeF1
-const DEV_DIR = resolveDir(process.env.DEV_DIR, [
+const DEV_DIR = resolveSiteDir(process.env.DEV_DIR, [
   path.join(__dirname, '..', 'Development - FreeF1'),
   path.join(__dirname, 'Development - FreeF1'),
   path.join(__dirname, '..', '..', 'Development - FreeF1'),
@@ -127,6 +127,14 @@ function resolveDir(envValue, candidates) {
   return envValue || candidates[0];
 }
 
+function resolveSiteDir(envValue, candidates) {
+  if (dirHasIndex(envValue)) return envValue;
+  for (const candidate of candidates) {
+    if (dirHasIndex(candidate)) return candidate;
+  }
+  return null;
+}
+
 function findIndexHtml(dir) {
   if (!dir) return null;
 
@@ -144,10 +152,10 @@ function findIndexHtml(dir) {
       }
     }
   } catch (_) {
-    // The caller reports the final missing path in the HTTP response.
+    // No nested index.html either.
   }
 
-  return direct;
+  return null;
 }
 
 function parseOrigins(value) {
@@ -2218,12 +2226,9 @@ async function sendSiteIndex(req, res, next) {
   }
 
   if (!SITE_INDEX_EXISTS) {
-    return res.status(404).send(
-      `<h1>404 — Site not found</h1>
-       <p>index.html not found under: ${escapeServerHtml(DEV_DIR)}</p>
-       <p>Resolved path: ${escapeServerHtml(SITE_INDEX_PATH || '(none)')}</p>
-       <p>Set the <strong>DEV_DIR</strong> environment variable on Render to the folder containing your index.html.</p>`
-    );
+    const site = String(process.env.SITE_URL || `https://${AUTHORIZED_HOSTNAME}`).replace(/\/+$/, '');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.redirect(302, `${site}/`);
   }
   res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
   res.sendFile(SITE_INDEX_PATH);
