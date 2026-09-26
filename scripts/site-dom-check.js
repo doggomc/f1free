@@ -29,11 +29,6 @@ const { window } = dom;
 // so release it here to mirror what a browser does ~1.4s after boot.
 window.document.documentElement.classList.remove('site-checking');
 Object.defineProperty(window.document, 'hidden', { configurable: true, get: () => false });
-Object.defineProperty(window.document, 'visibilityState', { configurable: true, get: () => "visible" });
-// jsdom does not execute the inline <script> that releases the loading gate,
-// so release it here to mirror what a browser does ~1.4s after boot.
-window.document.documentElement.classList.remove('site-checking');
-Object.defineProperty(window.document, 'hidden', { configurable: true, get: () => false });
 Object.defineProperty(window.document, 'visibilityState', { configurable: true, get: () => 'visible' });
 window.console = console;
 window.matchMedia = query => ({ matches: false, media: query, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, onchange: null });

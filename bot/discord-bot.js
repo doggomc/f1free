@@ -58,7 +58,7 @@ const {
    bot/STREAMING.md for why this is audio-only. */
 const relayModule = require('./voice-relay.js');
 
-const OWNER_ID = '915483308522086460';
+const OWNER_ID = String(process.env.DISCORD_OWNER_ID || '').trim();
 const DEFAULT_SOON_MINUTES = 10;    // lead time for the "starting soon" alert
 const ENDED_WINDOW_HOURS = 24;      // how long a finished session stays editable to ENDED
 const TICK_MS = 15000;              // scheduler resolution
@@ -73,9 +73,9 @@ const SITE_LABEL = 'freef1.netlify.app';
    that runs long flips to ENDED a little late, which is harmless; one that
    flips early would look broken. */
 const SESSION_MIN = {
-  fp1: 60, fp2: 60, fp3: 60,
-  'sprint-qualifying': 60, sprint: 60,
-  qualifying: 80, race: 120,
+  fp1: 75, fp2: 75, fp3: 75,
+  'sprint-qualifying': 75, sprint: 60,
+  qualifying: 75, race: 180,
 };
 
 const SEASON = require('./schedule-2026.json');
@@ -283,6 +283,11 @@ function presenceActivity(now = Date.now()) {
 
 function start(deps) {
   const log = deps.log || ((...a) => console.log('[Bot]', ...a));
+  const OWNER_ID = String(deps.ownerId || process.env.DISCORD_OWNER_ID || '').trim();
+  if (!OWNER_ID) {
+    log('DISCORD_OWNER_ID is not set — bot not starting');
+    return { stop() {}, flush: () => Promise.resolve() };
+  }
   const EMOJI_DIR = path.join(__dirname, 'assets', 'emoji');
 
   /* ── durable store: file locally, Upstash in production ──

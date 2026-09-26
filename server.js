@@ -73,7 +73,10 @@ const insecureProductionConfig = [
   !process.env.ADMIN_USER ? 'ADMIN_USER' : null,
   !process.env.ADMIN_PASS || process.env.ADMIN_PASS === 'admin' ? 'ADMIN_PASS' : null,
   !process.env.ADMIN_SECRET || process.env.ADMIN_SECRET === 'freef1-admin-secret-change-me' ? 'ADMIN_SECRET' : null,
-  !process.env.VISITOR_SECRET || process.env.VISITOR_SECRET === 'doggomc' ? 'VISITOR_SECRET' : null
+  !process.env.VISITOR_SECRET || process.env.VISITOR_SECRET === 'doggomc' ? 'VISITOR_SECRET' : null,
+  // Analytics, news, unique visitors and maintenance live on the instance disk
+  // without Upstash — Render wipes that disk on every rebuild.
+  !process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN ? 'UPSTASH_REDIS_REST_URL/TOKEN' : null
 ].filter(Boolean);
 if (PRODUCTION_MODE && insecureProductionConfig.length) {
   throw new Error(`Refusing to start with insecure production configuration: ${insecureProductionConfig.join(', ')}.`);
@@ -91,8 +94,7 @@ const DEV_DIR = resolveDir(process.env.DEV_DIR, [
   path.join('/opt', 'render', 'project', 'development-freef1'),
   path.join('/opt', 'render', 'project', 'site'),
   path.join(process.cwd(), 'public'),
-  path.join(process.cwd(), 'site'),
-  process.cwd()
+  path.join(process.cwd(), 'site')
 ]);
 
 const ADMIN_DIR = resolveDir(process.env.ADMIN_DIR, [
@@ -101,10 +103,26 @@ const ADMIN_DIR = resolveDir(process.env.ADMIN_DIR, [
   path.join('/opt', 'render', 'project', 'admin')
 ]);
 
+function dirHasIndex(dir) {
+  if (!dir || !fs.existsSync(dir)) return false;
+  try {
+    if (fs.existsSync(path.join(dir, 'index.html'))) return true;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && fs.existsSync(path.join(dir, entry.name, 'index.html'))) return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
 function resolveDir(envValue, candidates) {
+  if (dirHasIndex(envValue)) return envValue;
+  for (const candidate of candidates) {
+    if (dirHasIndex(candidate)) return candidate;
+  }
   if (envValue && fs.existsSync(envValue)) return envValue;
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
+    if (candidate && fs.existsSync(candidate)) return candidate;
   }
   return envValue || candidates[0];
 }
@@ -192,12 +210,9 @@ function isSameOriginRequest(req, origin) {
 
 function isAllowedOrigin(req, origin) {
   if (!origin) return true;
-  return (
-    ALLOWED_ORIGINS.includes(origin) ||
-    isSameOriginRequest(req, origin) ||
-    isLocalOrigin(origin) ||
-    isPreviewOrigin(origin)
-  );
+  if (ALLOWED_ORIGINS.includes(origin) || isSameOriginRequest(req, origin)) return true;
+  if (!PRODUCTION_MODE && (isLocalOrigin(origin) || isPreviewOrigin(origin))) return true;
+  return false;
 }
 
 function safeEqual(a, b) {
@@ -328,9 +343,10 @@ app.use((req, res, next) => {
     "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com data:",
-    "img-src 'self' data: https://media.formula1.com",
+    "img-src 'self' data: https://media.formula1.com https://upload.wikimedia.org https://a.espncdn.com",
     "connect-src 'self' https://f1free.onrender.com https://api.jolpi.ca",
     'frame-src https:',
+    "frame-ancestors 'self'",
     "media-src 'self' https:",
     "form-action 'self'"
   ].join('; '));
@@ -418,6 +434,16 @@ function parseUA(ua) {
 // UTILITY — Stream URL Classification
 // ─────────────────────────────────────────────
 
+function isPrivateHostname(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host || host === 'localhost' || host === '::1' || host === '0.0.0.0') return true;
+  if (/^(127|10|0)\./.test(host)) return true;
+  if (/^192\.168\./.test(host) || /^169\.254\./.test(host) || /^100\.64\./.test(host)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
+  if (/^(fc00:|fd00:|fe80:)/i.test(host)) return true;
+  return false;
+}
+
 function getYouTubeId(parsedUrl) {
   const host = parsedUrl.hostname.replace(/^www\./, '').toLowerCase();
   if (host === 'youtu.be') return parsedUrl.pathname.split('/').filter(Boolean)[0] || null;
@@ -443,6 +469,10 @@ function classifyStreamURL(url) {
   }
 
   if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    return { type: null, embedUrl: null };
+  }
+
+  if (PRODUCTION_MODE && isPrivateHostname(parsedUrl.hostname)) {
     return { type: null, embedUrl: null };
   }
 
@@ -1176,7 +1206,7 @@ async function persistOverrideState() {
 // EXPERIMENTAL FEATURES (TRACK MAP, ETC.)
 // ─────────────────────────────────────────────
 const experimentalState = {
-  enabled: true,
+  enabled: false,
   updatedAt: Date.now()
 };
 let experimentalStoreReady = false;
@@ -1190,7 +1220,7 @@ function publicExperimentalState() {
 }
 
 function applyExperimentalState(state) {
-  experimentalState.enabled = state?.enabled !== undefined ? Boolean(state.enabled) : true;
+  experimentalState.enabled = state?.enabled !== undefined ? Boolean(state.enabled) : false;
   experimentalState.updatedAt = Number(state?.updatedAt) || Date.now();
   return publicExperimentalState();
 }
@@ -1311,11 +1341,15 @@ startStoreResyncTimer();
 // ─────────────────────────────────────────────
 
 function getClientIp(req) {
-  const raw = String(req.headers['x-forwarded-for'] || req.ip || req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown')
+  const raw = String(req.ip || req.socket?.remoteAddress || 'unknown')
     .split(',')[0]
     .trim();
   if (raw === '::1') return '127.0.0.1';
   return raw.replace(/^::ffff:/, '') || 'unknown';
+}
+
+function hashClientIp(ip) {
+  return crypto.createHmac('sha256', VISITOR_SECRET).update('ip:' + String(ip || '')).digest('hex').slice(0, 16);
 }
 
 function normalizeVisitorId(value) {
@@ -1325,16 +1359,17 @@ function normalizeVisitorId(value) {
     .slice(0, 128);
 }
 
-function createVisitorToken(userId) {
+function createVisitorToken(userId, ip) {
   const payload = Buffer.from(JSON.stringify({
     id: userId,
+    ip: hashClientIp(ip),
     exp: Date.now() + VISITOR_TOKEN_TTL_MS
   })).toString('base64url');
   const signature = crypto.createHmac('sha256', VISITOR_SECRET).update(payload).digest('base64url');
   return `${payload}.${signature}`;
 }
 
-function verifyVisitorToken(token, userId) {
+function verifyVisitorToken(token, userId, ip) {
   const parts = String(token || '').split('.');
   if (parts.length !== 2) return false;
   const [payload, signature] = parts;
@@ -1342,7 +1377,9 @@ function verifyVisitorToken(token, userId) {
   if (!safeEqual(signature, expected)) return false;
   try {
     const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    return normalizeVisitorId(decoded.id) === userId && Number(decoded.exp) > Date.now();
+    return normalizeVisitorId(decoded.id) === userId &&
+      decoded.ip === hashClientIp(ip) &&
+      Number(decoded.exp) > Date.now();
   } catch (_) {
     return false;
   }
@@ -1481,7 +1518,7 @@ const ANALYTICS_LIVE_POINTS = 24 * 60;
 const ANALYTICS_FLUSH_MS = Number(process.env.ANALYTICS_FLUSH_MS || 60_000);
 const ANALYTICS_SAMPLE_MS = 60_000;
 const ANALYTICS_MAP_CAP = { device: 8, browser: 24, os: 16, country: 250, pages: 8, source: 16, team: 16 };
-const SITE_PAGES = new Set(['/', '/news', '/info']);
+const SITE_PAGES = new Set(['/', '/news', '/info', '/discord', '/performance', '/track', '/audio']);
 const DURATION_BINS_MS = [60_000, 5 * 60_000, 15 * 60_000, 45 * 60_000, 120 * 60_000]; // <1m, 1–5m, 5–15m, 15–45m, 45m–2h, 2h+
 
 const analytics = { hourly: new Map(), daily: new Map(), live: [], since: null };
@@ -2104,32 +2141,57 @@ function getStats() {
 
 const SITE_INDEX_PATH = findIndexHtml(DEV_DIR);
 const SITE_INDEX_EXISTS = Boolean(SITE_INDEX_PATH && fs.existsSync(SITE_INDEX_PATH));
+const SITE_STATIC_DIR = SITE_INDEX_PATH ? path.dirname(SITE_INDEX_PATH) : null;
+const SITE_STATIC_SAFE = Boolean(
+  SITE_STATIC_DIR &&
+  path.resolve(SITE_STATIC_DIR) !== path.resolve(__dirname)
+);
 const MAINTENANCE_PAGE_PATH = SITE_INDEX_PATH
   ? path.join(path.dirname(SITE_INDEX_PATH), 'maintenance.html')
-  : path.join(DEV_DIR, 'maintenance.html');
+  : path.join(DEV_DIR || '', 'maintenance.html');
 
 console.log(`[Config] DEV_DIR   = ${DEV_DIR}`);
 console.log(`[Config] ADMIN_DIR = ${ADMIN_DIR}`);
-console.log(`[Config] DEV_DIR exists: ${fs.existsSync(DEV_DIR)}`);
+console.log(`[Config] DEV_DIR exists: ${Boolean(DEV_DIR && fs.existsSync(DEV_DIR))}`);
 console.log(`[Config] ADMIN_DIR exists: ${fs.existsSync(ADMIN_DIR)}`);
+console.log(`[Config] Static site dir: ${SITE_STATIC_SAFE ? SITE_STATIC_DIR : '(not served from this process)'}`);
 console.log(`[Config] Allowed origins: ${ALLOWED_ORIGINS.join(', ') || '(same-origin/local only)'}`);
+
+function isSensitivePublicPath(requestPath) {
+  const n = String(requestPath || '').split('?')[0].toLowerCase();
+  if (n.startsWith('/admin') || n.startsWith('/api/') || n === '/healthz') return false;
+  if (n === '/data' || n.startsWith('/data/')) return true;
+  if (n === '/bot' || n.startsWith('/bot/')) return true;
+  if (n === '/scripts' || n.startsWith('/scripts/')) return true;
+  if (n === '/server.js' || n === '/package.json' || n === '/package-lock.json') return true;
+  if (n === '/.gitignore' || n === '/.env' || n.startsWith('/.env')) return true;
+  if (n.includes('/.git')) return true;
+  return false;
+}
+
+app.use((req, res, next) => {
+  if (isSensitivePublicPath(req.path)) return res.status(404).json({ error: 'Not found' });
+  next();
+});
 
 // Intercept the explicit index path before static middleware so maintenance
 // mode cannot be bypassed when this server is also serving the public site.
 app.get('/index.html', sendSiteIndex);
 
-app.use(express.static(DEV_DIR, {
-  index: false,
-  fallthrough: true,
-  etag: true,
-  lastModified: true,
-  maxAge: process.env.NODE_ENV === 'production' ? '7d' : 0,
-  setHeaders(res, filePath) {
-    if (/\.html?$/i.test(filePath)) res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
-    else if (/\.(?:css|m?js)$/i.test(filePath)) res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
-    else if (filePath.includes(`${path.sep}assets${path.sep}`)) res.setHeader('Cache-Control', 'public, max-age=2592000');
-  }
-}));
+if (SITE_STATIC_SAFE) {
+  app.use(express.static(SITE_STATIC_DIR, {
+    index: false,
+    fallthrough: true,
+    etag: true,
+    lastModified: true,
+    maxAge: process.env.NODE_ENV === 'production' ? '7d' : 0,
+    setHeaders(res, filePath) {
+      if (/\.html?$/i.test(filePath)) res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+      else if (/\.(?:css|m?js)$/i.test(filePath)) res.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
+      else if (filePath.includes(`${path.sep}assets${path.sep}`)) res.setHeader('Cache-Control', 'public, max-age=2592000');
+    }
+  }));
+}
 
 app.get('/healthz', (req, res) => {
   res.json({
@@ -2197,7 +2259,7 @@ app.get('/api/visitors/token', (req, res) => {
     return res.status(429).json({ error: 'Too many token requests. Try again later.' });
   }
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ token: createVisitorToken(userId), expiresAt: Date.now() + VISITOR_TOKEN_TTL_MS });
+  res.json({ token: createVisitorToken(userId, getClientIp(req)), expiresAt: Date.now() + VISITOR_TOKEN_TTL_MS });
 });
 
 // Visitor heartbeat used by the public site. It updates the same object shape
@@ -2212,7 +2274,7 @@ app.get('/api/visitors/heartbeat', async (req, res, next) => {
       res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
       return res.status(429).json({ error: 'Too many heartbeat requests. Try again later.' });
     }
-    if (!verifyVisitorToken(req.headers['x-visitor-token'], suppliedUserId)) {
+    if (!verifyVisitorToken(req.headers['x-visitor-token'], suppliedUserId, ip)) {
       return res.status(403).json({ error: 'Invalid or expired visitor token' });
     }
 
@@ -2249,7 +2311,7 @@ app.post('/api/visitors/event', (req, res) => {
     res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
     return res.status(429).json({ error: 'Too many events. Try again later.' });
   }
-  if (!verifyVisitorToken(req.headers['x-visitor-token'], suppliedUserId)) {
+  if (!verifyVisitorToken(req.headers['x-visitor-token'], suppliedUserId, getClientIp(req))) {
     return res.status(403).json({ error: 'Invalid or expired visitor token' });
   }
   const type = typeof req.body?.type === 'string' ? req.body.type.slice(0, 24) : '';
@@ -2416,8 +2478,10 @@ app.get('/api/openf1/:path', async (req, res) => {
   const url = `${OPENF1_UPSTREAM}/${openf1Path}${query ? `?${query}` : ''}`;
   try {
     const { data, stale } = await openf1Resolve(url, openf1Path);
-    if (openf1Path === 'sessions' || openf1Path === 'drivers' || openf1Path === 'meetings') {
+    if (openf1Path === 'drivers' || openf1Path === 'meetings') {
       res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    } else if (openf1Path === 'sessions') {
+      res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
     } else {
       res.setHeader('Cache-Control', 'public, max-age=5, stale-while-revalidate=15');
     }
@@ -2503,8 +2567,14 @@ app.get('/api/experimental', async (req, res, next) => {
 });
 
 // Public SSE endpoint — sends public stream, maintenance and news updates (no visitor data)
+const PUBLIC_SSE_MAX = Math.max(20, Number.parseInt(process.env.PUBLIC_SSE_MAX || '400', 10) || 400);
+
 app.get('/api/events', async (req, res, next) => {
   try {
+    if (publicSseClients.size >= PUBLIC_SSE_MAX) {
+      res.setHeader('Retry-After', '15');
+      return res.status(503).json({ error: 'Too many live connections' });
+    }
     await Promise.all([maintenanceInitPromise, newsInitPromise, overrideInitPromise, experimentalInitPromise]);
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -2562,7 +2632,7 @@ function checkLoginLimit(req, res, next) {
   next();
 }
 
-app.use('/admin/api/login', sessionMiddleware);
+app.use('/admin/api', sessionMiddleware);
 app.post('/admin/api/login', checkLoginLimit, (req, res) => {
   const { username, password } = req.body || {};
   if (safeEqual(username, ADMIN_USER) && safeEqual(password, ADMIN_PASS)) {
@@ -2584,8 +2654,10 @@ function requireAdminOrigin(req, res, next) {
   next();
 }
 
-app.use('/admin/api/*', sessionMiddleware, requireAdminOrigin, (req, res, next) => {
-  if (!req.session.isAdmin) return res.status(401).json({ error: 'Not authenticated' });
+app.use('/admin/api', requireAdminOrigin, (req, res, next) => {
+  if (req.path === '/admin/api/login') return next();
+  if (!req.session || !req.session.isAdmin) return res.status(401).json({ error: 'Not authenticated' });
+  req.session.lastSeen = Date.now();
   next();
 });
 
@@ -2929,7 +3001,8 @@ if (process.env.DISCORD_BOT_TOKEN) {
       token: process.env.DISCORD_BOT_TOKEN,
       guildId: process.env.DISCORD_GUILD_ID || '',
       siteUrl: process.env.SITE_URL || 'https://freef1.netlify.app',
-      discordInvite: 'https://discord.gg/KYXHCAzhN4',
+      discordInvite: process.env.DISCORD_INVITE || 'https://discord.gg/KYXHCAzhN4',
+      ownerId: process.env.DISCORD_OWNER_ID || '',
       readLocalJson,
       writeLocalJson,
       upstash: UNIQUE_VISITOR_REMOTE_ENABLED ? upstashRequest : null,
@@ -2951,7 +3024,6 @@ const server = app.listen(PORT, () => {
   console.log(`[Server] Running on http://localhost:${PORT}`);
   console.log(`[Main]  Site:  http://localhost:${PORT}/  (${DEV_DIR})`);
   console.log(`[Admin] Panel: http://localhost:${PORT}/admin  (${ADMIN_DIR})`);
-  console.log(`[Admin] User:  ${ADMIN_USER}`);
   console.log(`[Visitors] Unique store: ${UNIQUE_VISITOR_REMOTE_ENABLED ? 'Upstash Redis (durable)' : 'memory (resets on restart)'}`);
   if (UNIQUE_VISITOR_BASELINE) console.log(`[Visitors] Restored baseline: ${UNIQUE_VISITOR_BASELINE}`);
 

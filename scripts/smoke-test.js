@@ -92,6 +92,18 @@ async function waitForServer() {
     assert.equal(health.response.headers.get('cache-control'), 'no-store');
     assert.equal(health.response.headers.get('x-powered-by'), null);
     assert.equal(health.response.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(health.response.headers.get('content-security-policy') || '', /frame-ancestors 'self'/);
+
+    const leakedSource = await request(`http://127.0.0.1:${port}/server.js`);
+    assert.equal(leakedSource.response.status, 404);
+    const leakedData = await request(`http://127.0.0.1:${port}/data/analytics.json`);
+    assert.equal(leakedData.response.status, 404);
+    const unauthPatch = await request(`http://127.0.0.1:${port}/admin/api/news/not-a-real-id`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'nope' })
+    });
+    assert.equal(unauthPatch.response.status, 401);
 
     const home = await request(`http://127.0.0.1:${port}/`);
     assert.equal(home.response.status, 200);
@@ -263,6 +275,13 @@ async function waitForServer() {
     assert.equal(override.body.override.type, 'youtube');
     assert.match(override.body.override.url, /youtube-nocookie\.com\/embed\/dQw4w9WgXcQ/);
 
+    const badOverride = await request(`http://127.0.0.1:${port}/admin/api/stream/override`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ url: 'javascript:alert(1)' })
+    });
+    assert.equal(badOverride.response.status, 400);
+
     const rejected = await request(`http://127.0.0.1:${port}/admin/api/login`, {
       method: 'POST',
       headers: {
@@ -278,6 +297,8 @@ async function waitForServer() {
     assert.equal(ofFresh.response.status, 200);
     assert.ok(Array.isArray(ofFresh.body));
     assert.equal(ofFresh.response.headers.get('x-openf1-stale'), null);
+    assert.match(ofFresh.response.headers.get('cache-control') || '', /max-age=15/);
+    assert.doesNotMatch(ofFresh.response.headers.get('cache-control') || '', /max-age=3600/);
 
     // Upstream locks the free tier (CORS-less 401): proxy serves last-known-good
     openf1State.mode = 'lock';
