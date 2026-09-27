@@ -115,7 +115,7 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   check('no window error events', runtimeErrors.length === 0, runtimeErrors.join(' | '));
 
   check('site gate released', !window.document.documentElement.classList.contains('site-checking'));
-  check('event selector populated', $('eventSelect').querySelectorAll('option').length === 22,
+  check('event selector populated', $('eventSelect').querySelectorAll('option').length === 23,
     `${$('eventSelect').querySelectorAll('option').length} options`);
   check('session selector populated', $('sessionSelect').querySelectorAll('option').length > 0);
   check('feed source chips rendered', $('links').children.length > 0, `${$('links').children.length} chips`);
