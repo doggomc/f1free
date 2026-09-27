@@ -156,7 +156,7 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   // ended the home view prematurely and left the championship grid and the
   // stage buttons outside it — so they stayed on screen when routing to
   // News/Info/Discord. Assert the containment the router depends on.
-  const viewIds = ['viewHome', 'viewNews', 'viewInfo', 'viewDiscord', 'viewPerformance', 'viewAudio'];
+  const viewIds = ['viewHome', 'viewNews', 'viewInfo', 'viewDiscord', 'viewPerformance', 'view247'];
   check('all main views exist', viewIds.every(id => $(id)), viewIds.filter(id => !$(id)).join(', '));
   check('all four views are siblings',
     new Set(viewIds.map(id => $(id).parentElement)).size === 1,
@@ -259,12 +259,13 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
     check('performance race control feed exists', Boolean($('perfRcFeed')), 'perfRcFeed missing');
   }
 
-  const audioLink = window.document.querySelector('a[data-route="audio"]');
-  if (audioLink) {
-    click(audioLink);
+  const live247Link = window.document.querySelector('a[data-route="247"]');
+  if (live247Link) {
+    click(live247Link);
     await new Promise(resolve => setTimeout(resolve, 400));
-    check('router opens the audio view', !$('viewAudio').hidden && $('viewPerformance').hidden);
-    check('audio console card exists', Boolean($('audioPlayerCard')), 'audioPlayerCard missing');
+    check('router opens the 24/7 view', !$('view247').hidden && $('viewPerformance').hidden);
+    check('24/7 player wrap exists', Boolean($('live247FrameWrap')), 'live247FrameWrap missing');
+    check('24/7 controls exist', Boolean($('live247PlayBtn') && $('live247StopBtn') && $('live247FsBtn')));
   }
 
   // escapeHtml hardening

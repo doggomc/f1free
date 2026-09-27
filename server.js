@@ -1526,7 +1526,7 @@ const ANALYTICS_LIVE_POINTS = 24 * 60;
 const ANALYTICS_FLUSH_MS = Number(process.env.ANALYTICS_FLUSH_MS || 60_000);
 const ANALYTICS_SAMPLE_MS = 60_000;
 const ANALYTICS_MAP_CAP = { device: 8, browser: 24, os: 16, country: 250, pages: 8, source: 16, team: 16 };
-const SITE_PAGES = new Set(['/', '/news', '/info', '/discord', '/performance', '/track', '/audio']);
+const SITE_PAGES = new Set(['/', '/news', '/info', '/discord', '/performance', '/track', '/audio', '/247']);
 const DURATION_BINS_MS = [60_000, 5 * 60_000, 15 * 60_000, 45 * 60_000, 120 * 60_000]; // <1m, 1–5m, 5–15m, 15–45m, 45m–2h, 2h+
 
 const analytics = { hourly: new Map(), daily: new Map(), live: [], since: null };
@@ -2558,6 +2558,14 @@ app.get('/api/live/timing', async (req, res) => {
   } catch (err) {
     return res.status(503).json({ error: 'Live timing temporarily unavailable' });
   }
+});
+
+// Public audio-only feed for the experimental Audio page.
+// Direct m3u8 / AAC / MP3 URL — never a video embed page.
+app.get('/api/audio-feed', (req, res) => {
+  const url = String(process.env.APEX_AUDIO_URL || '').trim();
+  res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=45');
+  return res.json({ url, available: Boolean(url) });
 });
 
 // Public endpoint for experimental features toggle state
