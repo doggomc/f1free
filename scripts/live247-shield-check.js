@@ -113,22 +113,22 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   check('escalation: recovered auto station stays behind the gate', $('live247Gate') && !$('live247Gate').hidden);
   check('status chip reads SHIELDED during escalation', $('live247StatusChip').textContent === 'SHIELDED', $('live247StatusChip').textContent);
 
-  // League table: the noisy station sank and is flagged.
+  // League table: the noisy station sank and is flagged (5 stations: Fly44, WeStream, Sky UK 2, Sky UHD, WikiSport).
   const chips = [...$('live247StationChips').children];
-  check('noisy station sinks in the channel list', chips.length === 3 && chips[2].className.includes('noisy'), chips.map(c => c.textContent + ':' + c.className).join(' | '));
+  check('noisy station sinks in the channel list', chips.length === 5 && chips[4].className.includes('noisy'), chips.map(c => c.textContent + ':' + c.className).join(' | '));
 
   // Manual Start still works (and re-opens on an escalated station).
   click($('live247GateBtn'));
   check('Start stream opens the gate after recovery', $('live247Gate').hidden);
 
   // ── Switching to a gated station arms the Bouncer and drops the transport.
-  const gatedChip = [...$('live247StationChips').children].find(c => c.textContent.trim() === 'Sky UK');
+  const gatedChip = [...$('live247StationChips').children].find(c => c.textContent.trim() === 'Sky UHD');
   click(gatedChip);
   await new Promise(resolve => setTimeout(resolve, 20));
-  check('gated station (Sky UK) arms the Bouncer on load', $('live247Gate') && !$('live247Gate').hidden);
+  check('gated station (Sky UHD) arms the Bouncer on load', $('live247Gate') && !$('live247Gate').hidden);
   check('gated station: status chip reads SHIELDED', $('live247StatusChip').textContent === 'SHIELDED', $('live247StatusChip').textContent);
   check('gated station: Shield toggle reports armed', $('live247ShieldBtn').getAttribute('aria-pressed') === 'true');
-  check('gated station (Sky UK) hides Play/Stop', $('live247PlayBtn').hidden === true && $('live247StopBtn').hidden === true);
+  check('gated station (Sky UHD) hides Play/Stop', $('live247PlayBtn').hidden === true && $('live247StopBtn').hidden === true);
 
   // One-tap Shield toggle round-trip.
   click($('live247GateBtn'));

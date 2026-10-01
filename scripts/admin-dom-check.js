@@ -53,7 +53,7 @@ const fetchCalls = [];
 const sourcePosts = [];
 const FEED_SOURCES = [
   { id: 'sky-uk-2', label: 'Sky UK 2' },
-  { id: 'sky-uk', label: 'Sky UK' },
+  { id: 'sky-uk', label: 'Sky UHD' },
   { id: 'f1tv', label: 'F1TV' },
   { id: 'sky-sports-f1', label: 'Sky Sports F1' },
   { id: 'appletv', label: 'AppleTV' },

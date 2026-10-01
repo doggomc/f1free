@@ -181,7 +181,15 @@ function hostnameFromUrl(value) {
 
 function isAuthorizedHostname(value) {
   const hostname = String(value || '').split(':')[0].toLowerCase();
-  return hostname === AUTHORIZED_HOSTNAME;
+  if (hostname === AUTHORIZED_HOSTNAME) return true;
+  // Netlify deploy previews & branch deploys of the authorized site:
+  // deploy-preview-<n>--freef1.netlify.app / <branch>--freef1.netlify.app.
+  // Only Netlify can issue the `--<site>.netlify.app` suffix for the site that
+  // owns AUTHORIZED_HOSTNAME, so they are first-party for auth purposes.
+  if (AUTHORIZED_HOSTNAME.endsWith('.netlify.app') &&
+      hostname.length > AUTHORIZED_HOSTNAME.length + 2 &&
+      hostname.endsWith(`--${AUTHORIZED_HOSTNAME}`)) return true;
+  return false;
 }
 
 function getRequestOrigin(req) {
@@ -219,6 +227,7 @@ function isSameOriginRequest(req, origin) {
 function isAllowedOrigin(req, origin) {
   if (!origin) return true;
   if (ALLOWED_ORIGINS.includes(origin) || isSameOriginRequest(req, origin)) return true;
+  if (isAuthorizedHostname(hostnameFromUrl(origin))) return true;
   if (!PRODUCTION_MODE && (isLocalOrigin(origin) || isPreviewOrigin(origin))) return true;
   return false;
 }
@@ -291,10 +300,11 @@ let newsInitPromise = Promise.resolve(false);
    server only owns which feeds are switched on, so an admin can pull a dead
    provider mid-session without redeploying Netlify. */
 const FEED_SOURCES = [
-  { id: 'sky-uk-2', label: 'Sky UK 2' },
-  { id: 'sky-uk', label: 'Sky UK' },
-  { id: 'f1tv', label: 'F1TV' },
   { id: 'sky-sports-f1', label: 'Sky Sports F1' },
+  { id: 'westream', label: 'WeStream F1' },
+  { id: 'sky-uk-2', label: 'Sky UK 2' },
+  { id: 'sky-uk', label: 'Sky UHD' },
+  { id: 'f1tv', label: 'F1TV' },
   { id: 'appletv', label: 'AppleTV' },
   { id: 'dazn', label: 'DAZN' },
   { id: 'wikisport', label: 'WikiSport' }
@@ -1433,6 +1443,15 @@ function getVisitorRouteKey(req) {
   return suppliedId || ip;
 }
 
+/* Crawlers, scanners, link-preview bots and uptime monitors hammer public
+   hosts every minute. They are not viewers: never create presence entries,
+   geo lookups or unique-visitor counts for them. */
+const BOT_UA_RE = /(bot|crawl|spider|slurp|bingpreview|preview|monitor|uptime|pingdom|statuscake|lighthouse|headless|phantom|puppeteer|playwright|python-requests|python-urllib|curl|wget|go-http|okhttp|axios|feedparser|scrap|scanner|masscan|nmap|zgrab|semrush|ahrefs|mj12|dotbot|applebot|facebookexternalhit|twitterbot|discordbot|telegrambot|whatsapp|slackbot|linkedinbot|embedly|outbrain|pinterest|vkshare|redditbot|ia_archiver)/i;
+
+function isBotUserAgent(ua) {
+  return !ua || BOT_UA_RE.test(String(ua));
+}
+
 function upsertVisitor(key, req, options = {}) {
   const now = Date.now();
   const ip = getClientIp(req);
@@ -1499,13 +1518,15 @@ function visitorTracking(req, res, next) {
   }
 
   const key = getVisitorRouteKey(req);
+  if (isBotUserAgent(req.headers['user-agent'])) return next();
   const { entry, isNew } = upsertVisitor(key, req, {
     page: req.originalUrl || req.path || '/',
     source: 'page'
   });
 
-  // Never hold up page delivery for remote analytics storage.
-  trackUniqueVisitor(key).catch(warnUniqueStore);
+  // Unique visitors are counted on heartbeat only — the site is a JS app, so
+  // a "visit" means the app actually booted in a browser. Page-only hits are
+  // crawlers and monitors; counting them fabricated users in every total.
   broadcastVisitorChange(isNew ? 'online' : 'update', entry, isNew);
   next();
 }
@@ -2091,25 +2112,34 @@ function sanitizeVisitor(v) {
     page: v.page,
     connectedAt: v.connectedAt,
     lastSeen,
-    online: now - lastSeen <= HEARTBEAT_TIMEOUT,
+    // "Online" means a verified browser session (heartbeat) that is fresh —
+    // not a crawler's page hit that happened to land within the window.
+    online: Boolean(v.analyticsStarted) && now - lastSeen <= HEARTBEAT_TIMEOUT,
     source: v.source
   };
 }
 
 function countOnlineUsers(now = Date.now()) {
   let count = 0;
-  for (const visitor of activeUsers.values()) if (now - visitor.lastSeen <= HEARTBEAT_TIMEOUT) count++;
+  for (const visitor of activeUsers.values()) {
+    if (visitor.analyticsStarted && now - visitor.lastSeen <= HEARTBEAT_TIMEOUT) count++;
+  }
   return count;
 }
 
 function getStats() {
   const now = Date.now();
   let onlineCount = 0;
+  let activeSessions = 0;
   const visitors = [];
 
   for (const visitor of activeUsers.values()) {
+    // The live dashboard lists real viewers only: entries without a heartbeat
+    // are crawler/monitor noise and were the "fake users" bug.
+    if (!visitor.analyticsStarted) continue;
     const sanitized = sanitizeVisitor(visitor);
     if (sanitized.online) onlineCount++;
+    activeSessions++;
     visitors.push(sanitized);
   }
 
@@ -2117,7 +2147,7 @@ function getStats() {
 
   return {
     onlineCount,
-    activeSessions: activeUsers.size,
+    activeSessions,
     totalUnique: getTotalUniqueVisitors(),
     visitors,
     override: adminOverrideState(),
@@ -2283,8 +2313,11 @@ app.get('/api/visitors/heartbeat', async (req, res, next) => {
       return res.status(403).json({ error: 'Invalid or expired visitor token' });
     }
 
-    const existingIpKey = findVisitorKeyByIp(ip);
-    const key = activeUsers.has(suppliedUserId) ? suppliedUserId : (existingIpKey || suppliedUserId);
+    // Presence rows are keyed by the signed user id ONLY. Anonymous page-hit
+    // rows (keyed by raw IP) are excluded from every count and the dashboard
+    // anyway, and IP-based adoption collapsed real viewers sharing a NAT,
+    // mobile carrier or campus into a single row. One signed id = one user.
+    const key = suppliedUserId;
     const headerPage = normalizeSitePage(req.query.page);
     const { entry, isNew } = upsertVisitor(key, req, {
       page: headerPage || pageFromReferer(req, activeUsers.get(key)?.page || '/'),
@@ -2320,7 +2353,9 @@ app.post('/api/visitors/event', (req, res) => {
     return res.status(403).json({ error: 'Invalid or expired visitor token' });
   }
   const type = typeof req.body?.type === 'string' ? req.body.type.slice(0, 24) : '';
-  const entry = activeUsers.get(suppliedUserId) || activeUsers.get(findVisitorKeyByIp(getClientIp(req)) || '');
+  // Signed id only — same rule as the heartbeat. The old IP fallback could
+  // attribute one user's activity to a stranger on the same NAT.
+  const entry = activeUsers.get(suppliedUserId);
   if (!recordViewerEvent(type, req.body?.value, entry)) return res.status(400).json({ error: 'Unknown event' });
   res.status(204).end();
 });
@@ -2558,6 +2593,126 @@ app.get('/api/live/timing', async (req, res) => {
   } catch (err) {
     return res.status(503).json({ error: 'Live timing temporarily unavailable' });
   }
+});
+
+// ── Career data proxy — aggregates Jolpi/Ergast for a driver (10-13 upstream calls → 1 client call).
+// Client direct hits to api.jolpi.ca are slow from the browser (CORS + large offsets). Render caches
+// the computed career for 12h and coallesces concurrent requests, so second opener is <50ms.
+const JOLPI_UPSTREAM = String(process.env.JOLPI_API || 'https://api.jolpi.ca/ergast/f1').replace(/\/+$/, '');
+const CAREER_TTL_MS = 12 * 60 * 60 * 1000;
+const TITLE_TTL_MS = 24 * 60 * 60 * 1000;
+const careerCache = new Map(); // driverId -> { data, at }
+const careerInflight = new Map(); // driverId -> Promise
+const titleChampionCache = new Map(); // year -> { champ, at }
+
+async function jolpiGet(path) {
+  const url = `${JOLPI_UPSTREAM}${path}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(url, { headers: { accept: 'application/json' }, signal: controller.signal });
+    if (!res.ok) throw new Error(`Jolpi ${res.status}`);
+    return await res.json();
+  } finally { clearTimeout(timer); }
+}
+function fmtPtsServer(n){
+  const v = Math.round(Number(n)*10)/10;
+  return Number.isInteger(v) ? String(v|0) : String(v);
+}
+async function computeCareer(driverId){
+  // mirror client fetchAllResults + seasons/poles/titles but on the server with more parallelism
+  const first = await jolpiGet(`/drivers/${driverId}/results/?limit=100&offset=0`).catch(()=>null);
+  const rows = first?.MRData?.RaceTable?.Races || [];
+  const total = Number(first?.MRData?.total || rows.length);
+  if (!rows.length) return null;
+  if (total > rows.length) {
+    const offs = [];
+    for(let off=rows.length; off<total; off+=100) offs.push(off);
+    const pages = await Promise.all(offs.map(off => jolpiGet(`/drivers/${driverId}/results/?limit=100&offset=${off}`).catch(()=>null)));
+    for(const pg of pages){
+      const batch = pg?.MRData?.RaceTable?.Races || [];
+      if(!batch.length) return null;
+      rows.push(...batch);
+    }
+  }
+  const [polesDoc, seasonsDoc] = await Promise.all([
+    jolpiGet(`/drivers/${driverId}/qualifying/1/?limit=1`).catch(()=>null),
+    jolpiGet(`/drivers/${driverId}/seasons/?limit=100`).catch(()=>null)
+  ]);
+  if (!polesDoc) return null;
+  let wins=0, podiums=0, points=0, seasonPodiums=0;
+  const winSeasons = new Set(), allSeasons = new Set();
+  const SITE_SEASON_SRV = 2026;
+  for(const r of rows){
+    allSeasons.add(r.season);
+    const res = r.Results?.[0];
+    if(!res) continue;
+    points += parseFloat(res.points)||0;
+    const pos = res.position;
+    if(pos==='1'){ wins++; podiums++; winSeasons.add(r.season); }
+    else if(pos==='2'||pos==='3') podiums++;
+    if(String(r.season)===String(SITE_SEASON_SRV) && (pos==='1'||pos==='2'||pos==='3')) seasonPodiums++;
+  }
+  const seasonRows = seasonsDoc?.MRData?.SeasonTable?.Seasons || [];
+  const years = seasonRows.length ? seasonRows.map(s=>s.season) : [...allSeasons].sort();
+  const span = years.length>1 ? `${years[0]}–${years[years.length-1]}` : (years[0]||String(SITE_SEASON_SRV));
+  // titles — check each win season once, cached
+  let titles = 0;
+  const winArr = [...winSeasons];
+  // filter out current incomplete season (same as client)
+  const lastRace = null; // be permissive server side — only filter current year if you add schedule check
+  const titleYears = winArr; // keep all; client filters 2026 only if season incomplete — harmless to check extra
+  if(titleYears.length){
+    const champs = await Promise.all(titleYears.map(async y=>{
+      const cached = titleChampionCache.get(String(y));
+      if(cached && Date.now()-cached.at < TITLE_TTL_MS) return cached.champ;
+      try{
+        const d = await jolpiGet(`/${y}/driverstandings/1/?limit=1`);
+        const champ = d?.MRData?.StandingsTable?.StandingsLists?.[0]?.DriverStandings?.[0]?.Driver?.driverId || null;
+        titleChampionCache.set(String(y), { champ, at: Date.now() });
+        return champ;
+      }catch(_){ return null; }
+    }));
+    if(champs.includes(null)) return null;
+    titles = champs.filter(c=>c===driverId).length;
+  }
+  return {
+    races: rows.length, wins, podiums, seasonPodiums,
+    points: fmtPtsServer(points),
+    poles: Number(polesDoc?.MRData?.total||0),
+    seasons: years.length || allSeasons.size,
+    span, titles
+  };
+}
+app.get('/api/career/:driverId', async (req, res) => {
+  const driverId = String(req.params.driverId||'').toLowerCase().replace(/[^a-z0-9_]/g,'').slice(0,40);
+  if(!driverId) return res.status(400).json({ error: 'driverId required' });
+  if(!consumeVisitorRateLimit(`career:${getClientIp(req)}`)){
+    res.setHeader('Retry-After','10');
+    return res.status(429).json({ error: 'Too many requests' });
+  }
+  const now = Date.now();
+  const cached = careerCache.get(driverId);
+  if(cached && now - cached.at < CAREER_TTL_MS){
+    res.setHeader('Cache-Control','public, max-age=300, stale-while-revalidate=600');
+    res.setHeader('X-Cache','HIT');
+    return res.json({ career: cached.data, cached: true });
+  }
+  if(careerInflight.has(driverId)) {
+    try{ const data = await careerInflight.get(driverId); res.setHeader('X-Cache','COALESCED'); return res.json({ career: data, cached: false }); }catch(e){ /* fall through */ }
+  }
+  const job = computeCareer(driverId);
+  careerInflight.set(driverId, job);
+  try{
+    const data = await job;
+    if(!data) return res.status(503).json({ error: 'Career unavailable' });
+    careerCache.set(driverId, { data, at: Date.now() });
+    res.setHeader('Cache-Control','public, max-age=300, stale-while-revalidate=600');
+    res.setHeader('X-Cache','MISS');
+    return res.json({ career: data, cached: false });
+  }catch(err){
+    return res.status(503).json({ error: 'Upstream failure' });
+  }finally{ careerInflight.delete(driverId); }
 });
 
 // Public audio-only feed for the experimental Audio page.

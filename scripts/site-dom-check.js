@@ -66,7 +66,7 @@ window.fetch = async (url, options) => {
   if (u.includes('/api/stream/sources')) return emptyJson({
     sources: [
       { id: 'sky-uk-2', label: 'Sky UK 2' },
-      { id: 'sky-uk', label: 'Sky UK' },
+      { id: 'sky-uk', label: 'Sky UHD' },
       { id: 'f1tv', label: 'F1TV' },
       { id: 'sky-sports-f1', label: 'Sky Sports F1' },
       { id: 'appletv', label: 'AppleTV' },
@@ -133,8 +133,8 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   // app.js is loaded via window.eval, so its top-level const bindings live in
   // lexical scope rather than on window — read them back through eval.
   const feedState = JSON.parse(window.__feedState());
-  check('source order starts Sky UK 2 → Sky UK → F1TV → Sky Sports F1 → AppleTV → DAZN',
-    ['Sky UK 2', 'Sky UK', 'F1TV', 'Sky Sports F1', 'AppleTV', 'DAZN']
+  check('source order starts Sky Sports F1 → WeStream F1 → Sky UK 2 → Sky UHD → F1TV → AppleTV',
+    ['Sky Sports F1', 'WeStream F1', 'Sky UK 2', 'Sky UHD', 'F1TV', 'AppleTV']
       .every((label, i) => feedState.order[i] === label),
     feedState.order.join(', '));
   check('every source carries a stable id', feedState.ids.every(id => typeof id === 'string' && id.length > 0),
@@ -142,14 +142,14 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   check('disabled set applied from the server',
     feedState.disabled.length === 2 && feedState.disabled.includes('sky-uk-2') && feedState.disabled.includes('dazn'),
     feedState.disabled.join(', '));
-  check('two chips hidden for the two disabled feeds', $('links').children.length === 5,
+  check('two chips hidden for the two disabled feeds', $('links').children.length === 6,
     `${$('links').children.length} chips`);
   check('disabled feed labels are absent from the chips', (() => {
     const labels = [...$('links').children].map(c => c.textContent);
     return !labels.includes('Sky UK 2') && !labels.includes('DAZN');
   })(), [...$('links').children].map(c => c.textContent).join(', '));
   check('selection falls back off a disabled first feed',
-    $('links').querySelector('.chip.active')?.textContent === 'Sky UK',
+    $('links').querySelector('.chip.active')?.textContent === 'Sky Sports F1',
     $('links').querySelector('.chip.active')?.textContent);
 
   // Structural integrity. A stray closing tag once closed #player early, which
