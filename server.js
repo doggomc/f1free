@@ -10,7 +10,7 @@ const path = require('path');
 const app = express();
 
 app.disable('x-powered-by');
-app.set('trust proxy', 1);
+app.set('trust proxy', true);
 
 const SERVER_STARTED_AT = Date.now();
 const PORT = process.env.PORT || 3000;
@@ -1358,12 +1358,46 @@ startStoreResyncTimer();
 // VISITOR TRACKING
 // ─────────────────────────────────────────────
 
+function isPrivateIp(ip){
+  const v = String(ip||'').trim();
+  if(!v || v==='unknown') return true;
+  if(v==='127.0.0.1' || v==='::1' || v==='::ffff:127.0.0.1') return true;
+  // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, fc00::/7, fe80::/10, ::/128
+  if(/^10\./.test(v)) return true;
+  if(/^192\.168\./.test(v)) return true;
+  if(/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(v)) return true;
+  if(/^169\.254\./.test(v)) return true;
+  if(v.startsWith('fc') || v.startsWith('fd') || v.startsWith('fe80') || v==='::') return true;
+  if(v.startsWith('::ffff:10.') || v.startsWith('::ffff:192.168.') || v.startsWith('::ffff:172.')) return true;
+  return false;
+}
 function getClientIp(req) {
-  const raw = String(req.ip || req.socket?.remoteAddress || 'unknown')
-    .split(',')[0]
-    .trim();
-  if (raw === '::1') return '127.0.0.1';
-  return raw.replace(/^::ffff:/, '') || 'unknown';
+  // Cloudflare / Render / Netlify all set CF-Connecting-IP or True-Client-IP; prefer those over req.ip
+  const headerCandidates = [
+    req.headers['cf-connecting-ip'],
+    req.headers['true-client-ip'],
+    req.headers['x-real-ip'],
+    req.headers['x-forwarded-for']
+  ];
+  for(const hdr of headerCandidates){
+    if(!hdr) continue;
+    const parts = String(hdr).split(',').map(s=>s.trim().replace(/^::ffff:/,'')).filter(Boolean);
+    if(!parts.length) continue;
+    // XFF is client, proxy1, proxy2 — leftmost public is the real visitor
+    for(const cand of parts){
+      if(!isPrivateIp(cand)) return cand;
+    }
+    // fallback: if all are private (local dev), return first
+    if(parts[0]) return parts[0];
+  }
+  const raw = String(req.ip || req.socket?.remoteAddress || 'unknown').split(',')[0].trim().replace(/^::ffff:/,'');
+  if(raw==='::1') return '127.0.0.1';
+  if(isPrivateIp(raw) && req.headers['x-forwarded-for']){
+    // last resort: even req.ip is private, try to salvage XFF leftmost anyway
+    const xff = String(req.headers['x-forwarded-for']).split(',').map(s=>s.trim().replace(/^::ffff:/,'')).filter(Boolean);
+    if(xff.length) return xff[0];
+  }
+  return raw || 'unknown';
 }
 
 function hashClientIp(ip) {
