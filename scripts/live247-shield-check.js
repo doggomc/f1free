@@ -102,7 +102,7 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   await new Promise(resolve => setTimeout(resolve, 20));
   gate = $('live247Gate');
   check('frame-nav hijack re-arms the shield even on auto stations', gate && !gate.hidden);
-  check('hijack toast announces auto-reload', Boolean($('apexToast') && $('apexToast').textContent.includes('reloading')));
+  check('hijack toast announces auto-reload', Boolean($('freef1Toast') && $('freef1Toast').textContent.includes('reloading')));
   const manners = JSON.parse(window.localStorage.getItem('freef1_247_manners') || '{}');
   check('manners league recorded the hijack', (manners['sky-uk-2'] || {}).hijack === 1, JSON.stringify(manners));
 

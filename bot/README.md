@@ -1,6 +1,6 @@
-# APEX Race Control — Discord bot
+# FreeF1 Race Control — Discord bot
 
-Owner-operated companion bot for the APEX Discord server. Runs **in-process**
+Owner-operated companion bot for the FreeF1 Discord server. Runs **in-process**
 with the f1free Express server; does nothing unless `DISCORD_BOT_TOKEN` is set.
 All commands except `/website` are hard-gated to the owner id
 (`915483308522086460`) and refuse everyone else ephemerally.
@@ -43,7 +43,7 @@ double-post an alert.
    | `DISCORD_BOT_TOKEN` | bot token |
    | `DISCORD_GUILD_ID` | your server id (guild-scoped commands = instant; omit for global, ~1h propagation) |
    | `SITE_URL` | optional, defaults to `https://freef1.netlify.app` |
-   | `APEX_AUDIO_URL` | optional default race-audio URL for `/watchparty start` (overridable with `/config set audio_url:`) |
+   | `FREEF1_AUDIO_URL` | optional default race-audio URL for `/watchparty start` (overridable with `/config set audio_url:`) |
 
 6. Restart the service. Log shows `[Bot] connected as …` and
    `commands registered (guild-scoped)`.
@@ -60,7 +60,7 @@ double-post an alert.
 | `/status` | owner | one glance: live/next session, bindings, panels, mapped roles, relay, store backend |
 | `/live [round] [session] [state]` | owner | test-fires an alert embed (`state:` `soon` / `live` / `ended`, default `live`) into the alerts channel. A wrong round or slug errors with the valid slugs — it does not silently post a different session |
 | `/watchparty start\|stop\|status` | owner | relay race **audio** into a voice channel. See `bot/STREAMING.md` for why this cannot be video |
-| `/website` | **everyone** | stylish link embed: Open APEX + Server invite buttons |
+| `/website` | **everyone** | stylish link embed: Open FreeF1 + Server invite buttons |
 
 ## Automatic session alerts
 
@@ -69,7 +69,7 @@ kept in step with the site's `app.js` schedule):
 
 - **T−N min** (default 10, editable with `/config set soon_minutes:`) →
   `STARTING SOON` embed, amber accent, pinging the alerts role, with a
-  **Watch on APEX** button.
+  **Watch on FreeF1** button.
 - **Lights out** → the *same message edits itself* into `LIVE NOW` (green).
   No second ping, no channel spam.
 - **Chequered flag** → the same message edits into `ENDED` (red). End times
@@ -106,8 +106,8 @@ the lead-time line.
 ## Panels
 
 Discord caps reactions at **20 per message**; the 2026 grid has 22 drivers,
-so the grid is one embed plus buttons (`apex:grid:<number>`), not reactions.
-The alerts opt-in is a single `apex:alerts` toggle button.
+so the grid is one embed plus buttons (`freef1:grid:<number>`), not reactions.
+The alerts opt-in is a single `freef1:alerts` toggle button.
 
 Legacy reaction panels already posted in a server keep working (the reaction
 handlers are still there) until you re-run `/rolemenu` or `/alertsmenu`.

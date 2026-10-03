@@ -1,7 +1,7 @@
 'use strict';
 
 /* ════════════════════════════════════════════════════════════════════
-   APEX Race Control — Discord companion bot (owner-operated)
+   FreeF1 Race Control — Discord companion bot (owner-operated)
    ════════════════════════════════════════════════════════════════════
    Runs in-process with the f1free Express server; started only when
    DISCORD_BOT_TOKEN is set. Everything the owner configures with
@@ -62,9 +62,9 @@ const OWNER_ID = String(process.env.DISCORD_OWNER_ID || '').trim();
 const DEFAULT_SOON_MINUTES = 10;    // lead time for the "starting soon" alert
 const ENDED_WINDOW_HOURS = 24;      // how long a finished session stays editable to ENDED
 const TICK_MS = 15000;              // scheduler resolution
-const APEX_RED = 0xE10600;
-const APEX_GREEN = 0x00D57E;
-const APEX_AMBER = 0xFFB020;
+const FREEF1_RED = 0xE10600;
+const FREEF1_GREEN = 0x00D57E;
+const FREEF1_AMBER = 0xFFB020;
 const ROLE_NAME_RE = /^(\d{1,2}) \| ([A-Z]{3})$/;
 const SITE_LABEL = 'freef1.netlify.app';
 
@@ -112,7 +112,7 @@ function driverPanelEmbed(siteUrl) {
     return `${t.name.padEnd(width, ' ')}  ${drivers}`;
   }).join('\n');
   return {
-    color: APEX_RED,
+    color: FREEF1_RED,
     title: '2026 Grid',
     description:
       `\`\`\`\n${lines}\n\`\`\`\n` +
@@ -123,7 +123,7 @@ function driverPanelEmbed(siteUrl) {
 
 function alertsPanelEmbed(siteUrl) {
   return {
-    color: APEX_RED,
+    color: FREEF1_RED,
     description:
       `**Stream Alerts**\n\n` +
       `Get pinged when a session is starting.\n` +
@@ -145,7 +145,7 @@ function sessionEmbed(ev, sess, state, siteUrl, soonMinutes = DEFAULT_SOON_MINUT
       ? 'Chequered flag - session complete. Results and radio on the site.'
       : `Lights out in about ${soonMinutes} minutes. Settle in.`;
   return {
-    color: live ? APEX_GREEN : ended ? APEX_RED : APEX_AMBER,
+    color: live ? FREEF1_GREEN : ended ? FREEF1_RED : FREEF1_AMBER,
     title: live ? 'LIVE NOW' : ended ? 'ENDED' : 'STARTING SOON',
     url: siteUrl,
     description:
@@ -164,8 +164,8 @@ function sessionEmbed(ev, sess, state, siteUrl, soonMinutes = DEFAULT_SOON_MINUT
 
 function websiteEmbed(siteUrl, inviteUrl) {
   return {
-    color: APEX_RED,
-    title: 'APEX — the free F1 stream hub',
+    color: FREEF1_RED,
+    title: 'FreeF1 — the free F1 stream hub',
     description:
       'Every session of the 2026 season in one cockpit.\n' +
       'Ten stream sources with automatic fallback, live race-control\n' +
@@ -180,7 +180,7 @@ function websiteEmbed(siteUrl, inviteUrl) {
   };
 }
 
-function watchRow(siteUrl, label = 'Watch on APEX') {
+function watchRow(siteUrl, label = 'Watch on FreeF1') {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel(label).setURL(siteUrl)
   );
@@ -188,7 +188,7 @@ function watchRow(siteUrl, label = 'Watch on APEX') {
 
 function websiteRow(siteUrl, inviteUrl) {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Open APEX').setURL(siteUrl),
+    new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Open FreeF1').setURL(siteUrl),
     new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Server invite').setURL(inviteUrl)
   );
 }
@@ -204,7 +204,7 @@ function gridRows(st) {
       const button = new ButtonBuilder()
         .setStyle(ButtonStyle.Secondary)
         .setLabel(d.code)
-        .setCustomId(`apex:grid:${d.num}`);
+        .setCustomId(`freef1:grid:${d.num}`);
       const emojiId = st.emojiIds && st.emojiIds[String(d.num)];
       if (emojiId) button.setEmoji({ id: emojiId });
       row.addComponents(button);
@@ -219,7 +219,7 @@ function alertsRow() {
     new ButtonBuilder()
       .setStyle(ButtonStyle.Primary)
       .setLabel('Toggle Session Alerts')
-      .setCustomId('apex:alerts')
+      .setCustomId('freef1:alerts')
   );
 }
 
@@ -368,15 +368,15 @@ function start(deps) {
 
   /* ── emoji management ── */
   async function ensureEmojis(guild, st) {
-    const wanted = [...ALL_DRIVERS.map(d => ({ key: String(d.num), file: `n${d.num}.png` })), { key: 'live', file: 'apexlive.png' }];
+    const wanted = [...ALL_DRIVERS.map(d => ({ key: String(d.num), file: `n${d.num}.png` })), { key: 'live', file: 'freef1live.png' }];
     for (const w of wanted) {
-      const name = w.key === 'live' ? 'apexlive' : `n${w.key}`;
+      const name = w.key === 'live' ? 'freef1live' : `n${w.key}`;
       const existing = guild.emojis.cache.find(e => e.name === name);
       if (existing) { st.emojiIds[w.key] = existing.id; continue; }
       if (st.emojiIds[w.key] && guild.emojis.cache.has(st.emojiIds[w.key])) continue;
       try {
         const buf = fs.readFileSync(path.join(EMOJI_DIR, w.file));
-        const created = await guild.emojis.create({ name, attachment: buf, reason: 'APEX panels' });
+        const created = await guild.emojis.create({ name, attachment: buf, reason: 'FreeF1 panels' });
         st.emojiIds[w.key] = created.id;
         log(`emoji uploaded: ${created.name}`);
       } catch (e) {
@@ -428,7 +428,7 @@ function start(deps) {
     if (!target) {
       target = guild.roles.cache.find(r => r.name === 'Stream Alerts');
       if (!target) {
-        target = await guild.roles.create({ name: 'Stream Alerts', color: APEX_RED, reason: 'APEX stream alerts opt-in' });
+        target = await guild.roles.create({ name: 'Stream Alerts', color: FREEF1_RED, reason: 'FreeF1 stream alerts opt-in' });
       }
     }
     await deleteStoredPanel(guild, st, 'alerts');
@@ -460,7 +460,7 @@ function start(deps) {
       });
     }
     try {
-      const granted = await toggleRole(interaction.member, guild, st, roleId, 'APEX supporter role');
+      const granted = await toggleRole(interaction.member, guild, st, roleId, 'FreeF1 supporter role');
       await store.save();
       return interaction.reply({
         content: granted
@@ -484,7 +484,7 @@ function start(deps) {
       return interaction.reply({ content: 'Alerts are not configured yet. Owner: run /alertsmenu.', ephemeral: true });
     }
     try {
-      const granted = await toggleRole(interaction.member, guild, st, st.alerts.roleId, 'APEX stream alerts opt-in/out');
+      const granted = await toggleRole(interaction.member, guild, st, st.alerts.roleId, 'FreeF1 stream alerts opt-in/out');
       await store.save();
       return interaction.reply({
         content: granted
@@ -526,15 +526,15 @@ function start(deps) {
       if (panelKey === 'alerts') {
         if (!st.alerts || !st.alerts.roleId) return;
         const member = await guild.members.fetch(user.id);
-        if (granting) await member.roles.add(st.alerts.roleId, 'APEX stream alerts opt-in');
-        else await member.roles.remove(st.alerts.roleId, 'APEX stream alerts opt-out');
+        if (granting) await member.roles.add(st.alerts.roleId, 'FreeF1 stream alerts opt-in');
+        else await member.roles.remove(st.alerts.roleId, 'FreeF1 stream alerts opt-out');
         return;
       }
       const roleId = st.driverRoles[emojiKey] || discoverDriverRoles(guild, st)[emojiKey];
       if (!roleId) return;
       const member = await guild.members.fetch(user.id);
-      if (granting) await member.roles.add(roleId, 'APEX supporter role');
-      else await member.roles.remove(roleId, 'APEX supporter role');
+      if (granting) await member.roles.add(roleId, 'FreeF1 supporter role');
+      else await member.roles.remove(roleId, 'FreeF1 supporter role');
     } catch (e) {
       log('reaction role failed:', e.message); // usually role hierarchy
     }
@@ -617,7 +617,7 @@ function start(deps) {
           if (existingId) {
             try {
               const msg = await channel.messages.fetch(existingId);
-              await msg.edit({ embeds: [sessionEmbed(ev, sess, 'ended', deps.siteUrl, soonMin)], components: [watchRow(deps.siteUrl, 'Results on APEX')] });
+              await msg.edit({ embeds: [sessionEmbed(ev, sess, 'ended', deps.siteUrl, soonMin)], components: [watchRow(deps.siteUrl, 'Results on FreeF1')] });
               log(`ended alert: ${ev.slug}/${sess.slug}`);
             } catch (e) { log('ended edit failed (message gone?):', e.message); }
           }
@@ -684,7 +684,7 @@ function start(deps) {
         {
           type: 1, name: 'start', description: 'Join a voice channel and play the race audio',
           options: [
-            { type: 3, name: 'audio', description: 'Audio URL (HTTP/HTTPS/HLS/m3u8/MP3). Defaults to /config audio_url, then APEX_AUDIO_URL.', required: false },
+            { type: 3, name: 'audio', description: 'Audio URL (HTTP/HTTPS/HLS/m3u8/MP3). Defaults to /config audio_url, then FREEF1_AUDIO_URL.', required: false },
             { type: 7, name: 'channel', description: 'Voice channel to join (defaults to yours)', required: false, channel_types: [2] }
           ]
         },
@@ -692,14 +692,14 @@ function start(deps) {
         { type: 1, name: 'status', description: 'Show whether the audio relay is running' }
       ]
     },
-    { name: 'website', description: 'The APEX stream hub — link embed.' },
+    { name: 'website', description: 'The FreeF1 stream hub — link embed.' },
   ];
 
   /* ── interactions ── */
   async function onInteraction(interaction) {
     if (interaction.isButton()) {
-      if (interaction.customId === 'apex:alerts') return handleAlertsButton(interaction);
-      if (interaction.customId.startsWith('apex:grid:')) return handleGridButton(interaction);
+      if (interaction.customId === 'freef1:alerts') return handleAlertsButton(interaction);
+      if (interaction.customId.startsWith('freef1:grid:')) return handleGridButton(interaction);
       return;
     }
     if (!interaction.isChatInputCommand()) return;
@@ -743,8 +743,8 @@ function start(deps) {
           return interaction.reply({
             ephemeral: true,
             embeds: [{
-              color: APEX_RED,
-              title: 'APEX bot configuration',
+              color: FREEF1_RED,
+              title: 'FreeF1 bot configuration',
               fields: [
                 { name: 'Alerts channel', value: st.alerts && st.alerts.channelId ? `<#${st.alerts.channelId}>` : 'not set', inline: true },
                 { name: 'Alerts role', value: st.alerts && st.alerts.roleId ? `<@&${st.alerts.roleId}>` : 'not set', inline: true },
@@ -779,8 +779,8 @@ function start(deps) {
         return interaction.reply({
           ephemeral: true,
           embeds: [{
-            color: live ? APEX_GREEN : APEX_RED,
-            title: `APEX Race Control - ${guild.name}`,
+            color: live ? FREEF1_GREEN : FREEF1_RED,
+            title: `FreeF1 Race Control - ${guild.name}`,
             fields: [
               { name: 'Now', value: live ? `LIVE: ${live.ev.name} · ${live.sess.name}` : (next ? `Next: ${next.ev.name} · ${next.sess.name} <t:${Math.floor(next.sess.ts / 1000)}:R>` : 'Season complete'), inline: false },
               { name: 'Alerts', value: st.alerts && st.alerts.channelId ? `<#${st.alerts.channelId}> pinging ${st.alerts.roleId ? `<@&${st.alerts.roleId}>` : 'nobody'}` : 'not configured', inline: false },
@@ -832,7 +832,7 @@ function start(deps) {
         const url = (interaction.options.getString('audio') || st.config.audioUrl || deps.audioUrl || '').trim();
         if (!url) {
           return interaction.reply({
-            content: 'No audio source configured. Pass one with `audio:`, or set one with `/config set audio_url:` or `APEX_AUDIO_URL`.',
+            content: 'No audio source configured. Pass one with `audio:`, or set one with `/config set audio_url:` or `FREEF1_AUDIO_URL`.',
             ephemeral: true
           });
         }
@@ -870,7 +870,7 @@ function start(deps) {
         const alertsCh = bound || interaction.channel;
         const msg = await alertsCh.send({
           embeds: [sessionEmbed(found.ev, found.sess, state, deps.siteUrl, soonMinutesFor(st))],
-          components: [watchRow(deps.siteUrl, state === 'ended' ? 'Results on APEX' : 'Watch on APEX')],
+          components: [watchRow(deps.siteUrl, state === 'ended' ? 'Results on FreeF1' : 'Watch on FreeF1')],
         });
         const where = bound ? String(alertsCh) : `${alertsCh} (no alerts channel set - posted here)`;
         return interaction.editReply({ content: `Posted ${state} embed for ${found.ev.name} · ${found.sess.name} to ${where}: ${msg.url}` });

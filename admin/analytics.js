@@ -17,7 +17,7 @@ const Analytics = (() => {
     '90d': { label: 'Last 90 days', days: 90, granularity: 'day' }
   };
   const TEAM_META = {
-    default: ['Apex Red', '#E10600'], mclaren: ['McLaren', '#FF8000'], ferrari: ['Ferrari', '#DC0000'], redbull: ['Red Bull', '#1E41FF'],
+    default: ['FreeF1 Red', '#E10600'], mclaren: ['McLaren', '#FF8000'], ferrari: ['Ferrari', '#DC0000'], redbull: ['Red Bull', '#1E41FF'],
     mercedes: ['Mercedes', '#00D2BE'], williams: ['Williams', '#005AFF'], astonmartin: ['Aston Martin', '#006F62'], alpine: ['Alpine', '#FF0080'],
     haas: ['Haas', '#B3B3B3'], audi: ['Audi', '#E62213'], cadillac: ['Cadillac', '#B4A07A'], racingbulls: ['Racing Bulls', '#6692FF']
   };

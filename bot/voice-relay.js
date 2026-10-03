@@ -1,7 +1,7 @@
 'use strict';
 
 /* ══════════════════════════════════════════════════════════════════════════
-   APEX Race Audio — voice-channel relay
+   FreeF1 Race Audio — voice-channel relay
    ══════════════════════════════════════════════════════════════════════════
    WHAT THIS IS, AND WHAT IT IS NOT
    --------------------------------
@@ -23,7 +23,7 @@
      1. Members sit in the "Race Control" voice channel.
      2. The bot joins and plays the race audio (official commentary feed,
         team-radio replays from OpenF1, or any HTTP/HLS audio URL).
-     3. The /live and scheduler embeds keep posting the "Watch on APEX"
+     3. The /live and scheduler embeds keep posting the "Watch on FreeF1"
         button so people get video on the site and audio in Discord.
 
    If you want synchronised *video* inside Discord, the only official route

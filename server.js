@@ -2752,7 +2752,7 @@ app.get('/api/career/:driverId', async (req, res) => {
 // Public audio-only feed for the experimental Audio page.
 // Direct m3u8 / AAC / MP3 URL — never a video embed page.
 app.get('/api/audio-feed', (req, res) => {
-  const url = String(process.env.APEX_AUDIO_URL || '').trim();
+  const url = String(process.env.FREEF1_AUDIO_URL || process.env.APEX_AUDIO_URL || '').trim();
   res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=45');
   return res.json({ url, available: Boolean(url) });
 });
@@ -3212,7 +3212,7 @@ if (process.env.DISCORD_BOT_TOKEN) {
       fileKey: path.join(DATA_DIR, 'discord-bot.json'),
       // Default audio source for /watchparty start. Discord bots can relay
       // audio into a voice channel, never video — see bot/STREAMING.md.
-      audioUrl: String(process.env.APEX_AUDIO_URL || '').trim(),
+      audioUrl: String(process.env.FREEF1_AUDIO_URL || process.env.APEX_AUDIO_URL || '').trim(),
       log: (...a) => console.log('[Bot]', ...a),
     });
   } catch (error) {

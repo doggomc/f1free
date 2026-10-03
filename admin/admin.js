@@ -449,7 +449,7 @@ function updateMaintenanceStatus(maintenance) {
   if (maintenanceStatusText) {
     maintenanceStatusText.textContent = maintenanceActive
       ? 'Visitors are seeing the dedicated pit-stop maintenance page.'
-      : 'Visitors can access the full APEX experience.';
+      : 'Visitors can access the full FreeF1 experience.';
   }
   if (maintenanceMessage && document.activeElement !== maintenanceMessage) {
     maintenanceMessage.value = state.message || "We'll be back before the race.";
@@ -1075,7 +1075,7 @@ function handleMaintenanceUpdate(data) {
   if (currentStats) updateSystemInfo(currentStats);
   if (changed) {
     showToast(
-      data.active ? 'Maintenance mode enabled — the public site is now in the pits.' : 'Public website released — APEX is live again.',
+      data.active ? 'Maintenance mode enabled — the public site is now in the pits.' : 'Public website released — FreeF1 is live again.',
       data.active ? 'warning' : 'success'
     );
   }

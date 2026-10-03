@@ -32,7 +32,7 @@ Do **not** set `DEV_DIR` to the API repo root. Leave it unset on Render (the pub
 | `DISCORD_INVITE` | `https://discord.gg/...` |
 | `SITE_URL` | `https://freef1.netlify.app` |
 | `OPENF1_API_KEY` | Optional OpenF1 key |
-| `APEX_AUDIO_URL` | Default `/watchparty` audio URL |
+| `FREEF1_AUDIO_URL` | Default `/watchparty` audio URL |
 | `PUBLIC_SSE_MAX` | Default `400` |
 
 Generate hex secrets:

@@ -74,7 +74,7 @@ intent, so no verification is needed. The bot should be invited with the
 **What the race-day experience looks like**
 
 1. Members join the *Race Control* voice channel — they hear live commentary.
-2. The scheduler / `/live` embeds keep posting the **Watch on APEX** button, so
+2. The scheduler / `/live` embeds keep posting the **Watch on FreeF1** button, so
    video stays on the site where it belongs (and where the ad-layer containment
    in `app.js` is already handling tab-swap hijacks).
 3. Audio in Discord, picture on the site. Nobody has to fight a video
@@ -90,7 +90,7 @@ page. Good options:
 - **A commentary / radio stream** you have rights to relay.
 - **Anything ffmpeg can open**, passed straight to the command.
 
-Set a default with `APEX_AUDIO_URL`, or pass one per command.
+Set a default with `FREEF1_AUDIO_URL`, or pass one per command.
 
 **Commands added**
 
@@ -173,7 +173,7 @@ Keep this. It is the highest value-per-byte feature in the bot.
 
 | Goal | Do this |
 | --- | --- |
-| Get race audio into the server now | **Route A** — implemented, `npm i` the optional deps, set `APEX_AUDIO_URL`, `/watchparty start` |
+| Get race audio into the server now | **Route A** — implemented, `npm i` the optional deps, set `FREEF1_AUDIO_URL`, `/watchparty start` |
 | Video *inside* Discord | **Route B** — a custom Activity; larger build, and review your DMCA posture first |
 | Video where it already works | **Route C** — keep the embeds; the site's player is the video surface |
 | Anything involving a user token | **Don't.** ToS violation, account ban risk |
