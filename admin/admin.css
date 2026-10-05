@@ -5575,9 +5575,14 @@ body.view-swapping {
 
 /* panels map to .card for exact site look — keep .panel alias for JS */
 .panel{
+  display:block;
   background:rgba(255,255,255,.045);border:1px solid var(--line);border-radius:var(--r);
   overflow:hidden;box-shadow:var(--shadow);position:relative;
 }
+/* Admin override site's .panel{display:none} — keep dashboard panels always visible */
+#app .panel{display:block !important}
+#app .panel[hidden]{display:none !important}
+
 .panel::before{content:'';position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:linear-gradient(150deg,rgba(255,255,255,.05),transparent 42%)}
 .panel-head{
   display:flex;align-items:center;justify-content:space-between;

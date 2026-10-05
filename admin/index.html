@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800;900&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800;900&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"></noscript>
-<link rel="stylesheet" href="/admin/admin.css?v=20261005-admin6">
+<link rel="stylesheet" href="/admin/admin.css?v=20261005-admin7">
 </head>
 <body>
 
@@ -487,15 +487,15 @@
         <div>
           <h4>System</h4>
           <div class="foot-links">
-            <span style="color:var(--muted);font-size:.84rem" id="serverTimeLabel">Server Time — UTC</span>
-            <span style="color:var(--dim);font-family:'JetBrains Mono',monospace;font-size:.72rem" id="serverDate">--</span>
+            <span style="color:var(--muted);font-size:.84rem">Server Time — UTC</span>
+            <span style="color:var(--dim);font-family:'JetBrains Mono',monospace;font-size:.72rem">—</span>
           </div>
         </div>
         <div>
           <h4>Status</h4>
           <div class="foot-links">
-            <span class="pill live" id="sseStatus" style="font-size:.66rem">Connecting…</span>
-            <span style="color:var(--muted);font-size:.72rem" id="sysVisitorStore">—</span>
+            <span class="pill live" style="font-size:.66rem">Operational</span>
+            <span style="color:var(--muted);font-size:.72rem">—</span>
           </div>
         </div>
       </div>
@@ -523,27 +523,8 @@
 
 <div class="toast-container" id="toastContainer"></div>
 
-<div style="display:none">
-  <!-- keep hidden inputs referenced by admin.js -->
-  <span id="serverTime"></span>
-  <span id="sysUptime"></span>
-  <span id="sysVisitorStore"></span>
-  <span id="sysUniqueStore"></span>
-  <span id="sysNewsStore"></span>
-  <span id="sysSourceStore"></span>
-  <span id="sysOverrideStore"></span>
-  <span id="sysAnalyticsStore"></span>
-  <span id="sysOverrideStatus"></span>
-  <span id="sysMaintenanceStatus"></span>
-  <span id="sysNodeEnv"></span>
-  <span id="sysSessionActive"></span>
-  <span id="sysExperimentalStatus"></span>
-  <span id="sysExperimentalStore"></span>
-  <span id="sysStreamWindow"></span>
-</div>
-
-<script src="/admin/charts.js?v=20261005-admin6" defer></script>
-<script src="/admin/analytics.js?v=20261005-admin6" defer></script>
-<script src="/admin/admin.js?v=20261005-admin6" defer></script>
+<script src="/admin/charts.js?v=20261005-admin7" defer></script>
+<script src="/admin/analytics.js?v=20261005-admin7" defer></script>
+<script src="/admin/admin.js?v=20261005-admin7" defer></script>
 </body>
 </html>
