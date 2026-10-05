@@ -47,6 +47,8 @@ const OVERRIDE_FILE = path.join(DATA_DIR, 'stream-override.json');
 const OVERRIDE_REDIS_KEY = process.env.OVERRIDE_REDIS_KEY || 'freef1:stream-override:v1';
 const EXPERIMENTAL_FILE = path.join(DATA_DIR, 'experimental.json');
 const EXPERIMENTAL_REDIS_KEY = process.env.EXPERIMENTAL_REDIS_KEY || 'freef1:experimental:v1';
+const STREAM_WINDOW_FILE = path.join(DATA_DIR, 'stream-window.json');
+const STREAM_WINDOW_REDIS_KEY = process.env.STREAM_WINDOW_REDIS_KEY || 'freef1:stream-window:v1';
 
 // ── OpenF1 proxy (see /api/openf1/:path) ──
 // OpenF1 locks the free tier with a CORS-less 401 while a session is live, which
@@ -1284,6 +1286,81 @@ async function persistExperimentalState() {
   }
 }
 
+// ─────────────────────────────────────────────
+// STREAM WINDOW OVERRIDE (force streams live)
+// ─────────────────────────────────────────────
+const streamWindowState = {
+  active: false,
+  reason: '',
+  startedAt: null,
+  updatedAt: null
+};
+let streamWindowStoreReady = false;
+let streamWindowInitPromise = Promise.resolve(false);
+
+function publicStreamWindowState() {
+  return {
+    active: Boolean(streamWindowState.active),
+    reason: String(streamWindowState.reason || '').slice(0, 120),
+    startedAt: streamWindowState.startedAt || null,
+    updatedAt: streamWindowState.updatedAt || null
+  };
+}
+
+function applyStreamWindowState(state) {
+  const active = Boolean(state?.active);
+  streamWindowState.active = active;
+  streamWindowState.reason = String(state?.reason || '').trim().slice(0, 120);
+  streamWindowState.startedAt = active ? (Number(state?.startedAt) || Date.now()) : null;
+  streamWindowState.updatedAt = Number(state?.updatedAt) || Date.now();
+  return publicStreamWindowState();
+}
+
+async function syncStreamWindowState() {
+  if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
+    const stored = readLocalJson(STREAM_WINDOW_FILE);
+    if (stored) applyStreamWindowState(stored);
+    streamWindowStoreReady = fileStoreReady;
+    return fileStoreReady;
+  }
+  try {
+    const { found, value: stored } = await readUpstashJson(STREAM_WINDOW_REDIS_KEY);
+    if (found) applyStreamWindowState(stored);
+    streamWindowStoreReady = true;
+    return true;
+  } catch (error) {
+    warnUniqueStore(error);
+    streamWindowStoreReady = false;
+    return false;
+  }
+}
+
+async function persistStreamWindowState() {
+  if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
+    const saved = writeLocalJson(STREAM_WINDOW_FILE, publicStreamWindowState());
+    streamWindowStoreReady = saved;
+    return saved;
+  }
+  try {
+    const payload = await upstashRequest(['SET', STREAM_WINDOW_REDIS_KEY, JSON.stringify(publicStreamWindowState())]);
+    if (payload?.result !== 'OK') throw new Error('Upstash did not confirm stream window update');
+    streamWindowStoreReady = true;
+    return true;
+  } catch (error) {
+    warnUniqueStore(error);
+    streamWindowStoreReady = false;
+    return false;
+  }
+}
+
+function broadcastStreamWindowState() {
+  const state = publicStreamWindowState();
+  broadcastSSE('stream_window_update', state);
+  broadcastPublicSSE('stream_window_update', state);
+  scheduleStatsBroadcast(0);
+  return state;
+}
+
 // Keep the local snapshot in sync if the service is ever scaled beyond one
 // process. This is a single lightweight request every five minutes.
 const uniqueVisitorSyncTimer = UNIQUE_VISITOR_REMOTE_ENABLED
@@ -1297,6 +1374,7 @@ if (UNIQUE_VISITOR_REMOTE_ENABLED) {
   sourceInitPromise = syncSourceConfig();
   overrideInitPromise = syncOverrideState();
   experimentalInitPromise = syncExperimentalState();
+  streamWindowInitPromise = syncStreamWindowState();
 } else {
   loadLocalUniqueVisitors();
   maintenanceInitPromise = syncMaintenanceState();
@@ -1304,6 +1382,7 @@ if (UNIQUE_VISITOR_REMOTE_ENABLED) {
   sourceInitPromise = syncSourceConfig();
   overrideInitPromise = syncOverrideState();
   experimentalInitPromise = syncExperimentalState();
+  streamWindowInitPromise = syncStreamWindowState();
   if (UPSTASH_REDIS_REST_URL || UPSTASH_REDIS_REST_TOKEN) {
     console.warn('[Visitors] Both Upstash variables are required for remote persistence; using local JSON storage instead.');
   } else if (fileStoreReady) {
@@ -1326,7 +1405,8 @@ function pendingStoreSyncs() {
     { name: 'news', isReady: () => newsStoreReady, sync: syncNewsStore },
     { name: 'sources', isReady: () => sourceStoreReady, sync: syncSourceConfig },
     { name: 'override', isReady: () => overrideStoreReady, sync: syncOverrideState },
-    { name: 'experimental', isReady: () => experimentalStoreReady, sync: syncExperimentalState }
+    { name: 'experimental', isReady: () => experimentalStoreReady, sync: syncExperimentalState },
+    { name: 'stream-window', isReady: () => streamWindowStoreReady, sync: syncStreamWindowState }
   ];
 }
 
@@ -2408,8 +2488,18 @@ app.get('/api/visitors/active', (req, res) => {
 
 app.get('/api/site/status', async (req, res, next) => {
   try {
-    await maintenanceInitPromise;
-    res.json({ maintenance: publicMaintenanceState() });
+    await Promise.all([maintenanceInitPromise, streamWindowInitPromise]);
+    res.json({ maintenance: publicMaintenanceState(), streamWindow: publicStreamWindowState() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/stream/window', async (req, res, next) => {
+  try {
+    await streamWindowInitPromise;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(publicStreamWindowState());
   } catch (error) {
     next(error);
   }
@@ -2777,7 +2867,7 @@ app.get('/api/events', async (req, res, next) => {
       res.setHeader('Retry-After', '15');
       return res.status(503).json({ error: 'Too many live connections' });
     }
-    await Promise.all([maintenanceInitPromise, newsInitPromise, overrideInitPromise, experimentalInitPromise]);
+    await Promise.all([maintenanceInitPromise, newsInitPromise, overrideInitPromise, experimentalInitPromise, streamWindowInitPromise]);
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
@@ -2791,6 +2881,7 @@ app.get('/api/events', async (req, res, next) => {
 
     res.write(`event: stream_override\ndata: ${initPayload}\n\n`);
     res.write(`event: stream_update\ndata: ${initPayload}\n\n`);
+    res.write(`event: stream_window_update\ndata: ${JSON.stringify(publicStreamWindowState())}\n\n`);
     res.write(`event: maintenance_update\ndata: ${JSON.stringify(publicMaintenanceState())}\n\n`);
     res.write(`event: news_update\ndata: ${JSON.stringify({ news: getPublicNewsItems() })}\n\n`);
     res.write(`event: experimental_update\ndata: ${JSON.stringify(publicExperimentalState())}\n\n`);
@@ -3088,6 +3179,38 @@ app.get('/admin/api/stream/sources', async (req, res, next) => {
   }
 });
 
+app.get('/admin/api/stream/window', async (req, res, next) => {
+  try {
+    await streamWindowInitPromise;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ streamWindow: publicStreamWindowState(), durable: streamWindowStoreReady });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/admin/api/stream/window', async (req, res, next) => {
+  try {
+    await streamWindowInitPromise;
+    const { active, reason } = req.body || {};
+    if (typeof active !== 'boolean') {
+      return res.status(400).json({ error: 'The active field must be true or false.' });
+    }
+    const prevActive = streamWindowState.active;
+    applyStreamWindowState({
+      active,
+      reason: active ? String(reason || '').trim().slice(0, 120) : '',
+      startedAt: active ? (prevActive && streamWindowState.startedAt ? streamWindowState.startedAt : Date.now()) : null,
+      updatedAt: Date.now()
+    });
+    const durable = await persistStreamWindowState();
+    const state = broadcastStreamWindowState();
+    res.json({ success: true, streamWindow: state, durable });
+  } catch (error) {
+    next(error);
+  }
+});
+
 /* Body: { disabled: ["dazn", "wikisport"] }. Unknown ids are ignored rather
    than rejected, so a site deploy that renames a feed cannot break the panel —
    the site simply keeps showing whatever it knows about. */
@@ -3123,7 +3246,7 @@ app.get('/admin/api/events', async (req, res, next) => {
   }
 
   try {
-    await Promise.all([overrideInitPromise, newsInitPromise, sourceInitPromise, maintenanceInitPromise, experimentalInitPromise]);
+    await Promise.all([overrideInitPromise, newsInitPromise, sourceInitPromise, maintenanceInitPromise, experimentalInitPromise, streamWindowInitPromise]);
   } catch (error) {
     return next(error);
   }
@@ -3139,6 +3262,7 @@ app.get('/admin/api/events', async (req, res, next) => {
   // Send initial snapshot
   const payload = `event: init\ndata: ${JSON.stringify(getStats())}\n\n`;
   res.write(payload);
+  res.write(`event: stream_window_update\ndata: ${JSON.stringify(publicStreamWindowState())}\n\n`);
   res.write(`event: news_update\ndata: ${JSON.stringify({ news: getAdminNewsItems(), durable: newsStoreIsDurable() })}\n\n`);
   res.write(`event: sources_update\ndata: ${JSON.stringify(publicSourceConfig())}\n\n`);
   res.write(`event: experimental_update\ndata: ${JSON.stringify(publicExperimentalState())}\n\n`);

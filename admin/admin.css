@@ -775,3 +775,148 @@ table.busiest th.num, table.busiest td.num { text-align: right; font-variant-num
   .source-id{grid-column:1}
   .source-state{grid-row:1;grid-column:2}
 }
+
+/* ══════════════════════════════════════════════
+   Admin Tabs — styled like site Watch/The Grid/… fading
+   ══════════════════════════════════════════════ */
+.admin-tabs{
+  display:flex;align-items:center;gap:6px;
+  padding:6px;
+  background:rgba(255,255,255,.035);
+  border:1px solid var(--border);
+  border-radius:999px;
+  width:fit-content;max-width:100%;
+  margin:0 0 22px;
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+}
+.admin-tab{
+  appearance:none;border:1px solid transparent;
+  background:transparent;color:var(--muted);
+  font-family:var(--mono);font-size:.62rem;font-weight:700;
+  letter-spacing:.14em;text-transform:uppercase;
+  padding:9px 18px;border-radius:999px;
+  cursor:pointer;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:8px;
+  transition:background .22s var(--ease),color .22s var(--ease),border-color .22s var(--ease),transform .22s var(--ease),box-shadow .22s var(--ease);
+}
+.admin-tab:hover{color:var(--text);background:rgba(255,255,255,.06)}
+.admin-tab.active{
+  background:var(--red);border-color:var(--red);
+  color:#fff;box-shadow:0 8px 24px var(--red-glow);
+}
+.admin-tab:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+.tab-icon{font-size:.72rem;line-height:1;opacity:.9}
+.admin-tab.active .tab-icon{opacity:1}
+.tab-count{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:20px;height:20px;padding:0 6px;
+  border-radius:99px;background:rgba(0,0,0,.28);
+  font-size:.6rem;letter-spacing:.06em;
+}
+.admin-tab.active .tab-count{background:rgba(0,0,0,.35);color:#fff}
+
+/* fade like Discord/Info panels — no page reload */
+.tab-panel{
+  opacity:0;transform:translateY(8px);
+  transition:opacity .24s var(--ease), transform .24s var(--ease);
+  will-change:opacity,transform;
+  display:none;
+}
+.tab-panel.active{
+  display:block;
+  opacity:1;transform:none;
+  animation:tabFadeIn .28s var(--ease);
+}
+@keyframes tabFadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){
+  .tab-panel{transition:none}
+  .tab-panel.active{animation:none}
+}
+
+/* Race Control grid */
+.race-grid{
+  display:grid;grid-template-columns:1fr 380px;gap:20px;
+  align-items:start;
+}
+.race-col{display:flex;flex-direction:column;gap:20px;min-width:0}
+@media(max-width:1100px){.race-grid{grid-template-columns:1fr}}
+
+/* Force Live panel */
+.force-live-panel{border-color:rgba(255,176,32,.14)}
+.force-live-panel.is-forced{border-color:rgba(225,6,0,.35);box-shadow:0 0 36px -28px var(--red-glow)}
+.force-live-body{padding:20px;display:flex;flex-direction:column;gap:12px}
+.force-live-status{
+  display:flex;align-items:center;gap:12px;
+  padding:13px 14px;border-radius:var(--radius-sm);
+  background:var(--green-bg);border:1px solid rgba(0,213,126,.2);
+}
+.force-live-status.is-forced{background:rgba(225,6,0,.07);border-color:rgba(225,6,0,.26)}
+.force-live-status.is-forced .status-text strong{color:#ff6b62}
+#forceLiveDot.online{background:var(--green);box-shadow:0 0 10px var(--green)}
+#forceLiveDot.forced{background:var(--red);box-shadow:0 0 10px var(--red);animation:pulse 1.4s ease-in-out infinite}
+
+/* Sessions intro + gating */
+.sessions-intro{padding:22px 20px;margin-bottom:20px}
+.sessions-intro-body{
+  display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;
+}
+.sessions-intro-actions{display:flex;flex-direction:column;align-items:stretch;min-width:240px}
+.sessions-open-btn{
+  width:100%;justify-content:space-between;
+  padding:14px 18px;border-radius:12px;
+  font-size:.72rem;gap:12px;
+}
+.sessions-count-pill{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:36px;height:24px;padding:0 8px;
+  border-radius:99px;background:rgba(255,255,255,.14);
+  font-family:var(--mono);font-size:.68rem;font-weight:700;
+  letter-spacing:.04em;
+}
+.sessions-toolbar{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  padding:12px 16px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.012);
+}
+.sessions-toolbar.bottom{border-bottom:0;border-top:1px solid var(--border)}
+.sessions-pagination{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.sessions-pagination .page-btn{
+  min-width:32px;height:32px;padding:0 10px;
+  display:inline-flex;align-items:center;justify-content:center;
+  border-radius:8px;border:1px solid var(--border);
+  background:rgba(255,255,255,.03);color:var(--muted);
+  font-family:var(--mono);font-size:.68rem;font-weight:700;
+  cursor:pointer;transition:all .18s var(--ease);
+}
+.sessions-pagination .page-btn:hover{border-color:var(--border-2);color:var(--text)}
+.sessions-pagination .page-btn.active{background:var(--red);border-color:var(--red);color:#fff;box-shadow:0 6px 16px var(--red-glow)}
+.sessions-pagination .page-btn:disabled{opacity:.38;pointer-events:none}
+#sessionsSearch{border-radius:999px}
+#sessionsSearch:focus{border-color:var(--red)}
+
+/* Sessions modal */
+.sessions-modal{position:fixed;inset:0;z-index:8000;display:flex;align-items:center;justify-content:center;padding:20px}
+.sessions-modal[hidden]{display:none}
+.sessions-modal-backdrop{position:absolute;inset:0;background:rgba(4,6,10,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.sessions-modal-card{
+  position:relative;z-index:1;width:100%;max-width:1100px;max-height:min(86vh,860px);
+  display:flex;flex-direction:column;
+  background:var(--bg-2);border:1px solid var(--border-2);border-radius:16px;
+  overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.6);
+}
+.sessions-modal-head{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0;
+}
+.sessions-modal-body{overflow:auto;flex:1;min-height:200px}
+
+/* polish: panel heads tighter inside tabs */
+.tab-panel .panel-head{padding:14px 18px}
+.tab-panel .analytics{margin-top:0;padding-top:0;border-top:0}
+@media(max-width:700px){
+  .admin-tabs{width:100%;overflow:auto;scrollbar-width:none}
+  .admin-tabs::-webkit-scrollbar{display:none}
+  .admin-tab{flex:1 0 auto;justify-content:center;padding:9px 14px}
+  .sessions-intro-body{flex-direction:column;align-items:stretch}
+  .sessions-intro-actions{min-width:0}
+}

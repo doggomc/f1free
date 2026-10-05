@@ -96,6 +96,34 @@ const experimentalStore = $('experimentalStore');
 const experimentalRefreshBtn = $('experimentalRefreshBtn');
 const sysExperimentalStatus = $('sysExperimentalStatus');
 const sysExperimentalStore = $('sysExperimentalStore');
+// ── New: tabs & sessions gating & force-live
+const tabButtons        = () => document.querySelectorAll('.admin-tab');
+const tabPanels         = () => document.querySelectorAll('.tab-panel');
+const tabSessionsCount  = $('tabSessionsCount');
+const openSessionsBtn   = $('openSessionsBtn');
+const openSessionsLabel = $('openSessionsLabel');
+const sessionsCountPill = $('sessionsCountPill');
+const sessionsPanel     = $('sessionsPanel');
+const sessionsSearch    = $('sessionsSearch');
+const closeSessionsBtn  = $('closeSessionsBtn');
+const sessionsMeta      = $('sessionsMeta');
+const sessionsMetaBottom= $('sessionsMetaBottom');
+const sessionsPagination= $('sessionsPagination');
+const sessionsPaginationBottom = $('sessionsPaginationBottom');
+const sessionsHint      = $('sessionsHint');
+const sessionsModal     = $('sessionsModal');
+const sessionsModalBackdrop = $('sessionsModalBackdrop');
+const sessionsModalClose= $('sessionsModalClose');
+const forceLiveBadge    = $('forceLiveBadge');
+const forceLiveStatus   = $('forceLiveStatus');
+const forceLiveDot      = $('forceLiveDot');
+const forceLiveTitle    = $('forceLiveTitle');
+const forceLiveText     = $('forceLiveText');
+const forceLiveReason   = $('forceLiveReason');
+const forceLiveEnableBtn= $('forceLiveEnableBtn');
+const forceLiveDisableBtn= $('forceLiveDisableBtn');
+const forceLiveMeta     = $('forceLiveMeta');
+
 
 // ─────────────────────────────────────────────
 // STATE
@@ -123,6 +151,16 @@ let serverClockOffsetMs = 0;
 let serverTimeZone = 'UTC';
 let serverTimeFormatter = null;
 let serverDateFormatter = null;
+// ── Tabs & sessions gating
+let activeTab = 'race';
+let sessionsGateOpen = false;
+let sessionsPage = 1;
+const SESSIONS_PAGE_SIZE = 50;
+let sessionsSearchQuery = '';
+let streamWindowState = { active:false, reason:'', startedAt:null, updatedAt:null };
+let streamWindowStoreReady = false;
+let forceLiveInFlight = false;
+
 
 // ─────────────────────────────────────────────
 // AUTH
@@ -157,13 +195,17 @@ function showDashboard() {
   isAdmin = true;
   authScreen.classList.add('hidden');
   appEl.classList.add('open');
+  initTabs();
   connectSSE();
   pollStats();
   loadMaintenanceStatus();
   loadNews();
   loadSources();
   loadExperimental();
+  loadStreamWindow();
   if (typeof Analytics !== 'undefined') Analytics.start();
+  // sessions gate updates even while closed
+  updateSessionsGateMeta();
 }
 
 async function handleLogin(e) {
@@ -213,6 +255,159 @@ function showAuthError(msg) {
 loginForm.addEventListener('submit', handleLogin);
 logoutBtn.addEventListener('click', handleLogout);
 
+// ─────────────────────────────────────────────
+// TABS — fade like site Discord/Info, no page reload
+// ─────────────────────────────────────────────
+function initTabs() {
+  const buttons = document.querySelectorAll('.admin-tab');
+  if (!buttons.length) return;
+  // restore last tab
+  const saved = localStorage.getItem('freef1_admin_tab');
+  if (saved && document.getElementById('tab-' + saved)) activeTab = saved;
+  switchTab(activeTab, false);
+  buttons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      if (!tab) return;
+      switchTab(tab, true);
+    });
+  });
+}
+function switchTab(tab, animate) {
+  activeTab = tab;
+  localStorage.setItem('freef1_admin_tab', tab);
+  document.querySelectorAll('.admin-tab').forEach(b => {
+    const isActive = b.dataset.tab === tab;
+    b.classList.toggle('active', isActive);
+    b.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+  document.querySelectorAll('.tab-panel').forEach(panel => {
+    const isActive = panel.id === 'tab-' + tab;
+    if (isActive) {
+      panel.hidden = false;
+      // allow display:block before opacity transition
+      requestAnimationFrame(() => {
+        panel.classList.add('active');
+      });
+      if (tab === 'analytics' && typeof Analytics !== 'undefined' && Analytics.start) {
+        // ensure charts render after becoming visible
+        setTimeout(() => Analytics.refresh && Analytics.refresh(), 80);
+      }
+      if (tab === 'sessions' && sessionsGateOpen) {
+        // if already opened, ensure render
+        scheduleVisitorRender();
+      }
+    } else {
+      panel.classList.remove('active');
+      // delay hiding to let fade-out finish when animating
+      if (animate) setTimeout(() => { if (!panel.classList.contains('active')) panel.hidden = true; }, 260);
+      else panel.hidden = true;
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
+// FORCE LIVE — stream window override (no refresh)
+// ─────────────────────────────────────────────
+async function loadStreamWindow() {
+  try {
+    const r = await fetch(`${API_BASE}/stream/window`, { cache:'no-store', credentials:'same-origin' });
+    if (!r.ok) throw new Error('load failed');
+    const d = await r.json();
+    if (d.streamWindow) {
+      streamWindowState = d.streamWindow;
+      streamWindowStoreReady = !!d.durable;
+      renderForceLive();
+    }
+  } catch (_) {}
+}
+function renderForceLive() {
+  const active = !!streamWindowState.active;
+  if (forceLiveBadge) {
+    forceLiveBadge.textContent = active ? 'FORCED LIVE' : 'Auto';
+    forceLiveBadge.className = 'panel-badge ' + (active ? 'live' : 'normal');
+  }
+  if (forceLiveStatus) {
+    forceLiveStatus.classList.toggle('is-forced', active);
+  }
+  if (forceLiveDot) {
+    forceLiveDot.className = active ? 'status-indicator forced' : 'status-indicator online';
+  }
+  if (forceLiveTitle) {
+    forceLiveTitle.textContent = active ? 'Force Live — ACTIVE' : 'Schedule Window';
+    forceLiveTitle.style.color = active ? '#ff6b62' : 'var(--green)';
+  }
+  if (forceLiveText) {
+    if (active) {
+      const since = streamWindowState.startedAt ? formatTimeAgo(streamWindowState.startedAt) : 'just now';
+      forceLiveText.textContent = streamWindowState.reason ? `Locked live ${since} — ${streamWindowState.reason}` : `Streams locked live ${since}. All viewers see ● LIVE until you disable.`;
+    } else {
+      forceLiveText.textContent = 'Streams follow the race schedule. Overtime and red-flag delays may hide the player if the window closes.';
+    }
+  }
+  if (forceLiveMeta) {
+    const store = streamWindowStoreReady ? 'durable' : 'memory';
+    const when = streamWindowState.updatedAt ? new Date(streamWindowState.updatedAt).toLocaleString() : '—';
+    forceLiveMeta.textContent = `STATE: ${active ? 'FORCED' : 'AUTO'} · STORE: ${store.toUpperCase()} · UPDATED: ${when}`;
+  }
+  const panel = document.getElementById('panel-force-live');
+  if (panel) panel.classList.toggle('is-forced', active);
+  if (forceLiveEnableBtn) forceLiveEnableBtn.disabled = active || forceLiveInFlight;
+  if (forceLiveDisableBtn) forceLiveDisableBtn.disabled = !active || forceLiveInFlight;
+  if (forceLiveReason) {
+    if (active) forceLiveReason.value = streamWindowState.reason || forceLiveReason.value;
+    // keep reason editable only when not forced? still editable for update
+  }
+  // also reflect in system panel
+  const sysForce = document.getElementById('sysStreamWindow');
+  if (!sysForce) {
+    // create row if missing dynamically — add to system-panel
+    const sysPanel = document.querySelector('.system-panel');
+    if (sysPanel && !document.getElementById('sysStreamWindow')) {
+      const row = document.createElement('div');
+      row.className='system-item';
+      row.innerHTML='<span class="sys-key">Force Live</span><span class="sys-val" id="sysStreamWindow">—</span>';
+      sysPanel.appendChild(row);
+    }
+  }
+  const sw = document.getElementById('sysStreamWindow');
+  if (sw) { sw.textContent = active ? 'FORCED' : 'AUTO'; sw.style.color = active ? '#ff6b62' : 'var(--green)'; }
+}
+async function setForceLive(active) {
+  if (forceLiveInFlight) return;
+  const reason = (forceLiveReason && forceLiveReason.value || '').trim().slice(0,120);
+  forceLiveInFlight = true;
+  if (forceLiveEnableBtn) forceLiveEnableBtn.disabled = true;
+  if (forceLiveDisableBtn) forceLiveDisableBtn.disabled = true;
+  try {
+    const r = await fetch(`${API_BASE}/stream/window`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ active, reason })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Request failed');
+    streamWindowState = d.streamWindow || { active, reason, startedAt: Date.now(), updatedAt: Date.now() };
+    streamWindowStoreReady = !!d.durable;
+    renderForceLive();
+    showToast(active ? 'Force Live enabled — viewers are now locked live.' : 'Force Live disabled — schedule window restored.', active ? 'warning' : 'success');
+  } catch (e) {
+    showToast(e.message || 'Could not update Force Live.', 'error');
+  } finally {
+    forceLiveInFlight = false;
+    renderForceLive();
+  }
+}
+function handleStreamWindowUpdate(data) {
+  if (!data) return;
+  streamWindowState = data;
+  renderForceLive();
+}
+forceLiveEnableBtn?.addEventListener('click', () => setForceLive(true));
+forceLiveDisableBtn?.addEventListener('click', () => setForceLive(false));
+
+
+// ─────────────────────────────────────────────
 // ─────────────────────────────────────────────
 // SSE CONNECTION
 // ─────────────────────────────────────────────
@@ -285,6 +480,11 @@ function connectSSE() {
     }
   });
 
+  sse.addEventListener('stream_window_update', e => {
+    const data = readSseEvent(e);
+    if (data) handleStreamWindowUpdate(data);
+  });
+
   sse.addEventListener('error', () => {
     sseConnected = false;
     updateConnectionBar(false);
@@ -317,9 +517,18 @@ function handleStatsUpdate(data) {
   visitorIndex = indexVisitors(data.visitors);
   visitorRenderPending = false;
   updateStatCards(data);
-  updateVisitorTable(data);
+  updateSessionsGateMeta();
+  if (sessionsGateOpen) updateVisitorTable(data);
+  // still ensure stat cards update even when gate closed
+  else {
+    // keep badge counts fresh even without table render
+    const online = (data.visitors || []).filter(v => Date.now() - (v.lastSeen||0) <= ONLINE_WINDOW_MS).length;
+    if (onlineCountEl) onlineCountEl.textContent = String(online);
+    if (tableBadge) tableBadge.textContent = '● ' + online + ' Live';
+  }
   updateStreamStatus(data.override);
   updateMaintenanceStatus(data.maintenance);
+  if (data.streamWindow) handleStreamWindowUpdate(data.streamWindow);
   updateSystemInfo(data);
 }
 
@@ -914,17 +1123,94 @@ experimentalRefreshBtn?.addEventListener('click', () => loadExperimental(true));
 // ─────────────────────────────────────────────
 // VISITOR TABLE
 // ─────────────────────────────────────────────
+function getFilteredVisitors() {
+  const all = (currentStats && currentStats.visitors) ? [...currentStats.visitors] : [];
+  const q = sessionsSearchQuery.trim().toLowerCase();
+  let filtered = all;
+  if (q) {
+    filtered = all.filter(v => {
+      const hay = [v.ip, v.country, v.city, v.countryCode, v.browser, v.os, v.deviceType, v.page, v.id].join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  filtered.sort((a,b) => (b.lastSeen - a.lastSeen));
+  return filtered;
+}
+function renderSessionsPagination(total, page, pageSize, container) {
+  if (!container) return;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  if (total <= pageSize) { container.innerHTML = ''; return; }
+  let html = '';
+  const prevDis = page <= 1 ? 'disabled' : '';
+  const nextDis = page >= pages ? 'disabled' : '';
+  html += `<button class="page-btn" data-page="${page-1}" ${prevDis}>‹</button>`;
+  // show up to 7 page buttons windowed
+  let start = Math.max(1, page - 3);
+  let end = Math.min(pages, start + 6);
+  if (end - start < 6) start = Math.max(1, end - 6);
+  if (start > 1) { html += `<button class="page-btn" data-page="1">1</button>`; if (start > 2) html += `<span style="color:var(--dim);padding:0 4px">…</span>`; }
+  for (let p=start; p<=end; p++) {
+    html += `<button class="page-btn ${p===page?'active':''}" data-page="${p}">${p}</button>`;
+  }
+  if (end < pages) { if (end < pages-1) html += `<span style="color:var(--dim);padding:0 4px">…</span>`; html += `<button class="page-btn" data-page="${pages}">${pages}</button>`; }
+  html += `<button class="page-btn" data-page="${page+1}" ${nextDis}>›</button>`;
+  container.innerHTML = html;
+  container.querySelectorAll('.page-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const p = Number(btn.dataset.page);
+      if (!Number.isFinite(p) || p < 1 || p > pages) return;
+      sessionsPage = p;
+      updateVisitorTable(currentStats);
+    });
+  });
+}
+function updateSessionsGateMeta() {
+  const total = (currentStats && currentStats.visitors) ? currentStats.visitors.length : 0;
+  const online = (currentStats && currentStats.visitors) ? currentStats.visitors.filter(v => Date.now() - (v.lastSeen||0) <= ONLINE_WINDOW_MS).length : 0;
+  if (sessionsCountPill) sessionsCountPill.textContent = total ? `${total} live` : '0 live';
+  if (tabSessionsCount) {
+    if (total) { tabSessionsCount.textContent = String(total); tabSessionsCount.hidden = false; }
+    else tabSessionsCount.hidden = true;
+  }
+  if (openSessionsLabel) openSessionsLabel.textContent = sessionsGateOpen ? 'Refresh Sessions' : 'View Active Sessions';
+  if (sessionsHint) {
+    const q = sessionsSearchQuery ? ` · filtered` : '';
+    sessionsHint.textContent = total ? `${online} online · ${total} total${q} · paginated 50 per page` : 'No active sessions right now';
+  }
+  // keep meta bars updated when open
+  return { total, online };
+}
 function updateVisitorTable(data) {
-  if (!visitorTableBody || !data?.visitors) return;
+  if (!visitorTableBody || !data) return;
+  // gated: don't render if closed
+  if (!sessionsGateOpen) { updateSessionsGateMeta(); return; }
   const now = Date.now();
-  const visitors = [...data.visitors].sort((a, b) => (b.lastSeen - a.lastSeen));
-  if (!visitors.length) { renderEmptyVisitors(); return; }
+  const filtered = getFilteredVisitors();
+  const total = filtered.length;
+  const pages = Math.max(1, Math.ceil(total / SESSIONS_PAGE_SIZE));
+  if (sessionsPage > pages) sessionsPage = pages;
+  if (sessionsPage < 1) sessionsPage = 1;
+  const start = (sessionsPage - 1) * SESSIONS_PAGE_SIZE;
+  const slice = filtered.slice(start, start + SESSIONS_PAGE_SIZE);
+
+  if (!filtered.length) {
+    if (sessionsSearchQuery) {
+      visitorTableBody.innerHTML = `<tr><td colspan="8"><div class="empty-state">No sessions match “${escapeHtml(sessionsSearchQuery)}”.</div></td></tr>`;
+    } else {
+      renderEmptyVisitors();
+    }
+    if (sessionsMeta) sessionsMeta.textContent = '0 sessions';
+    if (sessionsMetaBottom) sessionsMetaBottom.textContent = '0 sessions';
+    renderSessionsPagination(0, 1, SESSIONS_PAGE_SIZE, sessionsPagination);
+    renderSessionsPagination(0, 1, SESSIONS_PAGE_SIZE, sessionsPaginationBottom);
+    updateSessionsGateMeta();
+    return;
+  }
 
   const existingRows = new Map();
   visitorTableBody.querySelectorAll('tr[data-key]').forEach(row => existingRows.set(row.dataset.key, row));
   const orderedRows = [];
-
-  visitors.forEach(visitor => {
+  slice.forEach(visitor => {
     const key = String(visitor.id || visitor.ip || visitor.lastSeen);
     const online = now - (visitor.lastSeen || 0) <= ONLINE_WINDOW_MS;
     const flag = visitor.countryCode ? getFlag(visitor.countryCode) : '🌐';
@@ -961,6 +1247,15 @@ function updateVisitorTable(data) {
   const fragment = document.createDocumentFragment();
   orderedRows.forEach(row => fragment.appendChild(row));
   visitorTableBody.replaceChildren(fragment);
+
+  const rangeText = `Showing ${start+1}–${Math.min(start+slice.length, total)} of ${total} sessions · page ${sessionsPage}/${pages}`;
+  if (sessionsMeta) sessionsMeta.textContent = rangeText;
+  if (sessionsMetaBottom) sessionsMetaBottom.textContent = rangeText;
+  renderSessionsPagination(total, sessionsPage, SESSIONS_PAGE_SIZE, sessionsPagination);
+  renderSessionsPagination(total, sessionsPage, SESSIONS_PAGE_SIZE, sessionsPaginationBottom);
+  if (tableBadge) tableBadge.textContent = '● ' + total + ' Live';
+  // update outer meta pill
+  updateSessionsGateMeta();
 }
 
 function renderEmptyVisitors() {
@@ -972,16 +1267,25 @@ function renderEmptyVisitors() {
 
 function refreshVisitorTimes() {
   if (!visitorTableBody || !currentStats?.visitors?.length) return;
+  if (!sessionsGateOpen) {
+    // still update counts for pill
+    const now = Date.now();
+    const online = currentStats.visitors.filter(v => now - (v.lastSeen||0) <= ONLINE_WINDOW_MS).length;
+    if (onlineCountEl) onlineCountEl.textContent = String(online);
+    updateSessionsGateMeta();
+    return;
+  }
   const now = Date.now();
   const visitors = new Map(currentStats.visitors.map(visitor => [String(visitor.id || visitor.ip || visitor.lastSeen), visitor]));
-  let online = 0;
+  let onlineInPage = 0;
+  const totalOnline = currentStats.visitors.filter(v => now - (v.lastSeen||0) <= ONLINE_WINDOW_MS).length;
   visitorTableBody.querySelectorAll('tr[data-key]').forEach(row => {
     const visitor = visitors.get(row.dataset.key);
     if (!visitor) return;
     const cell = row.querySelector('.timestamp-cell');
     if (cell) cell.textContent = formatTimeAgo(visitor.lastSeen);
     const isOnline = now - (visitor.lastSeen || 0) <= ONLINE_WINDOW_MS;
-    if (isOnline) online++;
+    if (isOnline) onlineInPage++;
     if (row.dataset.online === (isOnline ? '1' : '0')) return;
     row.dataset.online = isOnline ? '1' : '0';
     const status = row.querySelector('.status-cell');
@@ -989,9 +1293,9 @@ function refreshVisitorTimes() {
       status.innerHTML = `<span class="pill-sm status-pill ${isOnline ? 'pill-online' : 'pill-offline'}"><span class="${isOnline ? 'dot-online' : 'dot-offline'}"></span>${isOnline ? 'Online' : 'Offline'}</span>`;
     }
   });
-  if (onlineCountEl) onlineCountEl.textContent = String(online);
-  if (tableBadge) tableBadge.textContent = `● ${online} Live`;
-  currentStats.onlineCount = online;
+  if (onlineCountEl) onlineCountEl.textContent = String(totalOnline);
+  currentStats.onlineCount = totalOnline;
+  updateSessionsGateMeta();
 }
 
 /* Visitor rows are mutated in place and the table is repainted at most once
@@ -1012,10 +1316,24 @@ function indexVisitors(visitors) {
 }
 
 function scheduleVisitorRender() {
-  if (!isAdmin || document.hidden) return;
+  if (!isAdmin) return;
   visitorRenderPending = true;
+  // always keep badge/meta fresh even when gate closed or tab hidden
+  updateSessionsGateMeta();
+  if (!sessionsGateOpen) {
+    // still update stat cards lightweight
+    if (currentStats) updateStatCards(currentStats);
+    // debounce meta only
+    if (visitorRenderTimer) return;
+    visitorRenderTimer = setTimeout(() => {
+      visitorRenderTimer = null;
+      visitorRenderPending = false;
+      if (currentStats) updateStatCards(currentStats);
+      updateSessionsGateMeta();
+    }, VISITOR_RENDER_COALESCE_MS);
+    return;
+  }
   if (visitorRenderTimer) return;
-  // A timer (not rAF) so a hidden tab still settles before it is revealed.
   visitorRenderTimer = setTimeout(() => {
     visitorRenderTimer = null;
     if (!visitorRenderPending || !currentStats) return;
@@ -1057,6 +1375,45 @@ function handleStreamStatusUpdate(data) {
   updateStreamStatus(data);
   if (currentStats) updateStatCards(currentStats);
 }
+
+// ── Sessions gate interactions
+function openSessionsGate() {
+  sessionsGateOpen = true;
+  sessionsPage = 1;
+  if (sessionsPanel) sessionsPanel.hidden = false;
+  if (sessionsPanel) sessionsPanel.classList.add('active');
+  // switch to sessions tab if not already there
+  if (activeTab !== 'sessions') switchTab('sessions', true);
+  // smooth scroll to panel
+  setTimeout(() => sessionsPanel?.scrollIntoView({ behavior:'smooth', block:'start' }), 60);
+  // immediate render
+  if (currentStats) updateVisitorTable(currentStats);
+  updateSessionsGateMeta();
+}
+function closeSessionsGate() {
+  sessionsGateOpen = false;
+  if (sessionsPanel) sessionsPanel.hidden = true;
+  if (sessionsPanel) sessionsPanel.classList.remove('active');
+  // keep counts but free DOM
+  if (visitorTableBody) visitorTableBody.replaceChildren();
+  renderEmptyVisitors();
+  sessionsPage = 1;
+  sessionsSearchQuery = '';
+  if (sessionsSearch) sessionsSearch.value = '';
+  updateSessionsGateMeta();
+  showToast('Sessions view closed — table will stay idle until reopened.', 'info');
+}
+openSessionsBtn?.addEventListener('click', openSessionsGate);
+closeSessionsBtn?.addEventListener('click', closeSessionsGate);
+sessionsSearch?.addEventListener('input', () => {
+  sessionsSearchQuery = sessionsSearch.value || '';
+  sessionsPage = 1;
+  if (sessionsGateOpen && currentStats) updateVisitorTable(currentStats);
+  updateSessionsGateMeta();
+});
+sessionsModalBackdrop?.addEventListener('click', closeSessionsGate);
+sessionsModalClose?.addEventListener('click', closeSessionsGate);
+
 
 function handleStreamOverrideUpdate(data) {
   const changed = Boolean(data.active) !== overrideActive || (data.url || '') !== previewUrl;
