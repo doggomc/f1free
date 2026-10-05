@@ -1942,8 +1942,18 @@ async function syncAnalyticsStore() {
       analyticsStoreReady = fileStoreReady;
     } else {
       const payload = await upstashRequest(['HGETALL', ANALYTICS_REDIS_KEY]);
-      const flat = Array.isArray(payload?.result) ? payload.result : [];
-      for (let i = 0; i + 1 < flat.length; i += 2) hydrateAnalyticsField(String(flat[i]), flat[i + 1]);
+      const result = payload?.result;
+      // Upstash HGETALL can return {field:value} object or [field,value,…] flat array depending on REST version
+      if (Array.isArray(result)) {
+        for (let i = 0; i + 1 < result.length; i += 2) hydrateAnalyticsField(String(result[i]), result[i + 1]);
+      } else if (result && typeof result === 'object') {
+        for (const [field, raw] of Object.entries(result)) hydrateAnalyticsField(String(field), raw);
+      } else if (result == null) {
+        // key missing — fresh install, keep empty but mark ready
+      } else {
+        // Unexpected shape — log for diagnostics but don't fail hydration
+        console.warn('[Analytics] Unexpected HGETALL result shape:', typeof result, Array.isArray(result) ? 'array' : result);
+      }
       analyticsStoreReady = true;
     }
   } catch (error) {
@@ -1952,6 +1962,10 @@ async function syncAnalyticsStore() {
   } finally {
     pruneAnalytics();
     analyticsHydrated = true;
+    // Diagnostic — helps confirm Redis hydration after a rebuild (Render wipes disk)
+    if (UNIQUE_VISITOR_REMOTE_ENABLED) {
+      console.log(`[Analytics] hydrated daily=${analytics.daily.size} hourly=${analytics.hourly.size} live=${analytics.live.length} since=${analytics.since ? new Date(analytics.since).toISOString() : '—'} store=${analyticsStoreReady ? 'redis' : 'memory'}`);
+    }
   }
   return analyticsStoreReady;
 }

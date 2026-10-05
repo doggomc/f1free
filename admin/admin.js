@@ -261,49 +261,95 @@ logoutBtn.addEventListener('click', handleLogout);
 function initTabs() {
   const buttons = document.querySelectorAll('.admin-tab');
   if (!buttons.length) return;
-  // restore last tab
+  const navLinks = document.getElementById('adminTabLinks');
+  const toggle = document.getElementById('adminMenuToggle');
+  // mobile toggle — same as site .nav-toggle
+  toggle?.addEventListener('click', () => {
+    const isOpen = navLinks?.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+  });
+  // close menu when clicking outside or selecting
+  document.addEventListener('click', (e) => {
+    if (!navLinks?.classList.contains('open')) return;
+    if (navLinks.contains(e.target) || toggle?.contains(e.target)) return;
+    navLinks.classList.remove('open');
+    toggle?.setAttribute('aria-expanded', 'false');
+  });
+  // restore last tab — exact site view logic
   const saved = localStorage.getItem('freef1_admin_tab');
   if (saved && document.getElementById('tab-' + saved)) activeTab = saved;
-  switchTab(activeTab, false);
+  // set initial current
+  document.querySelectorAll('.admin-tab').forEach(a=> {
+    const on = a.dataset.tab === activeTab;
+    a.classList.toggle('current', on);
+    if (on) a.setAttribute('aria-selected','true'); else a.setAttribute('aria-selected','false');
+  });
+  // ensure only active view has is-active
+  document.querySelectorAll('.view').forEach(v=>{
+    if (v.id === 'tab-' + activeTab) { v.hidden=false; v.classList.add('is-active'); v.classList.remove('is-leaving'); }
+    else { v.hidden=true; v.classList.remove('is-active','is-leaving'); }
+  });
   buttons.forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
       const tab = btn.dataset.tab;
       if (!tab) return;
       switchTab(tab, true);
+      // close mobile menu after selection
+      navLinks?.classList.remove('open');
+      toggle?.setAttribute('aria-expanded','false');
+    });
+  });
+  // also footer links with data-tab
+  document.querySelectorAll('[data-tab]').forEach(el=>{
+    if (el.classList.contains('admin-tab')) return;
+    el.addEventListener('click',(e)=>{
+      e.preventDefault();
+      const tab = el.getAttribute('data-tab');
+      if (tab) switchTab(tab,true);
     });
   });
 }
 function switchTab(tab, animate) {
+  if (tab === activeTab && document.getElementById('tab-' + tab)?.classList.contains('is-active')) return;
+  const leaving = document.querySelector('.view.is-active');
+  const entering = document.getElementById('tab-' + tab);
+  if (!entering) return;
   activeTab = tab;
   localStorage.setItem('freef1_admin_tab', tab);
-  document.querySelectorAll('.admin-tab').forEach(b => {
-    const isActive = b.dataset.tab === tab;
-    b.classList.toggle('active', isActive);
-    b.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  // nav current — exact site .nav-links a.current behavior
+  document.querySelectorAll('.admin-tab').forEach(a=> {
+    const on = a.dataset.tab === tab;
+    a.classList.toggle('current', on);
+    a.setAttribute('aria-selected', on ? 'true' : 'false');
   });
-  document.querySelectorAll('.tab-panel').forEach(panel => {
-    const isActive = panel.id === 'tab-' + tab;
-    if (isActive) {
-      panel.hidden = false;
-      // allow display:block before opacity transition
-      requestAnimationFrame(() => {
-        panel.classList.add('active');
-      });
-      if (tab === 'analytics' && typeof Analytics !== 'undefined' && Analytics.start) {
-        // ensure charts render after becoming visible
-        setTimeout(() => Analytics.refresh && Analytics.refresh(), 80);
-      }
-      if (tab === 'sessions' && sessionsGateOpen) {
-        // if already opened, ensure render
-        scheduleVisitorRender();
-      }
+  // view swap — exact Discord/Info fade: is-active + is-leaving
+  if (leaving && leaving !== entering) {
+    leaving.classList.remove('is-active');
+    leaving.classList.add('is-leaving');
+    const done = () => {
+      leaving.classList.remove('is-leaving');
+      leaving.hidden = true;
+      leaving.removeEventListener('transitionend', done);
+    };
+    if (animate) {
+      leaving.addEventListener('transitionend', done, {once:true});
+      setTimeout(done, 300);
     } else {
-      panel.classList.remove('active');
-      // delay hiding to let fade-out finish when animating
-      if (animate) setTimeout(() => { if (!panel.classList.contains('active')) panel.hidden = true; }, 260);
-      else panel.hidden = true;
+      leaving.classList.remove('is-leaving');
+      leaving.hidden = true;
     }
-  });
+  }
+  entering.hidden = false;
+  // force reflow then add is-active next frame — site does double rAF
+  requestAnimationFrame(()=> requestAnimationFrame(()=>{
+    entering.classList.add('is-active');
+    entering.classList.remove('is-leaving');
+    if (tab === 'analytics' && typeof Analytics !== 'undefined' && Analytics.start) {
+      setTimeout(() => Analytics.refresh && Analytics.refresh(), 80);
+    }
+    if (tab === 'sessions' && sessionsGateOpen) scheduleVisitorRender();
+  }));
 }
 
 // ─────────────────────────────────────────────

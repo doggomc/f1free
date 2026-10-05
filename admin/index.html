@@ -1,483 +1,549 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0b0d10">
-  <meta name="color-scheme" content="dark">
-  <title>FreeF1 — Admin Dashboard</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
-  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"></noscript>
-  <link rel="stylesheet" href="/admin/admin.css?v=20261005-admin5">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0A0A0B">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="FreeF1 Admin — race control for the live F1 companion.">
+<title>FreeF1 — Admin Dashboard</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="dns-prefetch" href="https://fonts.googleapis.com">
+<link rel="dns-prefetch" href="https://fonts.gstatic.com">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800;900&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800;900&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap"></noscript>
+<link rel="stylesheet" href="/admin/admin.css?v=20261005-admin6">
 </head>
 <body>
 
-  <!-- ══ AUTH SCREEN ══════════════════════════════════ -->
-  <div id="authScreen">
-    <div class="auth-card">
-      <div class="auth-icon">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 4a3 3 0 110 6 3 3 0 010-6zm0 9.5c-2.33 0-4.31 1.46-5.11 3.5h10.22c-.8-2.04-2.78-3.5-5.11-3.5z"/></svg>
-      </div>
-      <h1>Admin Access</h1>
-      <p class="sub">FreeF1 Dashboard — authenticated personnel only</p>
-      <div class="auth-error" id="authError"></div>
-      <form id="loginForm" autocomplete="off">
-        <div class="form-group">
-          <label for="username">Username</label>
-          <input type="text" id="username" name="username" placeholder="Enter username" autocomplete="off" required>
-        </div>
-        <div class="form-group">
-          <label for="password">Password</label>
-          <input type="password" id="password" name="password" placeholder="Enter password" autocomplete="off" required>
-        </div>
-        <button type="submit" class="btn btn-primary" id="loginBtn">Sign In</button>
-      </form>
+<!-- ══ ATMOSPHERE — same as main site ══ -->
+<div class="progress" id="progress"></div>
+<canvas id="speedCanvas" aria-hidden="true"></canvas>
+<div class="scanlines" aria-hidden="true"></div><div class="vignette" aria-hidden="true"></div><div class="grain" aria-hidden="true"></div>
+
+<!-- ══ AUTH ══ -->
+<div id="authScreen">
+  <div class="auth-card">
+    <div class="auth-icon">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 4a3 3 0 110 6 3 3 0 010-6zm0 9.5c-2.33 0-4.31 1.46-5.11 3.5h10.22c-.8-2.04-2.78-3.5-5.11-3.5z"/></svg>
     </div>
+    <h1>Admin Access</h1>
+    <p class="sub">FreeF1 Dashboard — authenticated personnel only</p>
+    <div class="auth-error" id="authError"></div>
+    <form id="loginForm" autocomplete="off">
+      <div class="form-group">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" placeholder="Enter username" autocomplete="off" required>
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" placeholder="Enter password" autocomplete="off" required>
+      </div>
+      <button type="submit" class="btn primary" id="loginBtn">Sign In</button>
+    </form>
   </div>
+</div>
 
-  <!-- ══ DASHBOARD ════════════════════════════════════ -->
-  <div id="app">
+<!-- ══ DASHBOARD ══ -->
+<div id="app">
 
-    <!-- Top Navigation -->
-    <nav class="admin-nav">
-      <a class="nav-brand" href="/">
-        <span class="dot"></span>
-        <span>FreeF1 Admin</span>
-      </a>
-      <div class="nav-right">
-        <div class="nav-user" id="navStatus">CONNECTING…</div>
-        <button class="btn-logout" id="logoutBtn">Logout</button>
-      </div>
-      <div class="conn-bar" id="connBar" aria-hidden="true"><div class="conn-bar-fill" id="connBarFill"></div></div>
-    </nav>
+  <!-- Top Navigation — exact site .nav -->
+  <nav class="nav" id="adminNav">
+    <a class="brand" href="/">
+      <span class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M2 17.5L7.5 6.5h5.2l-2 4h4.6l-1.6 3.2H8.9l-1.7 3.8H2z" fill="#fff"/><path d="M14.5 6.5H22l-1.7 3.4h-7.5l1.7-3.4z" fill="#fff" opacity=".72"/></svg>
+      </span>
+      <span class="brand-text"><b>FreeF1</b><span style="display:block;font-family:'JetBrains Mono',monospace;font-size:.55rem;letter-spacing:.3em;color:var(--muted);margin-top:3px">ADMIN</span></span>
+    </a>
+    <div class="nav-links" id="adminTabLinks" role="tablist" aria-label="Admin sections">
+      <a href="#" class="admin-tab admin-tab-link current" data-tab="race" role="tab" aria-selected="true" id="tabBtn-race">Race Control</a>
+      <a href="#" class="admin-tab admin-tab-link" data-tab="analytics" role="tab" aria-selected="false" id="tabBtn-analytics">Analytics</a>
+      <a href="#" class="admin-tab admin-tab-link" data-tab="sessions" role="tab" aria-selected="false" id="tabBtn-sessions">Sessions <span class="pill count" id="tabSessionsCount" hidden style="margin-left:6px;padding:2px 7px;font-size:.6rem">0</span></a>
+    </div>
+    <div class="nav-right">
+      <span class="pill count" id="navStatus" style="font-size:.64rem">CONNECTING…</span>
+      <button class="btn sm" id="logoutBtn" type="button" style="padding:8px 14px;font-size:.7rem">Logout</button>
+      <button class="nav-toggle" id="adminMenuToggle" type="button" aria-label="Toggle navigation" aria-expanded="false" aria-controls="adminTabLinks"><span></span><span></span><span></span></button>
+    </div>
+    <div class="conn-bar" id="connBar" aria-hidden="true"><div class="conn-bar-fill" id="connBarFill"></div></div>
+  </nav>
 
-    <!-- Main Content -->
-    <main class="main">
-
-      <!-- Stats Row — always visible -->
-      <div class="stats-row">
-        <div class="stat-card accent-green">
-          <div class="stat-label">Live Visitors</div>
-          <div class="stat-value green" id="onlineCount">0</div>
-          <div class="stat-sub">Currently connected</div>
-        </div>
-        <div class="stat-card accent-blue">
-          <div class="stat-label">Unique Visitors</div>
-          <div class="stat-value blue" id="uniqueCount">0</div>
-          <div class="stat-sub">All-time unique visitors</div>
-        </div>
-        <div class="stat-card accent-red">
-          <div class="stat-label">Stream Override</div>
-          <div class="stat-value red" id="overrideCount">OFF</div>
-          <div class="stat-sub" id="overrideSub">No override active</div>
-        </div>
-        <div class="stat-card accent-purple" id="maintenanceStatCard">
-          <div class="stat-label">Website Mode</div>
-          <div class="stat-value green" id="maintenanceCount">LIVE</div>
-          <div class="stat-sub" id="maintenanceSub">Public site is available</div>
-        </div>
-        <div class="stat-card accent-amber">
-          <div class="stat-label" id="serverTimeLabel">Server Time</div>
-          <div class="stat-value amber" id="serverTime">--:--:--</div>
-          <div class="stat-sub" id="serverDate">--</div>
-        </div>
-      </div>
-
-      <!-- ── TAB BAR (styled like site Watch/The Grid/…) ── -->
-      <div class="admin-tabs" role="tablist" aria-label="Dashboard sections">
-        <button class="admin-tab active" data-tab="race" role="tab" aria-selected="true" aria-controls="tab-race" id="tabBtn-race">
-          <span class="tab-icon">◉</span> Race Control
-        </button>
-        <button class="admin-tab" data-tab="analytics" role="tab" aria-selected="false" aria-controls="tab-analytics" id="tabBtn-analytics">
-          <span class="tab-icon">◈</span> Analytics
-        </button>
-        <button class="admin-tab" data-tab="sessions" role="tab" aria-selected="false" aria-controls="tab-sessions" id="tabBtn-sessions">
-          <span class="tab-icon">◎</span> Sessions <span class="tab-count" id="tabSessionsCount" hidden>0</span>
-        </button>
-      </div>
-
-      <!-- ── RACE CONTROL ── -->
-      <div class="tab-panel active" id="tab-race" role="tabpanel" aria-labelledby="tabBtn-race">
-        <div class="race-grid">
-
-          <!-- Left column -->
-          <div class="race-col">
-
-            <!-- Stream Override -->
-            <div class="panel" id="panel-stream">
-              <div class="panel-head">
-                <div class="panel-title">Stream Override</div>
-                <div class="panel-badge normal" id="streamBadge">Normal</div>
-              </div>
-              <div class="stream-panel">
-                <div class="stream-status active-normal" id="streamStatus">
-                  <div class="status-indicator online"></div>
-                  <div class="status-text">
-                    <strong style="color:var(--green)">Normal Stream</strong>
-                    <small>Default site feed is active</small>
-                  </div>
-                  <div class="time-ago">● LIVE</div>
-                </div>
-                <div class="stream-preview" id="streamPreview">
-                  <div class="placeholder">
-                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" opacity=".3"/></svg>
-                    <div>No override active</div>
-                    <div style="font-size:.65rem;margin-top:4px">Normal feed broadcasting</div>
-                  </div>
-                </div>
-                <div>
-                  <div class="form-group" style="margin-bottom:0">
-                    <label for="streamUrlInput">Override Video URL</label>
-                    <input class="url-input" type="text" id="streamUrlInput" placeholder="https://www.youtube.com/watch?v=…  or  https://…/video.mp4">
-                  </div>
-                  <div class="url-hint">Supports YouTube · MP4 · WebM · Generic embed URLs</div>
-                </div>
-                <div class="btn-row">
-                  <button class="btn-sm btn-red" id="playOverrideBtn" type="button">▶ Play Override</button>
-                  <button class="btn-sm btn-ghost" id="stopOverrideBtn" type="button" disabled>■ Stop Override</button>
-                  <button class="btn-sm btn-ghost" id="normalStreamBtn" type="button" disabled>↩ Return to Normal</button>
-                </div>
-                <p class="url-hint">Stop keeps the URL so you can play it again. Return to Normal clears it.</p>
-                <p class="override-conflict" id="overrideConflict" hidden>Maintenance is on, so viewers are on the pit page and will not see this override until the site is live again.</p>
-                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-                  <div class="url-hint" id="streamTypeLabel">TYPE: —</div>
-                  <div class="url-hint" id="streamStartedLabel">STARTED: —</div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Force Live (new) -->
-            <div class="panel force-live-panel" id="panel-force-live">
-              <div class="panel-head">
-                <div class="panel-title">Force Live</div>
-                <div class="panel-badge normal" id="forceLiveBadge">Auto</div>
-              </div>
-              <div class="force-live-body">
-                <div class="force-live-status" id="forceLiveStatus">
-                  <div class="status-indicator online" id="forceLiveDot"></div>
-                  <div class="status-text">
-                    <strong id="forceLiveTitle" style="color:var(--green)">Schedule Window</strong>
-                    <small id="forceLiveText">Streams follow the race schedule. Overtime and red-flag delays may hide the player if the window closes.</small>
-                  </div>
-                </div>
-                <p class="url-hint" style="margin:0">When enabled, every viewer sees <b style="color:var(--text)">● LIVE</b> immediately — no refresh needed. The schedule check is bypassed until you disable it.</p>
-                <div class="form-group" style="margin:10px 0 0">
-                  <label for="forceLiveReason">Reason (optional, shown in dashboard only)</label>
-                  <input class="url-input" type="text" id="forceLiveReason" maxlength="120" placeholder="e.g. Race overtime — red flag, 40 laps remaining">
-                </div>
-                <div class="btn-row" style="margin-top:12px">
-                  <button class="btn-sm btn-red" id="forceLiveEnableBtn" type="button">● Force Live ON</button>
-                  <button class="btn-sm btn-ghost" id="forceLiveDisableBtn" type="button" disabled>Disable &amp; Restore Window</button>
-                </div>
-                <div class="url-hint" id="forceLiveMeta" style="margin-top:8px">STATE: — · STORE: —</div>
-              </div>
-            </div>
-
-            <!-- Maintenance -->
-            <div class="panel maintenance-control" id="maintenancePanel">
-              <div class="panel-head">
-                <div class="panel-title">Website Mode</div>
-                <div class="panel-badge normal" id="maintenanceBadge">Live</div>
-              </div>
-              <div class="maintenance-panel">
-                <div class="maintenance-status is-live" id="maintenanceStatus">
-                  <div class="race-lights" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
-                  <div class="status-text">
-                    <strong id="maintenanceStatusTitle">Public Site Live</strong>
-                    <small id="maintenanceStatusText">Visitors can access the full FreeF1 experience.</small>
-                  </div>
-                </div>
-                <div class="form-group" style="margin-bottom:0">
-                  <label for="maintenanceMessage">Maintenance Page Message</label>
-                  <input class="url-input" type="text" id="maintenanceMessage" maxlength="180" value="We'll be back before the race." placeholder="We'll be back before the race.">
-                </div>
-                <div class="url-hint">Shown underneath “We’re changing the tires” · 180 max</div>
-                <div class="form-group" style="margin-top:14px;margin-bottom:0">
-                  <label for="maintenanceEta">Estimated Return (pit board)</label>
-                  <input class="url-input" type="text" id="maintenanceEta" maxlength="60" value="Before lights out" placeholder="Before lights out">
-                </div>
-                <div class="url-hint">Shown on the pit-stop board · 60 max</div>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-                  <button class="btn-sm btn-ghost" id="maintenanceSaveBtn" type="button" disabled>Update Pit Board</button>
-                  <button class="btn-sm btn-maintenance" id="maintenanceToggleBtn" type="button" aria-pressed="false" disabled>Checking Website Mode…</button>
-                </div>
-                <p class="maintenance-note" id="maintenanceNote">Activation is instant. Open visitors will be sent to the pit-stop page automatically.</p>
-              </div>
-            </div>
-
+  <!-- Main — same .wrap / .sec as site -->
+  <main>
+    <section class="sec" style="padding-top:96px;padding-bottom:0">
+      <div class="wrap">
+        <!-- Stats — 5 cards, uses same .card look via .stat-card -->
+        <div class="stats-row">
+          <div class="stat-card accent-green">
+            <div class="stat-label">Live Visitors</div>
+            <div class="stat-value green" id="onlineCount">0</div>
+            <div class="stat-sub">Currently connected</div>
           </div>
+          <div class="stat-card accent-blue">
+            <div class="stat-label">Unique Visitors</div>
+            <div class="stat-value blue" id="uniqueCount">0</div>
+            <div class="stat-sub">All-time unique visitors</div>
+          </div>
+          <div class="stat-card accent-red">
+            <div class="stat-label">Stream Override</div>
+            <div class="stat-value red" id="overrideCount">OFF</div>
+            <div class="stat-sub" id="overrideSub">No override active</div>
+          </div>
+          <div class="stat-card accent-purple" id="maintenanceStatCard">
+            <div class="stat-label">Website Mode</div>
+            <div class="stat-value green" id="maintenanceCount">LIVE</div>
+            <div class="stat-sub" id="maintenanceSub">Public site is available</div>
+          </div>
+          <div class="stat-card accent-amber">
+            <div class="stat-label" id="serverTimeLabel">Server Time</div>
+            <div class="stat-value amber" id="serverTime">--:--:--</div>
+            <div class="stat-sub" id="serverDate">--</div>
+          </div>
+        </div>
+      </div>
+    </section>
 
-          <!-- Right column -->
-          <div class="race-col">
+    <!-- Views — fade exactly like site Discord/Info (.view) -->
+    <section class="sec" style="padding-top:18px">
+      <div class="wrap">
 
-            <!-- Feed Sources -->
-            <div class="panel" id="panel-sources">
-              <div class="panel-head">
-                <div class="panel-title">Feed Sources</div>
-                <div class="panel-badge normal" id="sourcesBadge">—</div>
-              </div>
-              <div class="source-panel" style="padding:20px">
-                <p class="url-hint" style="margin:0 0 8px">Switch a feed off to hide it from public chips and skip it in auto-fallback. Changes apply to every viewer instantly.</p>
-                <div class="source-list" id="sourceList"><div class="empty-state">Loading feed sources…</div></div>
-                <div class="source-foot">
-                  <span class="url-hint" id="sourcesStore">STORE: —</span>
-                  <button class="btn-sm btn-ghost" id="sourcesRefreshBtn" type="button">↻</button>
-                </div>
-              </div>
-            </div>
+        <!-- RACE CONTROL -->
+        <div class="view is-active" id="tab-race" role="tabpanel" aria-labelledby="tabBtn-race">
+          <div class="race-grid">
 
-            <!-- Experimental -->
-            <div class="panel" id="panel-experimental">
-              <div class="panel-head">
-                <div class="panel-title">Experimental Features</div>
-                <div class="panel-badge normal" id="experimentalBadge">Enabled</div>
-              </div>
-              <div class="maintenance-panel">
-                <div class="maintenance-status is-live" id="experimentalStatus">
-                  <div class="status-indicator online"></div>
-                  <div class="status-text">
-                    <strong id="experimentalStatusTitle">Experimental Section Visible</strong>
-                    <small id="experimentalStatusText">The “Experimental” section in the public footer is enabled.</small>
-                  </div>
-                </div>
-                <p class="url-hint">Enables the “Experimental” footer column and beta links like the Live 2D Track Map.</p>
-                <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:var(--radius);margin-top:8px">
-                  <div style="display:flex;flex-direction:column;gap:2px">
-                    <span style="font-size:.78rem;font-weight:600;color:var(--text)">Live Track Map &amp; Beta Views</span>
-                    <span style="font-size:.65rem;color:var(--muted)">Show “Experimental” in footer navigation</span>
-                  </div>
-                  <button class="source-switch on" id="experimentalToggle" type="button" role="switch" aria-checked="true" aria-label="Toggle experimental features"><i></i></button>
-                </div>
-                <div class="source-foot" style="margin-top:12px">
-                  <span class="url-hint" id="experimentalStore">STORE: —</span>
-                  <button class="btn-sm btn-ghost" id="experimentalRefreshBtn" type="button">↻</button>
-                </div>
-              </div>
-            </div>
+            <!-- Left -->
+            <div class="race-col">
 
-            <!-- News -->
-            <div class="panel news-control" id="newsControlPanel">
-              <div class="panel-head">
-                <div class="panel-title">News Updates</div>
-                <div class="panel-badge normal" id="newsBadge">0 Published</div>
-              </div>
-              <div class="news-admin-panel">
-                <form id="newsForm" class="news-form" autocomplete="off">
-                  <input type="hidden" id="newsId" value="">
-                  <div class="form-group">
-                    <label for="newsTitle">Headline</label>
-                    <input class="url-input" type="text" id="newsTitle" maxlength="100" placeholder="e.g. Qualifying starts in one hour" required>
-                  </div>
-                  <div class="news-form-row">
-                    <div class="form-group">
-                      <label for="newsTag">Label</label>
-                      <input class="url-input" type="text" id="newsTag" maxlength="32" value="Race Control" placeholder="Race Control">
+              <div class="panel" id="panel-stream">
+                <div class="panel-head">
+                  <div class="panel-title">Stream Override</div>
+                  <div class="panel-badge normal" id="streamBadge">Normal</div>
+                </div>
+                <div class="stream-panel">
+                  <div class="stream-status active-normal" id="streamStatus">
+                    <div class="status-indicator online"></div>
+                    <div class="status-text">
+                      <strong style="color:var(--green)">Normal Stream</strong>
+                      <small>Default site feed is active</small>
                     </div>
-                    <label class="news-publish"><input type="checkbox" id="newsPublished" checked> <span>Publish update</span></label>
+                    <div class="time-ago">● LIVE</div>
                   </div>
-                  <div class="form-group" style="margin-bottom:0">
-                    <label for="newsBody">Update</label>
-                    <textarea class="url-input" id="newsBody" maxlength="600" rows="4" placeholder="Write a short update for the public site…" required></textarea>
+                  <div class="stream-preview" id="streamPreview">
+                    <div class="placeholder">
+                      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" opacity=".3"/></svg>
+                      <div>No override active</div>
+                      <div style="font-size:.65rem;margin-top:4px">Normal feed broadcasting</div>
+                    </div>
                   </div>
-                  <div class="url-hint">Plain text · 100 headline · 600 update</div>
-                  <div class="btn-row news-form-actions">
-                    <button class="btn-sm btn-red" id="newsSaveBtn" type="submit">Publish Update</button>
-                    <button class="btn-sm btn-ghost" id="newsCancelBtn" type="button" hidden>Cancel Edit</button>
+                  <div>
+                    <div class="form-group" style="margin-bottom:0">
+                      <label for="streamUrlInput">Override Video URL</label>
+                      <input class="url-input" type="text" id="streamUrlInput" placeholder="https://www.youtube.com/watch?v=…  or  https://…/video.mp4">
+                    </div>
+                    <div class="url-hint">Supports YouTube · MP4 · WebM · Generic embed URLs</div>
                   </div>
-                </form>
-                <div class="admin-news-list" id="adminNewsList"><div class="empty-state">Loading news updates…</div></div>
-              </div>
-            </div>
-
-            <!-- System Status -->
-            <div class="panel">
-              <div class="panel-head">
-                <div class="panel-title">System Status</div>
-                <div style="display:flex;align-items:center;gap:8px">
-                  <div class="sys-dot"></div>
-                  <span class="panel-badge live" style="font-size:.58rem">OPERATIONAL</span>
+                  <div class="btn-row">
+                    <button class="btn sm primary" id="playOverrideBtn" type="button">▶ Play Override</button>
+                    <button class="btn sm" id="stopOverrideBtn" type="button" disabled>■ Stop Override</button>
+                    <button class="btn sm" id="normalStreamBtn" type="button" disabled>↩ Return to Normal</button>
+                  </div>
+                  <p class="url-hint">Stop keeps the URL so you can play it again. Return to Normal clears it.</p>
+                  <p class="override-conflict" id="overrideConflict" hidden>Maintenance is on, so viewers are on the pit page and will not see this override until the site is live again.</p>
+                  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+                    <div class="url-hint" id="streamTypeLabel">TYPE: —</div>
+                    <div class="url-hint" id="streamStartedLabel">STARTED: —</div>
+                  </div>
                 </div>
               </div>
-              <div class="system-panel">
-                <div class="system-item"><span class="sys-key">Server Status</span><span class="sys-val" style="color:var(--green)">● Online</span></div>
-                <div class="system-item"><span class="sys-key">SSE Connection</span><span class="sys-val" id="sseStatus" style="color:var(--amber)">Connecting…</span></div>
-                <div class="system-item"><span class="sys-key">Active / Unique</span><span class="sys-val" id="sysVisitorStore">—</span></div>
-                <div class="system-item"><span class="sys-key">Unique Store</span><span class="sys-val" id="sysUniqueStore">—</span></div>
-                <div class="system-item"><span class="sys-key">Environment</span><span class="sys-val" id="sysNodeEnv">—</span></div>
-                <div class="system-item"><span class="sys-key">News Store</span><span class="sys-val" id="sysNewsStore">—</span></div>
-                <div class="system-item"><span class="sys-key">Analytics Store</span><span class="sys-val" id="sysAnalyticsStore">—</span></div>
-                <div class="system-item"><span class="sys-key">Source Store</span><span class="sys-val" id="sysSourceStore">—</span></div>
-                <div class="system-item"><span class="sys-key">Override Store</span><span class="sys-val" id="sysOverrideStore">—</span></div>
-                <div class="system-item"><span class="sys-key">Experimental</span><span class="sys-val" id="sysExperimentalStatus" style="color:var(--green)">ENABLED</span></div>
-                <div class="system-item"><span class="sys-key">Experimental Store</span><span class="sys-val" id="sysExperimentalStore">—</span></div>
-                <div class="system-item"><span class="sys-key">Override Mode</span><span class="sys-val" id="sysOverrideStatus" style="color:var(--green)">NORMAL</span></div>
-                <div class="system-item"><span class="sys-key">Public Website</span><span class="sys-val" id="sysMaintenanceStatus" style="color:var(--green)">LIVE</span></div>
-                <div class="system-item"><span class="sys-key">Session Active</span><span class="sys-val" id="sysSessionActive">Yes</span></div>
-                <div class="system-item"><span class="sys-key">Uptime</span><span class="sys-val" id="sysUptime">—</span></div>
+
+              <div class="panel force-live-panel" id="panel-force-live">
+                <div class="panel-head">
+                  <div class="panel-title">Force Live</div>
+                  <div class="panel-badge normal" id="forceLiveBadge">Auto</div>
+                </div>
+                <div class="force-live-body">
+                  <div class="force-live-status" id="forceLiveStatus">
+                    <div class="status-indicator online" id="forceLiveDot"></div>
+                    <div class="status-text">
+                      <strong id="forceLiveTitle" style="color:var(--green)">Schedule Window</strong>
+                      <small id="forceLiveText">Streams follow the race schedule. Overtime and red-flag delays may hide the player if the window closes.</small>
+                    </div>
+                  </div>
+                  <p class="url-hint" style="margin:0">When enabled, every viewer sees <b style="color:var(--text)">● LIVE</b> immediately — no refresh needed. The schedule check is bypassed until you disable it.</p>
+                  <div class="form-group" style="margin:10px 0 0">
+                    <label for="forceLiveReason">Reason (optional, dashboard only)</label>
+                    <input class="url-input" type="text" id="forceLiveReason" maxlength="120" placeholder="e.g. Race overtime — red flag, 40 laps remaining">
+                  </div>
+                  <div class="btn-row" style="margin-top:12px">
+                    <button class="btn sm primary" id="forceLiveEnableBtn" type="button">● Force Live ON</button>
+                    <button class="btn sm" id="forceLiveDisableBtn" type="button" disabled>Disable &amp; Restore Window</button>
+                  </div>
+                  <div class="url-hint" id="forceLiveMeta" style="margin-top:8px">STATE: — · STORE: —</div>
+                </div>
+              </div>
+
+              <div class="panel maintenance-control" id="maintenancePanel">
+                <div class="panel-head">
+                  <div class="panel-title">Website Mode</div>
+                  <div class="panel-badge normal" id="maintenanceBadge">Live</div>
+                </div>
+                <div class="maintenance-panel">
+                  <div class="maintenance-status is-live" id="maintenanceStatus">
+                    <div class="race-lights" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+                    <div class="status-text">
+                      <strong id="maintenanceStatusTitle">Public Site Live</strong>
+                      <small id="maintenanceStatusText">Visitors can access the full FreeF1 experience.</small>
+                    </div>
+                  </div>
+                  <div class="form-group" style="margin-bottom:0">
+                    <label for="maintenanceMessage">Maintenance Page Message</label>
+                    <input class="url-input" type="text" id="maintenanceMessage" maxlength="180" value="We'll be back before the race." placeholder="We'll be back before the race.">
+                  </div>
+                  <div class="url-hint">Shown underneath “We’re changing the tires” · 180 max</div>
+                  <div class="form-group" style="margin-top:14px;margin-bottom:0">
+                    <label for="maintenanceEta">Estimated Return (pit board)</label>
+                    <input class="url-input" type="text" id="maintenanceEta" maxlength="60" value="Before lights out" placeholder="Before lights out">
+                  </div>
+                  <div class="url-hint">Shown on the pit-stop board · 60 max</div>
+                  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+                    <button class="btn sm" id="maintenanceSaveBtn" type="button" disabled>Update Pit Board</button>
+                    <button class="btn sm primary btn-maintenance" id="maintenanceToggleBtn" type="button" aria-pressed="false" disabled>Checking Website Mode…</button>
+                  </div>
+                  <p class="maintenance-note" id="maintenanceNote">Activation is instant. Open visitors will be sent to the pit-stop page automatically.</p>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- Right -->
+            <div class="race-col">
+
+              <div class="panel" id="panel-sources">
+                <div class="panel-head">
+                  <div class="panel-title">Feed Sources</div>
+                  <div class="panel-badge normal" id="sourcesBadge">—</div>
+                </div>
+                <div class="source-panel" style="padding:20px">
+                  <p class="url-hint" style="margin:0 0 8px">Switch a feed off to hide it from public chips and skip it in auto-fallback. Changes apply to every viewer instantly.</p>
+                  <div class="source-list" id="sourceList"><div class="empty-state">Loading feed sources…</div></div>
+                  <div class="source-foot">
+                    <span class="url-hint" id="sourcesStore">STORE: —</span>
+                    <button class="btn sm" id="sourcesRefreshBtn" type="button" title="Reload">↻</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel" id="panel-experimental">
+                <div class="panel-head">
+                  <div class="panel-title">Experimental Features</div>
+                  <div class="panel-badge normal" id="experimentalBadge">Enabled</div>
+                </div>
+                <div class="maintenance-panel">
+                  <div class="maintenance-status is-live" id="experimentalStatus">
+                    <div class="status-indicator online"></div>
+                    <div class="status-text">
+                      <strong id="experimentalStatusTitle">Experimental Section Visible</strong>
+                      <small id="experimentalStatusText">The “Experimental” section in the public footer is enabled.</small>
+                    </div>
+                  </div>
+                  <p class="url-hint">Enables the “Experimental” footer column and beta links like the Live 2D Track Map.</p>
+                  <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:var(--r);margin-top:8px">
+                    <div style="display:flex;flex-direction:column;gap:2px">
+                      <span style="font-size:.78rem;font-weight:700;color:var(--text)">Live Track Map &amp; Beta Views</span>
+                      <span style="font-size:.65rem;color:var(--muted)">Show “Experimental” in footer navigation</span>
+                    </div>
+                    <button class="source-switch on" id="experimentalToggle" type="button" role="switch" aria-checked="true" aria-label="Toggle experimental features"><i></i></button>
+                  </div>
+                  <div class="source-foot" style="margin-top:12px">
+                    <span class="url-hint" id="experimentalStore">STORE: —</span>
+                    <button class="btn sm" id="experimentalRefreshBtn" type="button">↻</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="panel news-control" id="newsControlPanel">
+                <div class="panel-head">
+                  <div class="panel-title">News Updates</div>
+                  <div class="panel-badge normal" id="newsBadge">0 Published</div>
+                </div>
+                <div class="news-admin-panel">
+                  <form id="newsForm" class="news-form" autocomplete="off">
+                    <input type="hidden" id="newsId" value="">
+                    <div class="form-group">
+                      <label for="newsTitle">Headline</label>
+                      <input class="url-input" type="text" id="newsTitle" maxlength="100" placeholder="e.g. Qualifying starts in one hour" required>
+                    </div>
+                    <div class="news-form-row">
+                      <div class="form-group">
+                        <label for="newsTag">Label</label>
+                        <input class="url-input" type="text" id="newsTag" maxlength="32" value="Race Control" placeholder="Race Control">
+                      </div>
+                      <label class="news-publish"><input type="checkbox" id="newsPublished" checked> <span>Publish update</span></label>
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                      <label for="newsBody">Update</label>
+                      <textarea class="url-input" id="newsBody" maxlength="600" rows="4" placeholder="Write a short update for the public site…" required></textarea>
+                    </div>
+                    <div class="url-hint">Plain text · 100 headline · 600 update</div>
+                    <div class="btn-row news-form-actions">
+                      <button class="btn sm primary" id="newsSaveBtn" type="submit">Publish Update</button>
+                      <button class="btn sm" id="newsCancelBtn" type="button" hidden>Cancel Edit</button>
+                    </div>
+                  </form>
+                  <div class="admin-news-list" id="adminNewsList"><div class="empty-state">Loading news updates…</div></div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-head">
+                  <div class="panel-title">System Status</div>
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <div class="sys-dot"></div>
+                    <span class="panel-badge live" style="font-size:.58rem">OPERATIONAL</span>
+                  </div>
+                </div>
+                <div class="system-panel">
+                  <div class="system-item"><span class="sys-key">Server Status</span><span class="sys-val" style="color:var(--green)">● Online</span></div>
+                  <div class="system-item"><span class="sys-key">SSE Connection</span><span class="sys-val" id="sseStatus" style="color:var(--amber)">Connecting…</span></div>
+                  <div class="system-item"><span class="sys-key">Active / Unique</span><span class="sys-val" id="sysVisitorStore">—</span></div>
+                  <div class="system-item"><span class="sys-key">Unique Store</span><span class="sys-val" id="sysUniqueStore">—</span></div>
+                  <div class="system-item"><span class="sys-key">Environment</span><span class="sys-val" id="sysNodeEnv">—</span></div>
+                  <div class="system-item"><span class="sys-key">News Store</span><span class="sys-val" id="sysNewsStore">—</span></div>
+                  <div class="system-item"><span class="sys-key">Analytics Store</span><span class="sys-val" id="sysAnalyticsStore">—</span></div>
+                  <div class="system-item"><span class="sys-key">Source Store</span><span class="sys-val" id="sysSourceStore">—</span></div>
+                  <div class="system-item"><span class="sys-key">Override Store</span><span class="sys-val" id="sysOverrideStore">—</span></div>
+                  <div class="system-item"><span class="sys-key">Experimental</span><span class="sys-val" id="sysExperimentalStatus" style="color:var(--green)">ENABLED</span></div>
+                  <div class="system-item"><span class="sys-key">Experimental Store</span><span class="sys-val" id="sysExperimentalStore">—</span></div>
+                  <div class="system-item"><span class="sys-key">Override Mode</span><span class="sys-val" id="sysOverrideStatus" style="color:var(--green)">NORMAL</span></div>
+                  <div class="system-item"><span class="sys-key">Public Website</span><span class="sys-val" id="sysMaintenanceStatus" style="color:var(--green)">LIVE</span></div>
+                  <div class="system-item"><span class="sys-key">Session Active</span><span class="sys-val" id="sysSessionActive">Yes</span></div>
+                  <div class="system-item"><span class="sys-key">Uptime</span><span class="sys-val" id="sysUptime">—</span></div>
+                  <div class="system-item"><span class="sys-key">Force Live</span><span class="sys-val" id="sysStreamWindow" style="color:var(--green)">AUTO</span></div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <!-- ANALYTICS -->
+        <section class="view" id="tab-analytics" role="tabpanel" aria-labelledby="tabBtn-analytics" hidden>
+          <div class="analytics" id="analytics" aria-labelledby="analyticsTitle">
+            <div class="analytics-head">
+              <div>
+                <div class="section-kicker">Audience</div>
+                <h2 class="section-title" id="analyticsTitle">Analytics</h2>
+                <div class="analytics-meta"><span id="analyticsSince">—</span> · <span id="analyticsUpdated">—</span></div>
+              </div>
+              <div class="analytics-controls">
+                <span class="panel-badge normal" id="analyticsStore">—</span>
+                <div class="range-group" id="analyticsRange" role="group" aria-label="Time range">
+                  <button class="range-btn" data-range="24h" type="button">24h</button>
+                  <button class="range-btn" data-range="7d" type="button">7d</button>
+                  <button class="range-btn" data-range="14d" type="button">14d</button>
+                  <button class="range-btn" data-range="30d" type="button">30d</button>
+                  <button class="range-btn" data-range="90d" type="button">90d</button>
+                </div>
+                <button class="btn sm" id="analyticsExport" type="button">⤓ CSV</button>
+                <button class="btn sm" id="analyticsRefresh" type="button">↻</button>
               </div>
             </div>
-
-          </div>
-        </div>
-      </div>
-
-      <!-- ── ANALYTICS ── -->
-      <section class="tab-panel" id="tab-analytics" role="tabpanel" aria-labelledby="tabBtn-analytics" hidden>
-        <div class="analytics" id="analytics" aria-labelledby="analyticsTitle">
-          <div class="analytics-head">
-            <div>
-              <div class="section-kicker">Audience</div>
-              <h2 class="section-title" id="analyticsTitle">Analytics</h2>
-              <div class="analytics-meta"><span id="analyticsSince">—</span> · <span id="analyticsUpdated">—</span></div>
+            <div class="analytics-error" id="analyticsError" hidden></div>
+            <div class="kpi-row">
+              <div class="stat-card accent-red"><div class="stat-label">Sessions</div><div class="stat-value red" id="kSessionsVal">0</div><div class="stat-sub" id="kSessionsSub">—</div><div class="kpi-delta" id="kSessionsDelta"></div></div>
+              <div class="stat-card accent-purple"><div class="stat-label">Avg time on site</div><div class="stat-value purple" id="kAvgTimeVal">0s</div><div class="stat-sub" id="kAvgTimeSub">—</div><div class="kpi-delta" id="kAvgTimeDelta"></div></div>
+              <div class="stat-card accent-green"><div class="stat-label">Avg viewers online</div><div class="stat-value green" id="kAvgOnlineVal">0</div><div class="stat-sub" id="kAvgOnlineSub">—</div><div class="kpi-delta" id="kAvgOnlineDelta"></div></div>
+              <div class="stat-card accent-blue"><div class="stat-label">New visitors</div><div class="stat-value blue" id="kNewVal">0%</div><div class="stat-sub" id="kNewSub">—</div><div class="kpi-delta" id="kNewDelta"></div></div>
+              <div class="stat-card accent-amber"><div class="stat-label">Bounce rate</div><div class="stat-value amber" id="kBounceVal">0%</div><div class="stat-sub" id="kBounceSub">—</div><div class="kpi-delta" id="kBounceDelta"></div></div>
+              <div class="stat-card accent-green"><div class="stat-label">Total watch time</div><div class="stat-value green" id="kWatchVal">0m</div><div class="stat-sub" id="kWatchSub">—</div><div class="kpi-delta" id="kWatchDelta"></div></div>
             </div>
-            <div class="analytics-controls">
-              <span class="panel-badge normal" id="analyticsStore">—</span>
-              <div class="range-group" id="analyticsRange" role="group" aria-label="Time range">
-                <button class="range-btn" data-range="24h" type="button">24h</button>
-                <button class="range-btn" data-range="7d" type="button">7d</button>
-                <button class="range-btn" data-range="14d" type="button">14d</button>
-                <button class="range-btn" data-range="30d" type="button">30d</button>
-                <button class="range-btn" data-range="90d" type="button">90d</button>
+            <div class="panel chart-panel">
+              <div class="panel-head"><div class="panel-title">Concurrent viewers</div><div class="chart-note" id="chartLiveNote">—</div></div>
+              <div class="chart-body" id="chartLive"></div>
+            </div>
+            <div class="chart-grid two">
+              <div class="panel chart-panel">
+                <div class="panel-head"><div class="panel-title">Sessions · new vs returning</div><div class="chart-note" id="analyticsRangeLabel">—</div></div>
+                <div class="chart-body" id="chartSessions"></div>
               </div>
-              <button class="btn-sm btn-ghost" id="analyticsExport" type="button">⤓ CSV</button>
-              <button class="btn-sm btn-ghost" id="analyticsRefresh" type="button">↻</button>
+              <div class="panel chart-panel">
+                <div class="panel-head"><div class="panel-title">Average time on site</div><div class="chart-note">per period · completed sessions</div></div>
+                <div class="chart-body" id="chartDuration"></div>
+              </div>
             </div>
-          </div>
-          <div class="analytics-error" id="analyticsError" hidden></div>
-          <div class="kpi-row">
-            <div class="stat-card accent-red"><div class="stat-label">Sessions</div><div class="stat-value red" id="kSessionsVal">0</div><div class="stat-sub" id="kSessionsSub">—</div><div class="kpi-delta" id="kSessionsDelta"></div></div>
-            <div class="stat-card accent-purple"><div class="stat-label">Avg time on site</div><div class="stat-value purple" id="kAvgTimeVal">0s</div><div class="stat-sub" id="kAvgTimeSub">—</div><div class="kpi-delta" id="kAvgTimeDelta"></div></div>
-            <div class="stat-card accent-green"><div class="stat-label">Avg viewers online</div><div class="stat-value green" id="kAvgOnlineVal">0</div><div class="stat-sub" id="kAvgOnlineSub">—</div><div class="kpi-delta" id="kAvgOnlineDelta"></div></div>
-            <div class="stat-card accent-blue"><div class="stat-label">New visitors</div><div class="stat-value blue" id="kNewVal">0%</div><div class="stat-sub" id="kNewSub">—</div><div class="kpi-delta" id="kNewDelta"></div></div>
-            <div class="stat-card accent-amber"><div class="stat-label">Bounce rate</div><div class="stat-value amber" id="kBounceVal">0%</div><div class="stat-sub" id="kBounceSub">—</div><div class="kpi-delta" id="kBounceDelta"></div></div>
-            <div class="stat-card accent-green"><div class="stat-label">Total watch time</div><div class="stat-value green" id="kWatchVal">0m</div><div class="stat-sub" id="kWatchSub">—</div><div class="kpi-delta" id="kWatchDelta"></div></div>
-          </div>
-          <div class="panel chart-panel">
-            <div class="panel-head"><div class="panel-title">Concurrent viewers</div><div class="chart-note" id="chartLiveNote">—</div></div>
-            <div class="chart-body" id="chartLive"></div>
-          </div>
-          <div class="chart-grid two">
-            <div class="panel chart-panel">
-              <div class="panel-head"><div class="panel-title">Sessions · new vs returning</div><div class="chart-note" id="analyticsRangeLabel">—</div></div>
-              <div class="chart-body" id="chartSessions"></div>
+            <div class="chart-grid two">
+              <div class="panel chart-panel">
+                <div class="panel-head"><div class="panel-title">When people watch</div><div class="chart-note" id="chartHeatNote">avg viewers online · weekday × hour</div></div>
+                <div class="chart-body" id="chartHeat"></div>
+              </div>
+              <div class="panel chart-panel">
+                <div class="panel-head"><div class="panel-title">Session length distribution</div><div class="chart-note">share of completed sessions</div></div>
+                <div class="chart-body" id="chartDurationHist"></div>
+              </div>
             </div>
-            <div class="panel chart-panel">
-              <div class="panel-head"><div class="panel-title">Average time on site</div><div class="chart-note">per period · completed sessions</div></div>
-              <div class="chart-body" id="chartDuration"></div>
+            <div class="chart-grid four">
+              <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Devices</div></div><div class="chart-body" id="chartDevice"></div></div>
+              <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Browsers</div></div><div class="chart-body" id="chartBrowser"></div></div>
+              <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Operating systems</div></div><div class="chart-body" id="chartOs"></div></div>
+              <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Countries</div></div><div class="chart-body" id="chartCountry"></div></div>
             </div>
-          </div>
-          <div class="chart-grid two">
-            <div class="panel chart-panel">
-              <div class="panel-head"><div class="panel-title">When people watch</div><div class="chart-note" id="chartHeatNote">avg viewers online · weekday × hour</div></div>
-              <div class="chart-body" id="chartHeat"></div>
+            <div class="chart-grid four">
+              <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Pages</div></div><div class="chart-body" id="chartPages"></div></div>
+              <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Feed sources picked</div></div><div class="chart-body" id="chartSource"></div></div>
+              <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Team liveries</div></div><div class="chart-body" id="chartTeam"></div></div>
+              <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Player health</div></div><div class="chart-body health-grid" id="playerHealth"></div></div>
             </div>
             <div class="panel chart-panel">
-              <div class="panel-head"><div class="panel-title">Session length distribution</div><div class="chart-note">share of completed sessions</div></div>
-              <div class="chart-body" id="chartDurationHist"></div>
+              <div class="panel-head"><div class="panel-title">Busiest hours</div><div class="chart-note">top hours by peak concurrent viewers · last 14 days</div></div>
+              <div class="panel-body table-wrap"><table class="busiest"><thead><tr><th>Hour</th><th class="num">Peak online</th><th class="num">Avg online</th><th class="num">Sessions</th><th class="num">Avg length</th><th>Top countries</th></tr></thead><tbody id="busiestBody"><tr><td colspan="6"><div class="empty-state">Loading…</div></td></tr></tbody></table></div>
             </div>
+            <p class="analytics-foot">Aggregated counters only — no IP addresses, visitor IDs or user-agent strings are stored. Hourly detail is kept for 14 days, daily totals for 90 days. Backed by Upstash Redis · survives deploys.</p>
           </div>
-          <div class="chart-grid four">
-            <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Devices</div></div><div class="chart-body" id="chartDevice"></div></div>
-            <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Browsers</div></div><div class="chart-body" id="chartBrowser"></div></div>
-            <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Operating systems</div></div><div class="chart-body" id="chartOs"></div></div>
-            <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Countries</div></div><div class="chart-body" id="chartCountry"></div></div>
-          </div>
-          <div class="chart-grid four">
-            <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Pages</div></div><div class="chart-body" id="chartPages"></div></div>
-            <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Feed sources picked</div></div><div class="chart-body" id="chartSource"></div></div>
-            <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Team liveries</div></div><div class="chart-body" id="chartTeam"></div></div>
-            <div class="panel chart-panel"><div class="panel-head"><div class="panel-title">Player health</div></div><div class="chart-body health-grid" id="playerHealth"></div></div>
-          </div>
-          <div class="panel chart-panel">
-            <div class="panel-head"><div class="panel-title">Busiest hours</div><div class="chart-note">top hours by peak concurrent viewers · last 14 days</div></div>
-            <div class="panel-body table-wrap"><table class="busiest"><thead><tr><th>Hour</th><th class="num">Peak online</th><th class="num">Avg online</th><th class="num">Sessions</th><th class="num">Avg length</th><th>Top countries</th></tr></thead><tbody id="busiestBody"><tr><td colspan="6"><div class="empty-state">Loading…</div></td></tr></tbody></table></div>
-          </div>
-          <p class="analytics-foot">Aggregated counters only — no IP addresses, visitor IDs or user-agent strings are stored. Hourly detail is kept for 14 days, daily totals for 90 days. Backed by Upstash Redis · survives deploys.</p>
-        </div>
-      </section>
+        </section>
 
-      <!-- ── SESSIONS ── -->
-      <div class="tab-panel" id="tab-sessions" role="tabpanel" aria-labelledby="tabBtn-sessions" hidden>
-        <div class="sessions-intro panel">
-          <div class="sessions-intro-body">
-            <div>
-              <div class="section-kicker">Live</div>
-              <h2 class="section-title" style="margin:4px 0 6px;font-size:1.25rem">Active Sessions</h2>
-              <p class="url-hint" style="margin:0;max-width:560px;line-height:1.6;text-transform:none;letter-spacing:0">Viewer table is gated to keep the dashboard snappy at 600+ concurrent viewers. Open the viewer to fetch and render the full list with search and pagination.</p>
+        <!-- SESSIONS -->
+        <div class="view" id="tab-sessions" role="tabpanel" aria-labelledby="tabBtn-sessions" hidden>
+          <div class="panel sessions-intro" style="margin-bottom:18px">
+            <div class="sessions-intro-body">
+              <div>
+                <div class="section-kicker">Live</div>
+                <h2 class="section-title" style="margin:4px 0 6px;font-size:1.35rem;font-family:'Archivo',sans-serif;font-style:italic;font-weight:900;text-transform:uppercase;letter-spacing:-.03em">Active Sessions</h2>
+                <p class="url-hint" style="margin:0;max-width:560px;line-height:1.6;text-transform:none;letter-spacing:0">Viewer table is gated to keep the dashboard snappy at 600+ concurrent viewers. Open the viewer to fetch and render the full list with search and pagination.</p>
+              </div>
+              <div class="sessions-intro-actions">
+                <button class="btn primary sessions-open-btn" id="openSessionsBtn" type="button">
+                  <span id="openSessionsLabel">View Active Sessions</span>
+                  <span class="sessions-count-pill" id="sessionsCountPill">—</span>
+                </button>
+                <div class="url-hint" id="sessionsHint" style="margin-top:8px;text-align:center">Live updating · paginated 50 per page</div>
+              </div>
             </div>
-            <div class="sessions-intro-actions">
-              <button class="btn btn-primary sessions-open-btn" id="openSessionsBtn" type="button">
-                <span id="openSessionsLabel">View Active Sessions</span>
-                <span class="sessions-count-pill" id="sessionsCountPill">—</span>
-              </button>
-              <div class="url-hint" id="sessionsHint" style="margin-top:8px;text-align:center">Live updating · paginated 50 per page</div>
+          </div>
+
+          <div class="panel" id="sessionsPanel" hidden>
+            <div class="panel-head">
+              <div class="panel-title">Active Sessions</div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <input class="url-input" id="sessionsSearch" type="search" placeholder="Search IP, location, page…" style="width:220px;min-height:34px;padding:7px 10px;font-size:.78rem" autocomplete="off">
+                <div class="panel-badge live" id="tableBadge">● Live</div>
+                <button class="btn sm" id="closeSessionsBtn" type="button" aria-label="Close sessions">✕</button>
+              </div>
+            </div>
+            <div class="sessions-toolbar">
+              <div class="url-hint" id="sessionsMeta" style="margin:0">—</div>
+              <div class="sessions-pagination" id="sessionsPagination"></div>
+            </div>
+            <div class="panel-body table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>IP Address</th>
+                    <th>Location</th>
+                    <th>Browser</th>
+                    <th>OS</th>
+                    <th>Device</th>
+                    <th>Page</th>
+                    <th>Status</th>
+                    <th>Last Seen</th>
+                  </tr>
+                </thead>
+                <tbody id="visitorTableBody">
+                  <tr id="visitorEmpty"><td colspan="8"><div class="empty-state">No active sessions — open to load.</div></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="sessions-toolbar bottom">
+              <div class="url-hint" id="sessionsMetaBottom" style="margin:0">—</div>
+              <div class="sessions-pagination" id="sessionsPaginationBottom"></div>
             </div>
           </div>
         </div>
 
-        <div class="panel" id="sessionsPanel" hidden>
-          <div class="panel-head">
-            <div class="panel-title">Active Sessions</div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <input class="url-input" id="sessionsSearch" type="search" placeholder="Search IP, location, page…" style="width:220px;min-height:34px;padding:7px 10px;font-size:.78rem" autocomplete="off">
-              <div class="panel-badge live" id="tableBadge">● Live</div>
-              <button class="btn-sm btn-ghost" id="closeSessionsBtn" type="button" aria-label="Close sessions">✕</button>
-            </div>
-          </div>
-          <div class="sessions-toolbar">
-            <div class="url-hint" id="sessionsMeta" style="margin:0">—</div>
-            <div class="sessions-pagination" id="sessionsPagination"></div>
-          </div>
-          <div class="panel-body table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>IP Address</th>
-                  <th>Location</th>
-                  <th>Browser</th>
-                  <th>OS</th>
-                  <th>Device</th>
-                  <th>Page</th>
-                  <th>Status</th>
-                  <th>Last Seen</th>
-                </tr>
-              </thead>
-              <tbody id="visitorTableBody">
-                <tr id="visitorEmpty"><td colspan="8"><div class="empty-state">No active sessions — open to load.</div></td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="sessions-toolbar bottom">
-            <div class="url-hint" id="sessionsMetaBottom" style="margin:0">—</div>
-            <div class="sessions-pagination" id="sessionsPaginationBottom"></div>
-          </div>
-        </div>
       </div>
+    </section>
+  </main>
 
-    </main>
-  </div>
-
-  <!-- Sessions Modal (alt full-screen when 600 rows feels heavy) -->
-  <div id="sessionsModal" class="sessions-modal" hidden role="dialog" aria-modal="true" aria-labelledby="sessionsModalTitle">
-    <div class="sessions-modal-backdrop" id="sessionsModalBackdrop"></div>
-    <div class="sessions-modal-card" role="document">
-      <div class="sessions-modal-head">
-        <h3 id="sessionsModalTitle" style="font-family:var(--mono);font-size:.78rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text)">Active Sessions</h3>
-        <button class="btn-sm btn-ghost" id="sessionsModalClose" type="button">✕ Close</button>
-      </div>
-      <div class="sessions-modal-body" id="sessionsModalBody">
-        <!-- table is rendered inline; modal mirrors same tbody via clone — kept simple by reusing same panel on mobile -->
+  <!-- Footer — exact site footer -->
+  <footer>
+    <div class="wrap">
+      <div class="foot-grid">
+        <div>
+          <a class="brand" href="/" style="margin-bottom:16px">
+            <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none"><path d="M2 17.5L7.5 6.5h5.2l-2 4h4.6l-1.6 3.2H8.9l-1.7 3.8H2z" fill="#fff"/><path d="M14.5 6.5H22l-1.7 3.4h-7.5l1.7-3.4z" fill="#fff" opacity=".72"/></svg></span>
+            <span class="brand-text"><b>FreeF1</b></span>
+          </a>
+          <p class="foot-note">Admin control — authenticated access only. Changes broadcast live to every viewer via SSE.</p>
+        </div>
+        <div>
+          <h4>Admin</h4>
+          <div class="foot-links">
+            <a href="#" data-tab="race">Race Control</a>
+            <a href="#" data-tab="analytics">Analytics</a>
+            <a href="#" data-tab="sessions">Sessions</a>
+          </div>
+        </div>
+        <div>
+          <h4>System</h4>
+          <div class="foot-links">
+            <span style="color:var(--muted);font-size:.84rem" id="serverTimeLabel">Server Time — UTC</span>
+            <span style="color:var(--dim);font-family:'JetBrains Mono',monospace;font-size:.72rem" id="serverDate">--</span>
+          </div>
+        </div>
+        <div>
+          <h4>Status</h4>
+          <div class="foot-links">
+            <span class="pill live" id="sseStatus" style="font-size:.66rem">Connecting…</span>
+            <span style="color:var(--muted);font-size:.72rem" id="sysVisitorStore">—</span>
+          </div>
+        </div>
       </div>
     </div>
+    <div class="checker"></div>
+    <div class="wrap"><div class="foot-bar" style="border-top:0">
+      <span>© 2026 FreeF1 — Independent Fan Project</span>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:.62rem;color:var(--dim)">Photography © Wikimedia Commons · CC BY-SA</span>
+    </div></div>
+  </footer>
+
+</div>
+
+<!-- Sessions modal (kept for compatibility, hidden by default) -->
+<div id="sessionsModal" class="sessions-modal" hidden role="dialog" aria-modal="true" aria-labelledby="sessionsModalTitle">
+  <div class="sessions-modal-backdrop" id="sessionsModalBackdrop"></div>
+  <div class="sessions-modal-card" role="document">
+    <div class="sessions-modal-head">
+      <h3 id="sessionsModalTitle" style="font-family:'JetBrains Mono',monospace;font-size:.78rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text)">Active Sessions</h3>
+      <button class="btn sm" id="sessionsModalClose" type="button">✕ Close</button>
+    </div>
+    <div class="sessions-modal-body" id="sessionsModalBody"></div>
   </div>
+</div>
 
-  <!-- Toast Container -->
-  <div class="toast-container" id="toastContainer"></div>
+<div class="toast-container" id="toastContainer"></div>
 
-  <script src="/admin/charts.js?v=20261005-admin5" defer></script>
-  <script src="/admin/analytics.js?v=20261005-admin5" defer></script>
-  <script src="/admin/admin.js?v=20261005-admin5" defer></script>
+<div style="display:none">
+  <!-- keep hidden inputs referenced by admin.js -->
+  <span id="serverTime"></span>
+  <span id="sysUptime"></span>
+  <span id="sysVisitorStore"></span>
+  <span id="sysUniqueStore"></span>
+  <span id="sysNewsStore"></span>
+  <span id="sysSourceStore"></span>
+  <span id="sysOverrideStore"></span>
+  <span id="sysAnalyticsStore"></span>
+  <span id="sysOverrideStatus"></span>
+  <span id="sysMaintenanceStatus"></span>
+  <span id="sysNodeEnv"></span>
+  <span id="sysSessionActive"></span>
+  <span id="sysExperimentalStatus"></span>
+  <span id="sysExperimentalStore"></span>
+  <span id="sysStreamWindow"></span>
+</div>
+
+<script src="/admin/charts.js?v=20261005-admin6" defer></script>
+<script src="/admin/analytics.js?v=20261005-admin6" defer></script>
+<script src="/admin/admin.js?v=20261005-admin6" defer></script>
 </body>
 </html>
