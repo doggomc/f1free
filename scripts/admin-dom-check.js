@@ -19,12 +19,14 @@ const errors = [];
 
 const dom = new JSDOM(fs.readFileSync(path.join(adminDir, 'index.html'), 'utf8'), {
   runScripts: 'outside-only',
-  url: 'http://127.0.0.1:3000/admin'
+  url: 'http://127.0.0.1:3000/admin',
+  pretendToBeVisual: true // provides requestAnimationFrame, used by tab switches
 });
 const { window } = dom;
 
 // Minimal browser surfaces the dashboard touches but jsdom does not implement.
 window.matchMedia = window.matchMedia || (query => ({ matches: false, media: query, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }));
+window.Element.prototype.scrollIntoView = window.Element.prototype.scrollIntoView || function scrollIntoView() {};
 window.requestIdleCallback = cb => setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 50 }), 0);
 window.EventSource = class EventSource {
   constructor(url) { this.url = url; this.listeners = new Map(); EventSource.instances.push(this); }
@@ -202,7 +204,19 @@ try {
 
   // 2. Dashboard actually opened and rendered.
   check('dashboard is visible after auth', $('app').classList.contains('open'));
-  check('visitor rows rendered', $('visitorTableBody').querySelectorAll('tr[data-key]').length === 12,
+
+  /* The sessions table is lazy: it stays empty until the operator opens the
+     gate, so the dashboard is not rebuilding hundreds of rows for a panel
+     nobody is looking at. Assert that state, then open it and assert the rows
+     — the previous version of this check asserted rows straight from the
+     initial snapshot and went red the moment the gate landed. */
+  const click = el => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+  check('sessions table idles until the gate is opened',
+    $('visitorTableBody').querySelectorAll('tr[data-key]').length === 0 && $('openSessionsLabel').textContent === 'View Active Sessions',
+    `${$('visitorTableBody').querySelectorAll('tr[data-key]').length} rows, label "${$('openSessionsLabel').textContent}"`);
+  click($('openSessionsBtn'));
+  await new Promise(resolve => setTimeout(resolve, 400));
+  check('opening the gate renders the visitor rows', $('visitorTableBody').querySelectorAll('tr[data-key]').length === 12,
     `${$('visitorTableBody').querySelectorAll('tr[data-key]').length} rows`);
   check('online count rendered', $('onlineCount').textContent === '12', $('onlineCount').textContent);
   check('unique count is the server total (not the row count)', $('uniqueCount').textContent === '4821', $('uniqueCount').textContent);
@@ -275,6 +289,7 @@ try {
   es.emit('open', {});
   await new Promise(resolve => setTimeout(resolve, 50));
   check('connection bar filled after SSE open', $('connBarFill').style.width === '100%', $('connBarFill').style.width);
+  // The gate is open from check 2, so visitor_update bursts are painted here.
   const paintBefore = $('visitorTableBody').querySelectorAll('tr[data-key]').length;
   for (let i = 0; i < 40; i++) {
     es.emit('visitor_update', { type: 'heartbeat', visitor: { ...snapshot.visitors[0], id: `burst_${i}` } });
@@ -283,7 +298,13 @@ try {
   check('40 heartbeats do not repaint synchronously', immediate === paintBefore, `${paintBefore} -> ${immediate}`);
   await new Promise(resolve => setTimeout(resolve, 500));
   const settled = $('visitorTableBody').querySelectorAll('tr[data-key]').length;
-  check('coalesced repaint applies the queued visitors', settled === paintBefore + 40, `${paintBefore} -> ${settled}`);
+  // The table paginates 50 per page, so the page is filled rather than grown
+  // without limit — the queued visitors are still all counted.
+  const pageSize = 50;
+  check('coalesced repaint applies the queued visitors',
+    settled === Math.min(pageSize, paintBefore + 40), `${paintBefore} -> ${settled}`);
+  check('queued visitors are counted past the first page',
+    new RegExp(`of ${paintBefore + 40} sessions`).test($('sessionsMeta').textContent), $('sessionsMeta').textContent);
   check('totalUnique untouched by visitor churn', $('uniqueCount').textContent === '4821', $('uniqueCount').textContent);
 
   // 7. Offline + override + maintenance events do not throw.

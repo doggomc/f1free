@@ -1,6 +1,9 @@
 node_modules/
 data/*
 !data/.gitkeep
+# Runtime state (visitor hashes, analytics, news, overrides) belongs to the
+# deploy, not the repo: it seeds fresh installs and lands in the public commit
+# history. These five files were tracked before this rule existed.
 npm-debug.log*
 .env
 .env.*

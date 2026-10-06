@@ -6,11 +6,23 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "node --check server.js && node --check admin/admin.js && node --check admin/charts.js && node --check admin/analytics.js && node --check bot/discord-bot.js && node --check bot/voice-relay.js && node scripts/smoke-test.js && node scripts/admin-dom-check.js && node scripts/site-dom-check.js && node scripts/relay-audio-check.js",
+    "check": "npm run check:syntax && npm run check:unit && npm run check:browser && npm run check:site && npm run check:rounds && npm run check:admin && npm run check:security && npm run check:csp && npm run check:relay",
+    "check:syntax": "node --check server.js && node --check admin/admin.js && node --check admin/charts.js && node --check admin/analytics.js && node --check bot/discord-bot.js && node --check bot/voice-relay.js && node --check scripts/security-check.js && node --check scripts/csp-check.js && node --check scripts/round-meeting-check.js",
+    "check:unit": "node scripts/smoke-test.js && node scripts/presence-check.js && node scripts/preview-auth-check.js && node scripts/race-times-check.js && node scripts/visitor-counter-check.js",
+    "check:browser": "node scripts/live247-shield-check.js",
+    "check:site": "node scripts/site-dom-check.js",
+    "check:admin": "node scripts/admin-dom-check.js",
+    "check:security": "node scripts/security-check.js",
+    "check:relay": "node scripts/relay-audio-check.js",
     "smoke": "node scripts/smoke-test.js",
     "dom": "node scripts/admin-dom-check.js",
     "site": "node scripts/site-dom-check.js",
-    "relay": "node scripts/relay-audio-check.js"
+    "security": "node scripts/security-check.js",
+    "relay": "node scripts/relay-audio-check.js",
+    "check:csp": "node scripts/csp-check.js",
+    "csp": "node scripts/csp-check.js",
+    "check:rounds": "node scripts/round-meeting-check.js",
+    "rounds": "node scripts/round-meeting-check.js"
   },
   "engines": {
     "node": ">=18.11"

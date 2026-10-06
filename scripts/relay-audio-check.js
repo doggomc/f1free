@@ -31,14 +31,14 @@ function run(bin, args) {
   // Optional feature: skip (rather than fail) when the voice packages or an
   // ffmpeg binary are not installed, so `npm run check` stays useful.
   if (!relay.isAvailable()) {
-    console.log('skipped: @discordjs/voice is not installed (optional dependency)');
+    console.log(' skip   audio relay not exercised — @discordjs/voice is not installed (optional dependency)');
     return process.exit(0);
   }
   const { execFileSync } = require('child_process');
   try {
     execFileSync(relay.resolveFfmpeg(), ['-version'], { stdio: 'ignore' });
   } catch (_) {
-    console.log('skipped: no usable ffmpeg binary');
+    console.log(' skip   audio relay not exercised — no usable ffmpeg binary');
     return process.exit(0);
   }
   const ffmpeg = relay.resolveFfmpeg();

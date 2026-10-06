@@ -10,7 +10,23 @@ const path = require('path');
 const app = express();
 
 app.disable('x-powered-by');
-app.set('trust proxy', true);
+
+/* ── Client IP trust ──────────────────────────────────────────────
+   proxy-addr walks the X-Forwarded-For chain backwards from the socket and
+   returns the closest address that is NOT a trusted hop. With the hop count
+   matched to the real deployment (Render's router = 1 hop; +1 more if this
+   ever sits behind Cloudflare) that address is the one the edge appended, so
+   a client cannot forge it by sending its own X-Forwarded-For,
+   CF-Connecting-IP, True-Client-IP or X-Real-IP header.
+
+   `true` (the previous value) trusted every hop, which made every per-IP
+   limit in this file — including the admin login guard — bypassable with a
+   single request header. Set TRUST_PROXY_HOPS only to match real
+   infrastructure: too low over-blocks (every viewer shares a proxy address),
+   too high re-opens the forgery. */
+const TRUST_PROXY_HOPS = Math.max(0, Math.min(4,
+  Number.parseInt(process.env.TRUST_PROXY_HOPS || (process.env.NODE_ENV === 'production' ? '1' : '0'), 10) || 0));
+app.set('trust proxy', TRUST_PROXY_HOPS);
 
 const SERVER_STARTED_AT = Date.now();
 const PORT = process.env.PORT || 3000;
@@ -60,20 +76,50 @@ const OPENF1_UPSTREAM = String(process.env.OPENF1_API || 'https://api.openf1.org
 const OPENF1_API_KEY = process.env.OPENF1_API_KEY || '';
 const OPENF1_TTL_MS_OVERRIDE = Math.max(0, Number.parseInt(process.env.OPENF1_TTL_MS || '0', 10) || 0);
 const OPENF1_PATHS = new Set(['sessions', 'meetings', 'drivers', 'team_radio', 'race_control']);
+// Query keys the public site actually sends (session_key/meeting_key/year
+// selectors). Anything else is refused at the proxy boundary.
+const OPENF1_QUERY_KEYS = new Set([
+  'session_key', 'meeting_key', 'driver_number', 'year',
+  'country_name', 'location', 'session_name', 'date_start', 'date_end'
+]);
 const OPENF1_TTL_MS = { sessions: 60_000, meetings: 60_000, drivers: 3_600_000, team_radio: 10_000, race_control: 10_000 };
 const OPENF1_SNAPSHOT_TTL_S = 7 * 86_400;
 const OPENF1_SNAPSHOT_MAX_BYTES = 1_500_000;
+/* Cache keys are derived from client-chosen query strings, so every cache here
+   is capped and evicts least-recently-used. Without a cap a caller can mint
+   unbounded keys (and, for snapshots, unbounded Redis keys) just by varying
+   session_key/meeting_key. */
+const OPENF1_CACHE_MAX = Math.max(50, Number.parseInt(process.env.OPENF1_CACHE_MAX || '400', 10) || 400);
+const OPENF1_SNAPSHOT_MAX = Math.max(50, Number.parseInt(process.env.OPENF1_SNAPSHOT_MAX || '400', 10) || 400);
+const OPENF1_SNAPSHOT_WRITES_PER_DAY = Math.max(50, Number.parseInt(process.env.OPENF1_SNAPSHOT_WRITES_PER_DAY || '2000', 10) || 2000);
+const CAREER_CACHE_MAX = Math.max(20, Number.parseInt(process.env.CAREER_CACHE_MAX || '200', 10) || 200);
+
+function cacheSetCapped(map, key, value, max) {
+  if (map.has(key)) map.delete(key); // re-insert so Map order stays least-recently-used
+  map.set(key, value);
+  while (map.size > max) map.delete(map.keys().next().value);
+  return value;
+}
+
 const openf1Cache = new Map();     // url -> { data, at }
 const openf1Snapshots = new Map(); // url -> { data, at } last-known-good per URL
 const openf1Inflight = new Map();  // url -> Promise (request coalescing)
+let openf1SnapshotWriteDay = new Date().toISOString().slice(0, 10);
+let openf1SnapshotWritesToday = 0;
+let openf1SnapshotWriteCapLogged = false;
 // Reported to the admin dashboard so it can render a true server clock.
 const SERVER_TIMEZONE = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (_) { return 'UTC'; }
 })();
 const PRODUCTION_MODE = process.env.NODE_ENV === 'production' || process.env.REQUIRE_PRODUCTION_SECRETS === '1';
+/* A one-word password with a per-IP lockout is still guessable offline of the
+   limiter; refuse short secrets in production rather than warning about them. */
+const ADMIN_PASS_MIN_LENGTH = Math.max(8, Number.parseInt(process.env.ADMIN_PASS_MIN_LENGTH || '12', 10) || 12);
 const insecureProductionConfig = [
   !process.env.ADMIN_USER ? 'ADMIN_USER' : null,
   !process.env.ADMIN_PASS || process.env.ADMIN_PASS === 'admin' ? 'ADMIN_PASS' : null,
+  process.env.ADMIN_PASS && process.env.ADMIN_PASS.length < ADMIN_PASS_MIN_LENGTH
+    ? `ADMIN_PASS (shorter than ${ADMIN_PASS_MIN_LENGTH} characters)` : null,
   !process.env.ADMIN_SECRET || process.env.ADMIN_SECRET === 'freef1-admin-secret-change-me' ? 'ADMIN_SECRET' : null,
   !process.env.VISITOR_SECRET || process.env.VISITOR_SECRET === 'doggomc' ? 'VISITOR_SECRET' : null,
   // Analytics, news, unique visitors and maintenance live on the instance disk
@@ -259,7 +305,6 @@ const visitorKeyByIp = new Map();
 // Geo responses are reused and concurrent lookups for one IP are deduplicated.
 const geoCache = new Map();
 const pendingGeoLookups = new Map();
-const loginAttempts = new Map();
 const visitorRateLimits = new Map();
 let fileStoreReady = false;
 const GEO_CACHE_TTL = Number(process.env.GEO_CACHE_TTL_MS || 6 * 60 * 60 * 1000);
@@ -326,6 +371,7 @@ const sseHeartbeatTimer = setInterval(() => {
   const heartbeat = ': heartbeat\n\n';
   writeSSE(sseClients, heartbeat);
   writeSSE(publicSseClients, heartbeat);
+  reconcilePublicSseCounts();
 }, 15_000);
 sseHeartbeatTimer.unref?.();
 
@@ -337,6 +383,34 @@ const VISITOR_RATE_LIMIT_WINDOW_MS = Number(process.env.VISITOR_RATE_LIMIT_WINDO
 const VISITOR_RATE_LIMIT_MAX = Number(process.env.VISITOR_RATE_LIMIT_MAX || 30);
 const GEO_ENABLED = process.env.GEO_ENABLED !== 'false';
 const GEO_API = String(process.env.GEO_API || 'https://ipwho.is').replace(/\/+$/, '');
+
+/* ── Admission budgets ────────────────────────────────────────────
+   A rate limit alone still lets one host mint a brand-new visitor identity
+   every window, and every new identity is a permanent addition to the
+   all-time unique total. This budget caps new identities per IP per hour:
+   the visitor still appears live in the dashboard and still counts in
+   analytics, they just cannot join the permanent total more than this many
+   times in an hour. Real viewers keep working (one identity per person per
+   site), and a viewer whose first heartbeat landed over budget is picked up
+   on a later heartbeat once the window rolls.
+
+   The default is deliberately generous: mobile carriers put thousands of
+   viewers behind one address, and a race weekend must not read as abuse. It
+   still stops a script, which mints identities thousands of times an hour,
+   and the first-party origin gate is the primary defence. */
+const NEW_IDENTITY_BUDGET_PER_IP_HOUR = Math.max(1,
+  Number.parseInt(process.env.NEW_IDENTITY_BUDGET_PER_IP_HOUR || '60', 10) || 60);
+const NEW_IDENTITY_BUDGET_WINDOW_MS = 60 * 60 * 1000;
+// Log-only tripwire: if the whole instance ever mints more than this in an
+// hour, something is wrong even if every individual IP stayed inside budget.
+const NEW_IDENTITY_ALERT_PER_HOUR = Math.max(10,
+  Number.parseInt(process.env.NEW_IDENTITY_ALERT_PER_HOUR || '600', 10) || 600);
+
+/* Public SSE is a long-lived socket per viewer. The global cap alone let one
+   host hold the whole pool open and starve every other viewer of the
+   override/maintenance/news pushes, so there is a per-IP cap as well. */
+const PUBLIC_SSE_MAX = Math.max(20, Number.parseInt(process.env.PUBLIC_SSE_MAX || '400', 10) || 400);
+const PUBLIC_SSE_MAX_PER_IP = Math.max(1, Number.parseInt(process.env.PUBLIC_SSE_MAX_PER_IP || '4', 10) || 4);
 
 // ─────────────────────────────────────────────
 // MIDDLEWARE
@@ -360,14 +434,19 @@ app.use((req, res, next) => {
     "default-src 'self'",
     "base-uri 'self'",
     "object-src 'none'",
+    // Mirrors netlifyf1/_headers: typefaces are served from this origin, so no
+    // external font host is allowed. Keep the two policies in step — this one
+    // governs local/preview serving of the site, that one governs Netlify.
     "script-src 'self' 'unsafe-inline'",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com data:",
-    "img-src 'self' data: https://media.formula1.com https://upload.wikimedia.org https://a.espncdn.com",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self' data:",
+    "img-src 'self' data: https://media.formula1.com",
     "connect-src 'self' https://f1free.onrender.com https://api.jolpi.ca",
     'frame-src https:',
     "frame-ancestors 'self'",
-    "media-src 'self' https:",
+    // data: is required by the iOS wake-lock fallback, which loops a 1px
+    // silent data:video/mp4 to keep the screen on where Wake Lock is missing.
+    "media-src 'self' data: https:",
     "form-action 'self'"
   ].join('; '));
   if (PRODUCTION_MODE) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -1451,33 +1530,35 @@ function isPrivateIp(ip){
   if(v.startsWith('::ffff:10.') || v.startsWith('::ffff:192.168.') || v.startsWith('::ffff:172.')) return true;
   return false;
 }
+/* Normalise one address: strip ports/brackets, unwrap IPv4-mapped IPv6,
+   collapse loopback spellings. Returns '' for anything unusable. */
+function normalizeIpValue(value) {
+  let ip = String(value || '').trim();
+  if (ip.includes(',')) ip = ip.split(',')[0].trim();
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  if (ip.startsWith('[') && ip.includes(']')) ip = ip.slice(1, ip.indexOf(']'));
+  if (ip === '::1') return '127.0.0.1';
+  if (ip === '::') return '';
+  return ip;
+}
+
+/* The client IP, derived ONLY from the socket and the trusted-proxy chain
+   configured above. Client-supplied identity headers are never consulted:
+   they are trivially forgeable whenever the origin is reachable directly,
+   and a forged IP made every per-IP limit in this file — including the admin
+   login guard — bypassable. */
 function getClientIp(req) {
-  // Cloudflare / Render / Netlify all set CF-Connecting-IP or True-Client-IP; prefer those over req.ip
-  const headerCandidates = [
-    req.headers['cf-connecting-ip'],
-    req.headers['true-client-ip'],
-    req.headers['x-real-ip'],
-    req.headers['x-forwarded-for']
-  ];
-  for(const hdr of headerCandidates){
-    if(!hdr) continue;
-    const parts = String(hdr).split(',').map(s=>s.trim().replace(/^::ffff:/,'')).filter(Boolean);
-    if(!parts.length) continue;
-    // XFF is client, proxy1, proxy2 — leftmost public is the real visitor
-    for(const cand of parts){
-      if(!isPrivateIp(cand)) return cand;
-    }
-    // fallback: if all are private (local dev), return first
-    if(parts[0]) return parts[0];
-  }
-  const raw = String(req.ip || req.socket?.remoteAddress || 'unknown').split(',')[0].trim().replace(/^::ffff:/,'');
-  if(raw==='::1') return '127.0.0.1';
-  if(isPrivateIp(raw) && req.headers['x-forwarded-for']){
-    // last resort: even req.ip is private, try to salvage XFF leftmost anyway
-    const xff = String(req.headers['x-forwarded-for']).split(',').map(s=>s.trim().replace(/^::ffff:/,'')).filter(Boolean);
-    if(xff.length) return xff[0];
-  }
-  return raw || 'unknown';
+  const socketIp = normalizeIpValue(req.socket?.remoteAddress);
+  // A public socket address means nothing is proxying us: the socket is the
+  // client, and no header can override it.
+  if (socketIp && !isPrivateIp(socketIp)) return socketIp;
+
+  const proxyIp = normalizeIpValue(req.ip);
+  if (proxyIp && !isPrivateIp(proxyIp)) return proxyIp;
+
+  // Local development / internal probes: every candidate is private. Keep a
+  // usable value for logs and for the (per-instance) dev rate limits.
+  return proxyIp || socketIp || 'unknown';
 }
 
 function hashClientIp(ip) {
@@ -1555,6 +1636,73 @@ function getVisitorRouteKey(req) {
   const ip = getClientIp(req);
   const suppliedId = normalizeVisitorId(req.headers['x-user-id']);
   return suppliedId || ip;
+}
+
+/* ── First-party gate for visitor endpoints ───────────────────────
+   The public site calls the API cross-origin, so a real viewer's browser
+   always sends an Origin (and, with Referrer-Policy strict-origin-when-
+   cross-origin, a Referer) that this deployment trusts. A script that mints
+   visitor tokens to fabricate presence has no trusted origin — that is
+   exactly the shape this refuses. Requests with no origin at all are only
+   allowed off-production (local dev, the test harness, internal probes), or
+   when they provably came from this same host. */
+function isAuthorizedSiteRequest(req) {
+  const origin = normalizeOrigin(req.headers.origin || '');
+  const referer = normalizeOrigin(req.headers.referer || req.headers.referrer || '');
+  const source = origin || referer;
+  if (source) return isAllowedOrigin(req, source);
+  // No Origin and no Referer. Browsers always send one for a cross-origin
+  // fetch, so this is either a non-browser caller or a deployment that serves
+  // the site from this very host (same-origin fetches omit Origin). Accept the
+  // latter only when the request really arrived on the site's own hostname —
+  // deriving "same origin" from the request's own Host header would accept any
+  // direct API call, which is the hole this gate exists to close.
+  if (!PRODUCTION_MODE) return true;
+  const host = String(req.headers.host || '').split(':')[0].toLowerCase();
+  return isAuthorizedHostname(host) || host === 'localhost' || host === '127.0.0.1';
+}
+
+function rejectUnauthorizedSiteRequest(res) {
+  return res.status(403).json({
+    error: 'Forbidden',
+    message: `Visitor endpoints are available to ${AUTHORIZED_DOMAIN} only.`
+  });
+}
+
+/* ── New-identity budget (see NEW_IDENTITY_BUDGET_PER_IP_HOUR) ──── */
+const newIdentityWindows = new Map(); // ip -> { count, resetAt }
+let newIdentityBlockedCount = 0;
+let newIdentityWarnedAt = 0;
+
+function consumeNewIdentityBudget(ip) {
+  const now = Date.now();
+  const state = newIdentityWindows.get(ip);
+  if (!state || state.resetAt <= now) {
+    newIdentityWindows.set(ip, { count: 1, resetAt: now + NEW_IDENTITY_BUDGET_WINDOW_MS });
+    return true;
+  }
+  if (state.count >= NEW_IDENTITY_BUDGET_PER_IP_HOUR) {
+    newIdentityBlockedCount++;
+    if (now - newIdentityWarnedAt >= 60_000) {
+      newIdentityWarnedAt = now;
+      console.warn(`[Visitors] New-identity budget reached for ${ip}; further identities stay live but are not added to the all-time total.`);
+    }
+    return false;
+  }
+  state.count++;
+  return true;
+}
+
+function pruneNewIdentityWindows(now = Date.now()) {
+  for (const [ip, state] of newIdentityWindows) if (state.resetAt <= now) newIdentityWindows.delete(ip);
+}
+
+function getNewIdentityStatus() {
+  return {
+    budgetPerHour: NEW_IDENTITY_BUDGET_PER_IP_HOUR,
+    blockedThisProcess: newIdentityBlockedCount,
+    trackedAddresses: newIdentityWindows.size
+  };
 }
 
 /* Crawlers, scanners, link-preview bots and uptime monitors hammer public
@@ -2207,8 +2355,9 @@ analyticsInitPromise.then(() => sampleAnalytics());
 
 function cleanupInactiveVisitors() {
   const now = Date.now();
-  for (const [key, state] of loginAttempts) if (state.resetAt <= now) loginAttempts.delete(key);
   for (const [key, state] of visitorRateLimits) if (state.resetAt <= now) visitorRateLimits.delete(key);
+  pruneNewIdentityWindows(now);
+  for (const [key, state] of loginGuard) if (!state.lockedUntil && state.resetAt <= now) loginGuard.delete(key);
   let removed = 0;
   for (const [id, visitor] of activeUsers) {
     if (now - visitor.lastSeen > HEARTBEAT_TIMEOUT) {
@@ -2221,6 +2370,7 @@ function cleanupInactiveVisitors() {
     }
   }
   if (removed) scheduleStatsBroadcast();
+  reconcilePublicSseCounts();
 }
 
 setInterval(cleanupInactiveVisitors, CLEANUP_INTERVAL).unref?.();
@@ -2277,6 +2427,9 @@ function getStats() {
     onlineCount,
     activeSessions,
     totalUnique: getTotalUniqueVisitors(),
+    // Surfaced so an operator can see identity inflation being refused rather
+    // than discovering it as an unexplained jump in the permanent total.
+    identityGuard: getNewIdentityStatus(),
     visitors,
     override: adminOverrideState(),
     maintenance: publicMaintenanceState(),
@@ -2417,6 +2570,8 @@ app.get('/api/auth/verify', (req, res) => {
 app.get('/api/visitors/token', (req, res) => {
   const userId = normalizeVisitorId(req.headers['x-user-id'] || req.query.userId);
   if (!userId) return res.status(400).json({ error: 'Missing user ID' });
+  // Tokens are only ever minted for the site itself; see isAuthorizedSiteRequest.
+  if (!isAuthorizedSiteRequest(req)) return rejectUnauthorizedSiteRequest(res);
   if (!consumeVisitorRateLimit(`token:${getClientIp(req)}`)) {
     res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
     return res.status(429).json({ error: 'Too many token requests. Try again later.' });
@@ -2431,6 +2586,9 @@ app.get('/api/visitors/heartbeat', async (req, res, next) => {
   try {
     const suppliedUserId = normalizeVisitorId(req.headers['x-user-id']);
     if (!suppliedUserId) return res.status(400).json({ error: 'Missing user ID' });
+    // A heartbeat mutates presence, so it carries the same first-party gate as
+    // the token mint that authorised it.
+    if (!isAuthorizedSiteRequest(req)) return rejectUnauthorizedSiteRequest(res);
 
     const ip = getClientIp(req);
     if (!consumeVisitorRateLimit(`heartbeat:${ip}`)) {
@@ -2455,7 +2613,10 @@ app.get('/api/visitors/heartbeat', async (req, res, next) => {
     // Analytics: a heartbeat means a real browser running the site, so this is
     // where a session starts counting (page-only hits from crawlers are not).
     recordSessionStart(entry);
-    const isGloballyNew = await trackUniqueVisitor(key);
+    // The permanent total only takes identities that fit inside the per-IP
+    // budget; an over-budget identity still counts as a live viewer.
+    const withinIdentityBudget = consumeNewIdentityBudget(ip);
+    const isGloballyNew = withinIdentityBudget ? await trackUniqueVisitor(key) : false;
     recordVisitorKind(entry, isGloballyNew);
 
     // Heartbeats update one row in real time; full stats are serialized only
@@ -2473,6 +2634,7 @@ app.get('/api/visitors/heartbeat', async (req, res, next) => {
 app.post('/api/visitors/event', (req, res) => {
   const suppliedUserId = normalizeVisitorId(req.headers['x-user-id']);
   if (!suppliedUserId) return res.status(400).json({ error: 'Missing user ID' });
+  if (!isAuthorizedSiteRequest(req)) return rejectUnauthorizedSiteRequest(res);
   if (!consumeVisitorRateLimit(`event:${getClientIp(req)}`)) {
     res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
     return res.status(429).json({ error: 'Too many events. Try again later.' });
@@ -2569,7 +2731,7 @@ async function openf1SnapshotLoad(url) {
     if (typeof raw !== 'string') return null;
     const parsed = JSON.parse(raw);
     if (!parsed || !Array.isArray(parsed.data)) return null;
-    openf1Snapshots.set(url, parsed);
+    cacheSetCapped(openf1Snapshots, url, parsed, OPENF1_SNAPSHOT_MAX);
     return parsed;
   } catch (error) {
     return null;
@@ -2578,10 +2740,28 @@ async function openf1SnapshotLoad(url) {
 
 function openf1SnapshotSave(url, data) {
   const snapshot = { data, at: Date.now() };
-  openf1Snapshots.set(url, snapshot);
+  cacheSetCapped(openf1Snapshots, url, snapshot, OPENF1_SNAPSHOT_MAX);
   if (!UNIQUE_VISITOR_REMOTE_ENABLED) return;
   const raw = JSON.stringify(snapshot);
   if (raw.length > OPENF1_SNAPSHOT_MAX_BYTES) return;
+
+  // Durable snapshots are a convenience (survive a restart), not a source of
+  // truth: cap the daily writes so a caller varying query strings cannot grow
+  // the Redis keyspace without limit.
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== openf1SnapshotWriteDay) {
+    openf1SnapshotWriteDay = today;
+    openf1SnapshotWritesToday = 0;
+    openf1SnapshotWriteCapLogged = false;
+  }
+  if (openf1SnapshotWritesToday >= OPENF1_SNAPSHOT_WRITES_PER_DAY) {
+    if (!openf1SnapshotWriteCapLogged) {
+      openf1SnapshotWriteCapLogged = true;
+      console.warn(`[OpenF1] Daily snapshot write budget (${OPENF1_SNAPSHOT_WRITES_PER_DAY}) reached; serving from memory until tomorrow.`);
+    }
+    return;
+  }
+  openf1SnapshotWritesToday++;
   upstashRequest(['SET', openf1SnapshotKey(url), raw, 'EX', OPENF1_SNAPSHOT_TTL_S]).catch(() => {});
 }
 
@@ -2608,13 +2788,13 @@ async function openf1Resolve(url, openf1Path) {
       try { response = await openf1FetchUpstream(url); } catch (_) { response = null; }
       if (response && (response.ok || response.status === 404)) {
         if (response.status === 404) {
-          openf1Cache.set(url, { data: [], at: Date.now() });
+          cacheSetCapped(openf1Cache, url, { data: [], at: Date.now() }, OPENF1_CACHE_MAX);
           return { data: [], stale: false };
         }
         try {
           const data = await response.json();
           const cleanData = data && data.detail === 'No results found.' ? [] : (Array.isArray(data) ? data : []);
-          openf1Cache.set(url, { data: cleanData, at: Date.now() });
+          cacheSetCapped(openf1Cache, url, { data: cleanData, at: Date.now() }, OPENF1_CACHE_MAX);
           openf1SnapshotSave(url, cleanData);
           return { data: cleanData, stale: false };
         } catch (error) {
@@ -2650,8 +2830,17 @@ app.get('/api/openf1/:path', async (req, res) => {
   }
   const query = String(req.originalUrl).split('?')[1] || '';
   if (query.length > 512) return res.status(400).json({ error: 'Query string too long' });
+  // The query string is a fixed vocabulary: known keys, short values, and
+  // numeric identifiers. Values feed cache keys, so free-form strings would
+  // let one caller mint unlimited entries.
+  const numericKeys = new Set(['session_key', 'meeting_key', 'driver_number', 'year']);
   for (const [key, value] of new URLSearchParams(query)) {
-    if (!/^[a-z_]+$/.test(key) || String(value).length > 120) return res.status(400).json({ error: 'Invalid query' });
+    if (!OPENF1_QUERY_KEYS.has(key) || String(value).length > 120) {
+      return res.status(400).json({ error: 'Invalid query' });
+    }
+    if (numericKeys.has(key) && !/^\d{1,9}$/.test(String(value))) {
+      return res.status(400).json({ error: 'Invalid query' });
+    }
   }
   const url = `${OPENF1_UPSTREAM}/${openf1Path}${query ? `?${query}` : ''}`;
   try {
@@ -2743,7 +2932,29 @@ const careerCache = new Map(); // driverId -> { data, at }
 const careerInflight = new Map(); // driverId -> Promise
 const titleChampionCache = new Map(); // year -> { champ, at }
 
+/* ── Jolpica upstream budget ──────────────────────────────────────
+   One cold career request fans out into 2-13 upstream calls, and the free
+   Jolpica API is rate-limited per IP — i.e. shared by every viewer of this
+   service. A global token bucket keeps one caller (or one burst) from
+   exhausting the quota for everybody; requests over budget fail fast and the
+   cached/section fallbacks in the client still render. */
+const JOLPI_MAX_PER_MINUTE = Math.max(10, Number.parseInt(process.env.JOLPI_MAX_PER_MINUTE || '120', 10) || 120);
+let jolpiWindowStart = Date.now();
+let jolpiWindowCount = 0;
+
+function takeJolpiBudget() {
+  const now = Date.now();
+  if (now - jolpiWindowStart >= 60_000) {
+    jolpiWindowStart = now;
+    jolpiWindowCount = 0;
+  }
+  if (jolpiWindowCount >= JOLPI_MAX_PER_MINUTE) return false;
+  jolpiWindowCount++;
+  return true;
+}
+
 async function jolpiGet(path) {
+  if (!takeJolpiBudget()) throw new Error('Jolpica request budget exhausted');
   const url = `${JOLPI_UPSTREAM}${path}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
@@ -2807,7 +3018,7 @@ async function computeCareer(driverId){
       try{
         const d = await jolpiGet(`/${y}/driverstandings/1/?limit=1`);
         const champ = d?.MRData?.StandingsTable?.StandingsLists?.[0]?.DriverStandings?.[0]?.Driver?.driverId || null;
-        titleChampionCache.set(String(y), { champ, at: Date.now() });
+        cacheSetCapped(titleChampionCache, String(y), { champ, at: Date.now() }, CAREER_CACHE_MAX);
         return champ;
       }catch(_){ return null; }
     }));
@@ -2844,7 +3055,7 @@ app.get('/api/career/:driverId', async (req, res) => {
   try{
     const data = await job;
     if(!data) return res.status(503).json({ error: 'Career unavailable' });
-    careerCache.set(driverId, { data, at: Date.now() });
+    cacheSetCapped(careerCache, driverId, { data, at: Date.now() }, CAREER_CACHE_MAX);
     res.setHeader('Cache-Control','public, max-age=300, stale-while-revalidate=600');
     res.setHeader('X-Cache','MISS');
     return res.json({ career: data, cached: false });
@@ -2873,13 +3084,52 @@ app.get('/api/experimental', async (req, res, next) => {
 });
 
 // Public SSE endpoint — sends public stream, maintenance and news updates (no visitor data)
-const PUBLIC_SSE_MAX = Math.max(20, Number.parseInt(process.env.PUBLIC_SSE_MAX || '400', 10) || 400);
+
+/* Per-IP accounting for the long-lived public sockets, so one host cannot hold
+   the whole pool open. Counts are released on close and swept on the heartbeat
+   timer if a socket died without a close event. */
+const publicSseByIp = new Map(); // ip -> count
+
+function registerPublicSse(req, res) {
+  const ip = getClientIp(req);
+  const current = publicSseByIp.get(ip) || 0;
+  if (current >= PUBLIC_SSE_MAX_PER_IP) return null;
+  publicSseByIp.set(ip, current + 1);
+  res.__sseIp = ip;
+  return ip;
+}
+
+function releasePublicSse(ip) {
+  if (!ip) return;
+  const current = publicSseByIp.get(ip) || 0;
+  if (current <= 1) publicSseByIp.delete(ip);
+  else publicSseByIp.set(ip, current - 1);
+}
+
+/* The heartbeat write drops sockets that died without a close event, so the
+   ledger is rebuilt from the live set whenever the two disagree. */
+function reconcilePublicSseCounts() {
+  let counted = 0;
+  for (const count of publicSseByIp.values()) counted += count;
+  if (counted === publicSseClients.size) return;
+  publicSseByIp.clear();
+  for (const client of publicSseClients) {
+    const ip = client.__sseIp;
+    if (!ip) continue;
+    publicSseByIp.set(ip, (publicSseByIp.get(ip) || 0) + 1);
+  }
+}
 
 app.get('/api/events', async (req, res, next) => {
   try {
     if (publicSseClients.size >= PUBLIC_SSE_MAX) {
       res.setHeader('Retry-After', '15');
       return res.status(503).json({ error: 'Too many live connections' });
+    }
+    const sseIp = registerPublicSse(req, res);
+    if (!sseIp) {
+      res.setHeader('Retry-After', '15');
+      return res.status(429).json({ error: 'Too many live connections from this address' });
     }
     await Promise.all([maintenanceInitPromise, newsInitPromise, overrideInitPromise, experimentalInitPromise, streamWindowInitPromise]);
     res.setHeader('Content-Type', 'text/event-stream');
@@ -2902,6 +3152,7 @@ app.get('/api/events', async (req, res, next) => {
 
     req.on('close', () => {
       publicSseClients.delete(res);
+      releasePublicSse(sseIp);
     });
   } catch (error) {
     next(error);
@@ -2911,6 +3162,11 @@ app.get('/api/events', async (req, res, next) => {
 // ─────────────────────────────────────────────
 // ADMIN — STATIC FILES & AUTHENTICATION
 // ─────────────────────────────────────────────
+
+app.use('/admin', (req, res, next) => {
+  if (isAdminIpAllowed(getClientIp(req))) return next();
+  return res.status(404).json({ error: 'Not found' });
+});
 
 app.use('/admin', express.static(ADMIN_DIR, {
   index: false,
@@ -2925,33 +3181,206 @@ app.use('/admin', express.static(ADMIN_DIR, {
   }
 }));
 
-function checkLoginLimit(req, res, next) {
-  const key = getClientIp(req);
+/* ── Admin login guard ────────────────────────────────────────────
+   Three layers, because one shared password with no lockout is the single
+   most attractive target on the service:
+
+     1. per (IP + username) — 5 failures, then exponential lockout
+        (15m, 30m, 1h … capped at LOGIN_MAX_LOCK_MS).
+     2. per username — catches a distributed guesser rotating addresses;
+        a wider allowance so a shared office NAT cannot lock the owner out.
+     3. persisted best-effort to the durable store, so redeploying the
+        service cannot clear an attacker's progress.
+
+   Layer 1 only means anything because getClientIp() no longer reads
+   client-supplied identity headers. */
+const LOGIN_MAX_FAILURES = Math.max(1, Number.parseInt(process.env.LOGIN_MAX_FAILURES || '5', 10) || 5);
+const LOGIN_BASE_LOCK_MS = Math.max(10_000, Number.parseInt(process.env.LOGIN_BASE_LOCK_MS || String(15 * 60_000), 10) || 15 * 60_000);
+const LOGIN_MAX_LOCK_MS = Math.max(LOGIN_BASE_LOCK_MS, Number.parseInt(process.env.LOGIN_MAX_LOCK_MS || String(6 * 3_600_000), 10) || 6 * 3_600_000);
+const LOGIN_USER_FAILURE_MULTIPLIER = Math.max(2, Number.parseInt(process.env.LOGIN_USER_FAILURE_MULTIPLIER || '4', 10) || 4);
+const LOGIN_GUARD_REDIS_KEY = process.env.LOGIN_GUARD_REDIS_KEY || 'freef1:login-guard:v1';
+const LOGIN_GUARD_FILE = path.join(DATA_DIR, 'login-guard.json');
+
+const loginGuard = new Map(); // key -> { failures, lockedUntil, strikes, resetAt }
+let loginGuardDirty = false;
+let loginGuardPersistTimer = null;
+
+function loginGuardKey(scope, value) {
+  return `${scope}:${String(value || '').toLowerCase()}`;
+}
+
+function loginGuardEntry(key, now = Date.now()) {
+  let entry = loginGuard.get(key);
+  if (!entry) {
+    entry = { failures: 0, lockedUntil: 0, strikes: 0, resetAt: now + LOGIN_BASE_LOCK_MS };
+    loginGuard.set(key, entry);
+  }
+  return entry;
+}
+
+function loginLockRemaining(key, now = Date.now()) {
+  const entry = loginGuard.get(key);
+  if (!entry || !entry.lockedUntil || entry.lockedUntil <= now) return 0;
+  return entry.lockedUntil - now;
+}
+
+function registerLoginFailure(scope, value, threshold) {
   const now = Date.now();
-  let state = loginAttempts.get(key);
-  if (!state || state.resetAt <= now) state = { count: 0, resetAt: now + 15 * 60 * 1000 };
-  if (state.count >= 10) {
-    res.setHeader('Retry-After', String(Math.max(1, Math.ceil((state.resetAt - now) / 1000))));
+  const key = loginGuardKey(scope, value);
+  const entry = loginGuardEntry(key, now);
+  if (entry.resetAt <= now) { entry.failures = 0; entry.resetAt = now + LOGIN_BASE_LOCK_MS; }
+  entry.failures++;
+  if (entry.failures >= threshold) {
+    entry.strikes++;
+    entry.lockedUntil = now + Math.min(LOGIN_MAX_LOCK_MS, LOGIN_BASE_LOCK_MS * Math.pow(2, entry.strikes - 1));
+    entry.failures = 0;
+    entry.resetAt = entry.lockedUntil;
+    console.warn(`[Security] Admin login locked for ${Math.round((entry.lockedUntil - now) / 1000)}s (${key}).`);
+    // A lockout is the one state worth writing through immediately: it has to
+    // outlive a redeploy, and the process could be recycled at any moment.
+    loginGuardDirty = true;
+    persistLoginGuard().catch(() => {});
+    return entry;
+  }
+  loginGuardDirty = true;
+  scheduleLoginGuardPersist();
+  return entry;
+}
+
+function clearLoginFailures(scope, value) {
+  const key = loginGuardKey(scope, value);
+  if (loginGuard.delete(key)) {
+    loginGuardDirty = true;
+    scheduleLoginGuardPersist();
+  }
+}
+
+function serializeLoginGuard() {
+  const now = Date.now();
+  const out = {};
+  for (const [key, entry] of loginGuard) {
+    if (entry.lockedUntil && entry.lockedUntil > now) out[key] = { lockedUntil: entry.lockedUntil, strikes: entry.strikes };
+  }
+  return out;
+}
+
+/* Persistence keeps a redeploy from resetting an attacker's lockout. Failures
+   are swallowed: the in-memory guard must never be able to break login. */
+async function persistLoginGuard() {
+  loginGuardDirty = false;
+  const payload = serializeLoginGuard();
+  try {
+    if (UNIQUE_VISITOR_REMOTE_ENABLED) {
+      await upstashRequest(['SET', LOGIN_GUARD_REDIS_KEY, JSON.stringify(payload), 'EX', 86_400]);
+    } else {
+      writeLocalJson(LOGIN_GUARD_FILE, payload);
+    }
+  } catch (_) { /* best effort */ }
+}
+
+function scheduleLoginGuardPersist() {
+  if (loginGuardPersistTimer) return;
+  loginGuardPersistTimer = setTimeout(() => {
+    loginGuardPersistTimer = null;
+    if (loginGuardDirty) persistLoginGuard().catch(() => {});
+  }, 2_000);
+  loginGuardPersistTimer.unref?.();
+}
+
+async function loadLoginGuard() {
+  try {
+    let stored = null;
+    if (UNIQUE_VISITOR_REMOTE_ENABLED) {
+      const payload = await upstashRequest(['GET', LOGIN_GUARD_REDIS_KEY]);
+      if (typeof payload?.result === 'string') stored = JSON.parse(payload.result);
+    } else {
+      stored = readLocalJson(LOGIN_GUARD_FILE);
+    }
+    if (!stored || typeof stored !== 'object') return false;
+    const now = Date.now();
+    for (const [key, entry] of Object.entries(stored)) {
+      const lockedUntil = Number(entry?.lockedUntil);
+      if (!Number.isFinite(lockedUntil) || lockedUntil <= now) continue;
+      loginGuard.set(key, { failures: 0, lockedUntil, strikes: Number(entry?.strikes) || 1, resetAt: lockedUntil });
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function checkLoginLimit(req, res, next) {
+  const now = Date.now();
+  const ip = getClientIp(req);
+  const username = String((req.body || {}).username || '').slice(0, 64);
+  const ipKey = loginGuardKey('ip', `${ip}|${username}`);
+  const userKey = loginGuardKey('user', username);
+
+  const ipLock = loginLockRemaining(ipKey, now);
+  const userLock = loginLockRemaining(userKey, now);
+  const retryAfterMs = Math.max(ipLock, userLock);
+  if (retryAfterMs > 0) {
+    res.setHeader('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
     return res.status(429).json({ success: false, error: 'Too many login attempts. Try again later.' });
   }
-  req.loginLimitKey = key;
-  req.loginLimitState = state;
+
+  req.loginKeys = { ipKey, userKey, username };
   next();
 }
 
 app.use('/admin/api', sessionMiddleware);
 app.post('/admin/api/login', checkLoginLimit, (req, res) => {
   const { username, password } = req.body || {};
+  const keys = req.loginKeys || { ipKey: loginGuardKey('ip', getClientIp(req)), userKey: loginGuardKey('user', '') };
   if (safeEqual(username, ADMIN_USER) && safeEqual(password, ADMIN_PASS)) {
-    loginAttempts.delete(req.loginLimitKey);
+    clearLoginFailures('ip', `${getClientIp(req)}|${username}`);
+    clearLoginFailures('user', username);
     req.session.isAdmin = true;
     req.session.loginAt = Date.now();
     return res.json({ success: true });
   }
-  req.loginLimitState.count++;
-  loginAttempts.set(req.loginLimitKey, req.loginLimitState);
+  // Password comparison is a plain string compare; keep the failure path cheap
+  // and non-revealing (no timing signal about which field was wrong).
+  const ipEntry = registerLoginFailure('ip', `${getClientIp(req)}|${username}`, LOGIN_MAX_FAILURES);
+  const userEntry = registerLoginFailure('user', username, LOGIN_MAX_FAILURES * LOGIN_USER_FAILURE_MULTIPLIER);
+  const lockedFor = Math.max(ipEntry.lockedUntil - Date.now(), userEntry.lockedUntil - Date.now(), 0);
+  if (lockedFor > 0) res.setHeader('Retry-After', String(Math.max(1, Math.ceil(lockedFor / 1000))));
   res.status(401).json({ success: false, error: 'Invalid credentials' });
 });
+
+/* Optional network allowlist for the whole dashboard (ADMIN_IP_ALLOWLIST=
+   "41.13.0.0/16,102.132.7.9"). Empty = open, which is the documented default. */
+const ADMIN_IP_ALLOWLIST = String(process.env.ADMIN_IP_ALLOWLIST || '')
+  .split(',')
+  .map(entry => entry.trim())
+  .filter(Boolean);
+
+function ipInCidr(ip, cidr) {
+  const [range, bitsRaw] = cidr.split('/');
+  const bits = Number.parseInt(bitsRaw, 10);
+  const toInt = value => {
+    const parts = value.split('.');
+    if (parts.length !== 4) return null;
+    let out = 0;
+    for (const part of parts) {
+      const n = Number(part);
+      if (!Number.isInteger(n) || n < 0 || n > 255) return null;
+      out = (out << 8) | n;
+    }
+    return out >>> 0;
+  };
+  const target = toInt(ip);
+  const base = toInt(range);
+  if (target === null || base === null || !Number.isFinite(bits)) return false;
+  const mask = bits <= 0 ? 0 : (bits >= 32 ? 0xffffffff : (0xffffffff << (32 - bits)) >>> 0);
+  return (target & mask) === (base & mask);
+}
+
+function isAdminIpAllowed(ip) {
+  if (!ADMIN_IP_ALLOWLIST.length) return true;
+  return ADMIN_IP_ALLOWLIST.some(entry =>
+    entry.includes('/') ? ipInCidr(ip, entry) : entry === ip);
+}
 
 function requireAdminOrigin(req, res, next) {
   if (!['POST', 'PATCH', 'DELETE'].includes(req.method)) return next();
@@ -3360,8 +3789,13 @@ if (process.env.DISCORD_BOT_TOKEN) {
   console.log('[Bot] Discord bot disabled (DISCORD_BOT_TOKEN not set)');
 }
 
+// Restore any persisted login lockout before the first request can be served,
+// so redeploying does not hand a guesser a clean slate.
+loadLoginGuard().catch(() => {});
+
 const server = app.listen(PORT, () => {
   console.log(`[Server] Running on http://localhost:${PORT}`);
+  console.log(`[Server] Trusted proxy hops: ${TRUST_PROXY_HOPS}${TRUST_PROXY_HOPS === 0 ? ' (no proxy: socket address is the client)' : ''}`);
   console.log(`[Main]  Site:  http://localhost:${PORT}/  (${DEV_DIR})`);
   console.log(`[Admin] Panel: http://localhost:${PORT}/admin  (${ADMIN_DIR})`);
   console.log(`[Visitors] Unique store: ${UNIQUE_VISITOR_REMOTE_ENABLED ? 'Upstash Redis (durable)' : 'memory (resets on restart)'}`);
@@ -3375,6 +3809,12 @@ const server = app.listen(PORT, () => {
   }
   if (VISITOR_SECRET === 'doggomc') {
     console.warn('[Security] VISITOR_SECRET is still the default. Set a private value in production.');
+  }
+  if (!process.env.UNIQUE_VISITOR_HASH_SECRET) {
+    console.warn('[Visitors] UNIQUE_VISITOR_HASH_SECRET is not set, so visitor hashes fall back to VISITOR_SECRET — rotating it will reset the all-time unique total. Set an independent value.');
+  }
+  if (ADMIN_IP_ALLOWLIST.length) {
+    console.log(`[Security] Admin dashboard restricted to ${ADMIN_IP_ALLOWLIST.length} address range(s).`);
   }
 });
 
@@ -3398,8 +3838,10 @@ function shutdown(signal) {
   // Bot store writes are already immediate; this waits for the last one
   // so a redeploy cannot drop sent-markers and double-post an alert.
   const botFlush = discordBot?.flush?.().catch(() => false) || Promise.resolve();
+  // Login lockouts must survive the restart a redeploy performs.
+  const guardFlush = loginGuardDirty ? persistLoginGuard().catch(() => false) : Promise.resolve();
   server.close(async () => {
-    await Promise.allSettled([...pendingUniqueWrites.values(), finalFlush, botFlush]);
+    await Promise.allSettled([...pendingUniqueWrites.values(), finalFlush, botFlush, guardFlush]);
     try { discordBot?.stop?.(); } catch (_) {}
     process.exit(0);
   });
