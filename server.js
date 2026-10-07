@@ -388,13 +388,32 @@ const HEARTBEAT_TIMEOUT = Number(process.env.HEARTBEAT_TIMEOUT_MS || 60_000);
    flicker in and out of it.
    LEAVE grace exists because a reload closes the page before the new one
    starts: without it every refresh would flash the viewer out and back in. */
-const PRESENCE_WATCHING_TTL_MS = Number(process.env.PRESENCE_WATCHING_TTL_MS || 25_000);
+// Comfortably longer than the site's own 18s heartbeat (2.2 beats), so one
+// delayed, throttled or failed heartBeat cannot drop somebody who is still
+// watching. Everything that ends watching *deliberately* — hiding the tab,
+// closing the player, leaving the page — is reported by the browser and takes
+// effect immediately, so this window only covers silence.
+const PRESENCE_WATCHING_TTL_MS = Number(process.env.PRESENCE_WATCHING_TTL_MS || 40_000);
 const PRESENCE_SITE_TTL_MS = Number(process.env.PRESENCE_SITE_TTL_MS || 75_000);
 const PRESENCE_LEAVE_GRACE_MS = Number(process.env.PRESENCE_LEAVE_GRACE_MS || 4_000);
 const CLEANUP_INTERVAL = Number(process.env.CLEANUP_INTERVAL_MS || 30_000);
 const VISITOR_TOKEN_TTL_MS = Number(process.env.VISITOR_TOKEN_TTL_MS || 24 * 60 * 60 * 1000);
 const VISITOR_RATE_LIMIT_WINDOW_MS = Number(process.env.VISITOR_RATE_LIMIT_WINDOW_MS || 60_000);
 const VISITOR_RATE_LIMIT_MAX = Number(process.env.VISITOR_RATE_LIMIT_MAX || 30);
+
+/* Heartbeats and viewer events are per VIEWER, not per address. A household, an
+   office, a campus or a mobile carrier puts many viewers behind one IP — and
+   behind a proxy they all share the proxy's address — so an IP-keyed budget
+   starts refusing real viewers' heartbeats once there are more of them than the
+   budget allows (at 30/min and one beat per 18s that is roughly nine viewers).
+   The identity is signed and verified before its own budget is charged. The
+   per-IP ceilings below stay as a flood backstop, set far above any plausible
+   number of viewers inside one network. Identity MINTING (`/token`) stays
+   keyed by address, because that is the budget an attacker would farm. */
+const HEARTBEAT_RATE_LIMIT_MAX = Number(process.env.HEARTBEAT_RATE_LIMIT_MAX || 20);
+const HEARTBEAT_IP_RATE_LIMIT_MAX = Number(process.env.HEARTBEAT_IP_RATE_LIMIT_MAX || 600);
+const EVENT_RATE_LIMIT_MAX = Number(process.env.EVENT_RATE_LIMIT_MAX || 30);
+const EVENT_IP_RATE_LIMIT_MAX = Number(process.env.EVENT_IP_RATE_LIMIT_MAX || 600);
 const GEO_ENABLED = process.env.GEO_ENABLED !== 'false';
 const GEO_API = String(process.env.GEO_API || 'https://ipwho.is').replace(/\/+$/, '');
 
@@ -654,10 +673,13 @@ function broadcastVisitorChange(type, visitor, includeStats = true) {
 // GEO LOOKUP (async, fire-and-forget)
 // ─────────────────────────────────────────────
 
+/* Can this address be located at all? One predicate, used by the geo lookup and
+   by the dashboard label, so the two can never disagree about which addresses
+   are worth asking about. */
 function isPublicIp(ip) {
   if (!ip || ip === 'unknown') return false;
   if (ip === '127.0.0.1' || ip === '::1') return false;
-  if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip)) return false;
+  if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(ip)) return false;
   if (/^(fc00:|fd00:|fe80:)/i.test(ip)) return false;
   return true;
 }
@@ -1534,6 +1556,12 @@ startStoreResyncTimer();
 // VISITOR TRACKING
 // ─────────────────────────────────────────────
 
+/* Whether an address can identify a visitor at all. Used both by getClientIp
+   (never trust a private candidate) and by the dashboard: a private address
+   either means the viewer is on the same private network, or that the
+   deployment is still showing us the proxy instead of the visitor
+   (TRUST_PROXY_HOPS on Render). Neither can be geolocated, so the dashboard
+   labels it instead of printing a globe and "Unknown". */
 function isPrivateIp(ip){
   const v = String(ip||'').trim();
   if(!v || v==='unknown') return true;
@@ -1615,14 +1643,14 @@ function verifyVisitorToken(token, userId, ip) {
   }
 }
 
-function consumeVisitorRateLimit(key) {
+function consumeVisitorRateLimit(key, max = VISITOR_RATE_LIMIT_MAX) {
   const now = Date.now();
   const current = visitorRateLimits.get(key);
   if (!current || current.resetAt <= now) {
     visitorRateLimits.set(key, { count: 1, resetAt: now + VISITOR_RATE_LIMIT_WINDOW_MS });
     return true;
   }
-  if (current.count >= VISITOR_RATE_LIMIT_MAX) return false;
+  if (current.count >= max) return false;
   current.count++;
   return true;
 }
@@ -1765,6 +1793,8 @@ function upsertVisitor(key, req, options = {}) {
     activeUsers.set(key, entry);
     if (ip && ip !== 'unknown') visitorKeyByIp.set(ip, key);
 
+    // lookupGeo() itself refuses anything that cannot be located (private,
+    // loopback, link-local), so there is one place that decides this.
     lookupGeo(ip).then(geo => {
       if (!geo || !activeUsers.has(key)) return;
       const current = activeUsers.get(key);
@@ -2415,6 +2445,12 @@ setInterval(cleanupInactiveVisitors, CLEANUP_INTERVAL).unref?.();
 function sanitizeVisitor(v) {
   const now = Date.now();
   const lastSeen = Number(v.lastSeen || v.connectedAt || now);
+  const started = Boolean(v.analyticsStarted) && !presenceGone(v, now);
+  const onlineUntil = started && now - lastSeen <= PRESENCE_SITE_TTL_MS
+    ? lastSeen + PRESENCE_SITE_TTL_MS : 0;
+  const watchingUntil = onlineUntil && now - lastSeen <= PRESENCE_WATCHING_TTL_MS &&
+    v.visible !== false && v.watching !== false
+    ? lastSeen + PRESENCE_WATCHING_TTL_MS : 0;
   return {
     id: v.id,
     ip: v.ip,
@@ -2429,14 +2465,19 @@ function sanitizeVisitor(v) {
     lastSeen,
     // "Online" means a verified browser session (heartbeat) that is fresh —
     // not a crawler's page hit that happened to land within the window.
-    online: Boolean(v.analyticsStarted) && now - lastSeen <= PRESENCE_SITE_TTL_MS && !presenceGone(v, now),
+    // `onlineUntil`/`watchingUntil` are the same two decisions expressed as
+    // absolute times. The booleans answer "is this person one right now"; the
+    // deadlines let a dashboard that holds an aging payload expire them at the
+    // right moment instead of keeping a `true` from an old snapshot — the bug
+    // that let three rows say WATCHING while the count said two.
+    online: Boolean(onlineUntil),
+    onlineUntil,
     // What the operator actually wants to know: is this person looking at the
     // site right now, or is theirs just a tab they forgot about?
-    watching: Boolean(v.analyticsStarted) &&
-      now - lastSeen <= PRESENCE_WATCHING_TTL_MS &&
-      !presenceGone(v, now) &&
-      v.visible !== false && v.watching !== false,
+    watching: Boolean(watchingUntil),
+    watchingUntil,
     visible: v.visible !== false,
+    ipPrivate: !isPublicIp(v.ip),
     source: v.source
   };
 }
@@ -2734,12 +2775,15 @@ app.get('/api/visitors/heartbeat', async (req, res, next) => {
     if (!isAuthorizedSiteRequest(req)) return rejectUnauthorizedSiteRequest(res);
 
     const ip = getClientIp(req);
-    if (!consumeVisitorRateLimit(`heartbeat:${ip}`)) {
-      res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
-      return res.status(429).json({ error: 'Too many heartbeat requests. Try again later.' });
-    }
+    // Token first: only a verified identity is charged a budget, so a forged
+    // token cannot burn somebody else's.
     if (!verifyVisitorToken(req.headers['x-visitor-token'], suppliedUserId, ip)) {
       return res.status(403).json({ error: 'Invalid or expired visitor token' });
+    }
+    if (!consumeVisitorRateLimit(`heartbeat:${suppliedUserId}`, HEARTBEAT_RATE_LIMIT_MAX) ||
+        !consumeVisitorRateLimit(`heartbeat-ip:${ip}`, HEARTBEAT_IP_RATE_LIMIT_MAX)) {
+      res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
+      return res.status(429).json({ error: 'Too many heartbeat requests. Try again later.' });
     }
 
     // Presence rows are keyed by the signed user id ONLY. Anonymous page-hit
@@ -2785,12 +2829,14 @@ app.post('/api/visitors/event', (req, res) => {
   const suppliedUserId = normalizeVisitorId(req.headers['x-user-id']);
   if (!suppliedUserId) return res.status(400).json({ error: 'Missing user ID' });
   if (!isAuthorizedSiteRequest(req)) return rejectUnauthorizedSiteRequest(res);
-  if (!consumeVisitorRateLimit(`event:${getClientIp(req)}`)) {
+  const eventIp = getClientIp(req);
+  if (!verifyVisitorToken(req.headers['x-visitor-token'], suppliedUserId, eventIp)) {
+    return res.status(403).json({ error: 'Invalid or expired visitor token' });
+  }
+  if (!consumeVisitorRateLimit(`event:${suppliedUserId}`, EVENT_RATE_LIMIT_MAX) ||
+      !consumeVisitorRateLimit(`event-ip:${eventIp}`, EVENT_IP_RATE_LIMIT_MAX)) {
     res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
     return res.status(429).json({ error: 'Too many events. Try again later.' });
-  }
-  if (!verifyVisitorToken(req.headers['x-visitor-token'], suppliedUserId, getClientIp(req))) {
-    return res.status(403).json({ error: 'Invalid or expired visitor token' });
   }
   const type = typeof req.body?.type === 'string' ? req.body.type.slice(0, 24) : '';
   // Signed id only — same rule as the heartbeat. The old IP fallback could

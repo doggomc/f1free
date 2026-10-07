@@ -5743,6 +5743,8 @@ td .pill-sm{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;bord
    Amber is already the dashboard's "attention/partial" accent, so this reads
    as a middle state between watching and gone without inventing a colour. */
 .pill-idle{background:rgba(255,193,7,.1);border:1px solid rgba(255,193,7,.22);color:var(--amber,#FFB020)}
+/* Rows whose address cannot be located are labelled, not left reading "Unknown". */
+.country[title]{cursor:help}
 .dot-online{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:beat 1.6s ease-in-out infinite}
 .dot-offline{width:6px;height:6px;border-radius:50%;background:var(--dim)}
 .dot-idle{width:6px;height:6px;border-radius:50%;background:var(--amber,#FFB020);opacity:.85}
