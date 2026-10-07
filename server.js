@@ -377,6 +377,20 @@ sseHeartbeatTimer.unref?.();
 
 // Heartbeat / cleanup settings
 const HEARTBEAT_TIMEOUT = Number(process.env.HEARTBEAT_TIMEOUT_MS || 60_000);
+
+/* Presence, as opposed to "did this browser ever send a heartbeat".
+   WATCHING is a viewer: their tab is visible, the player is on screen and
+   their heartbeat is fresh. A background tab, a paused player or a closed
+   browser is not a viewer — the old model could not tell those apart and
+   reported everyone who had ever loaded the page within the last minute.
+   ON SITE is the looser "tab open somewhere" context count; its window has to
+   exceed the hidden-tab heartbeat cadence (45s) or a backgrounded tab would
+   flicker in and out of it.
+   LEAVE grace exists because a reload closes the page before the new one
+   starts: without it every refresh would flash the viewer out and back in. */
+const PRESENCE_WATCHING_TTL_MS = Number(process.env.PRESENCE_WATCHING_TTL_MS || 25_000);
+const PRESENCE_SITE_TTL_MS = Number(process.env.PRESENCE_SITE_TTL_MS || 75_000);
+const PRESENCE_LEAVE_GRACE_MS = Number(process.env.PRESENCE_LEAVE_GRACE_MS || 4_000);
 const CLEANUP_INTERVAL = Number(process.env.CLEANUP_INTERVAL_MS || 30_000);
 const VISITOR_TOKEN_TTL_MS = Number(process.env.VISITOR_TOKEN_TTL_MS || 24 * 60 * 60 * 1000);
 const VISITOR_RATE_LIMIT_WINDOW_MS = Number(process.env.VISITOR_RATE_LIMIT_WINDOW_MS || 60_000);
@@ -631,6 +645,9 @@ function scheduleStatsBroadcast(delay = 80) {
 function broadcastVisitorChange(type, visitor, includeStats = true) {
   broadcastSSE('visitor_update', { type, visitor: sanitizeVisitor(visitor) });
   if (includeStats) scheduleStatsBroadcast();
+  // Presence changes (online/offline/watching) are pushed straight away; a
+  // plain heartbeat only refreshes times, so it is left to the coalescer.
+  if (type === 'online' || type === 'offline') broadcastPresence();
 }
 
 // ─────────────────────────────────────────────
@@ -1738,6 +1755,11 @@ function upsertVisitor(key, req, options = {}) {
       connectedAt: now,
       lastSeen: now,
       online: true,
+      // Optimistic defaults: a client that cannot report the flags (an older
+      // cached app.js, a curl probe) behaves exactly as it did before this
+      // model existed instead of silently dropping out of every count.
+      visible: true,
+      watching: true,
       source: options.source || 'page'
     };
     activeUsers.set(key, entry);
@@ -1760,9 +1782,24 @@ function upsertVisitor(key, req, options = {}) {
     entry.page = options.keepExistingPage ? (entry.page || page) : page;
     entry.lastSeen = now;
     entry.online = true;
+    // leftAt is cleared at the end of this function, and only for a beat that
+    // reports a visible tab: clearing it here unconditionally is what let the
+    // teardown beat resurrect a closed tab.
     entry.source = options.source || entry.source || 'page';
     if (entry.ip && entry.ip !== 'unknown') visitorKeyByIp.set(entry.ip, key);
   }
+
+  // Presence flags. Absent means an older client that cannot report them, so
+  // it stays optimistic (visible, watching) and keeps its previous meaning
+  // instead of silently dropping out of every count.
+  if (typeof options.visible === 'boolean') entry.visible = options.visible;
+  if (typeof options.watching === 'boolean') entry.watching = options.watching;
+  /* Coming back means being back. A beat that arrives right after a leave
+     beacon while reporting a hidden tab is teardown noise (the browser fires
+     visibilitychange on the way out), and treating it as a return kept a
+     closed tab in the count for a full window. A real return — restoring the
+     page, or switching back to a tab that is still open — reports visible. */
+  if (options.cameBack && options.visible !== false) entry.leftAt = null;
 
   return { entry, isNew };
 }
@@ -2360,7 +2397,7 @@ function cleanupInactiveVisitors() {
   for (const [key, state] of loginGuard) if (!state.lockedUntil && state.resetAt <= now) loginGuard.delete(key);
   let removed = 0;
   for (const [id, visitor] of activeUsers) {
-    if (now - visitor.lastSeen > HEARTBEAT_TIMEOUT) {
+    if (now - visitor.lastSeen > PRESENCE_SITE_TTL_MS) {
       visitor.online = false;
       recordSessionEnd(visitor);
       broadcastSSE('visitor_update', { type: 'offline', visitor: sanitizeVisitor(visitor) });
@@ -2369,7 +2406,7 @@ function cleanupInactiveVisitors() {
       removed++;
     }
   }
-  if (removed) scheduleStatsBroadcast();
+  if (removed) { scheduleStatsBroadcast(); broadcastPresence(true); }
   reconcilePublicSseCounts();
 }
 
@@ -2392,22 +2429,124 @@ function sanitizeVisitor(v) {
     lastSeen,
     // "Online" means a verified browser session (heartbeat) that is fresh —
     // not a crawler's page hit that happened to land within the window.
-    online: Boolean(v.analyticsStarted) && now - lastSeen <= HEARTBEAT_TIMEOUT,
+    online: Boolean(v.analyticsStarted) && now - lastSeen <= PRESENCE_SITE_TTL_MS && !presenceGone(v, now),
+    // What the operator actually wants to know: is this person looking at the
+    // site right now, or is theirs just a tab they forgot about?
+    watching: Boolean(v.analyticsStarted) &&
+      now - lastSeen <= PRESENCE_WATCHING_TTL_MS &&
+      !presenceGone(v, now) &&
+      v.visible !== false && v.watching !== false,
+    visible: v.visible !== false,
     source: v.source
   };
 }
 
+/* One viewer is gone when they said goodbye (leave beacon), even if their last
+   heartbeat is still inside a window — the grace window only survives a reload. */
+function presenceGone(visitor, now) {
+  return Boolean(visitor.leftAt) && now - visitor.leftAt > PRESENCE_LEAVE_GRACE_MS;
+}
+
+/* Viewers: tab visible, player on screen, heartbeat fresh. */
+function countWatchingUsers(now = Date.now()) {
+  let count = 0;
+  for (const visitor of activeUsers.values()) {
+    if (!visitor.analyticsStarted) continue;
+    if (now - visitor.lastSeen > PRESENCE_WATCHING_TTL_MS) continue;
+    if (presenceGone(visitor, now)) continue;
+    if (visitor.visible === false || visitor.watching === false) continue;
+    count++;
+  }
+  return count;
+}
+
+/* On site: the tab is open at all (background included). */
 function countOnlineUsers(now = Date.now()) {
   let count = 0;
   for (const visitor of activeUsers.values()) {
-    if (visitor.analyticsStarted && now - visitor.lastSeen <= HEARTBEAT_TIMEOUT) count++;
+    if (!visitor.analyticsStarted) continue;
+    if (now - visitor.lastSeen > PRESENCE_SITE_TTL_MS) continue;
+    if (presenceGone(visitor, now)) continue;
+    count++;
   }
   return count;
+}
+
+/* The count is pushed, not polled. Changes are coalesced to at most one message
+   per PRESENCE_BROADCAST_MS so a burst (a channel change, a flurry of tab
+   switches) cannot turn into a message storm. Zero is always sent straight
+   away: "nobody is watching" must never be delayed by a throttle. */
+const PRESENCE_BROADCAST_MS = Number(process.env.PRESENCE_BROADCAST_MS || 900);
+let presenceBroadcastTimer = null;
+let lastPresenceSentAt = 0;
+let lastPresencePayload = '';
+
+function presencePayload(now = Date.now()) {
+  const watching = countWatchingUsers(now);
+  const online = countOnlineUsers(now);
+  return { active: watching, watching, online, at: now };
+}
+
+/* Every number in a presence payload has an expiry attached: a heartbeat stops
+   making someone a viewer after 25s, keeps them "on site" for 75s, and a leave
+   grace runs out 4s after the goodbye. Without a clock the count only changed
+   when somebody else happened to beat — on a quiet site a closed tab sat in the
+   count until the next visitor arrived. This arms one timer for the earliest
+   deadline among the current visitors, so the drop is pushed the moment it is
+   true, no matter how quiet the site is. */
+let presenceTickTimer = null;
+function schedulePresenceTick() {
+  if (presenceTickTimer) { clearTimeout(presenceTickTimer); presenceTickTimer = null; }
+  const now = Date.now();
+  let next = null;
+  for (const visitor of activeUsers.values()) {
+    if (!visitor.analyticsStarted) continue;
+    const deadlines = [
+      visitor.lastSeen + PRESENCE_WATCHING_TTL_MS,
+      visitor.lastSeen + PRESENCE_SITE_TTL_MS,
+      visitor.leftAt ? visitor.leftAt + PRESENCE_LEAVE_GRACE_MS : null
+    ];
+    for (const at of deadlines) {
+      if (at !== null && at > now && (next === null || at < next)) next = at;
+    }
+  }
+  if (next === null) return;
+  presenceTickTimer = setTimeout(() => {
+    presenceTickTimer = null;
+    broadcastPresence(true);
+  }, Math.max(20, next - now + 30));
+  presenceTickTimer.unref?.();
+}
+
+function broadcastPresence(force = false) {
+  // Whatever the outcome below, the next expiry is armed from the state now.
+  schedulePresenceTick();
+  const payload = presencePayload();
+  // Compare the numbers only: `at` changes on every call, so comparing the
+  // whole payload would make the "nothing changed, stay quiet" check useless.
+  const encoded = `${payload.watching}|${payload.online}`;
+  const settled = lastPresenceSentAt && Date.now() - lastPresenceSentAt < PRESENCE_BROADCAST_MS;
+  if (!force && encoded === lastPresencePayload) return;
+  if (!force && settled && payload.watching !== 0 && payload.online !== 0) {
+    if (presenceBroadcastTimer) return;
+    presenceBroadcastTimer = setTimeout(() => {
+      presenceBroadcastTimer = null;
+      broadcastPresence(true);
+    }, PRESENCE_BROADCAST_MS - (Date.now() - lastPresenceSentAt));
+    presenceBroadcastTimer.unref?.();
+    return;
+  }
+  lastPresenceSentAt = Date.now();
+  lastPresencePayload = encoded;
+  // The public site only ever receives counts, never identities.
+  broadcastPublicSSE('presence', payload);
+  broadcastSSE('presence', payload);
 }
 
 function getStats() {
   const now = Date.now();
   let onlineCount = 0;
+  let watchingCount = 0;
   let activeSessions = 0;
   const visitors = [];
 
@@ -2417,6 +2556,7 @@ function getStats() {
     if (!visitor.analyticsStarted) continue;
     const sanitized = sanitizeVisitor(visitor);
     if (sanitized.online) onlineCount++;
+    if (sanitized.watching) watchingCount++;
     activeSessions++;
     visitors.push(sanitized);
   }
@@ -2424,6 +2564,9 @@ function getStats() {
   visitors.sort((a, b) => b.lastSeen - a.lastSeen);
 
   return {
+    // watchingCount is the headline: real viewers, tabs visible, player on
+    // screen. onlineCount is "has the site open somewhere", kept for context.
+    watchingCount,
     onlineCount,
     activeSessions,
     totalUnique: getTotalUniqueVisitors(),
@@ -2605,10 +2748,16 @@ app.get('/api/visitors/heartbeat', async (req, res, next) => {
     // mobile carrier or campus into a single row. One signed id = one user.
     const key = suppliedUserId;
     const headerPage = normalizeSitePage(req.query.page);
+    // visible/watching describe the tab, not the person: 0 is a backgrounded
+    // tab or a player that is not on screen, and it must drop the viewer out of
+    // the watching count immediately rather than at the next timeout.
     const { entry, isNew } = upsertVisitor(key, req, {
       page: headerPage || pageFromReferer(req, activeUsers.get(key)?.page || '/'),
       source: 'heartbeat',
-      keepExistingPage: !headerPage && !req.headers.referer
+      keepExistingPage: !headerPage && !req.headers.referer,
+      visible: req.query.visible === undefined ? undefined : req.query.visible !== '0',
+      watching: req.query.watching === undefined ? undefined : req.query.watching !== '0',
+      cameBack: true
     });
     // Analytics: a heartbeat means a real browser running the site, so this is
     // where a session starts counting (page-only hits from crawlers are not).
@@ -2622,7 +2771,8 @@ app.get('/api/visitors/heartbeat', async (req, res, next) => {
     // Heartbeats update one row in real time; full stats are serialized only
     // for a new live session or a newly confirmed permanent visitor.
     broadcastVisitorChange(isNew ? 'online' : 'heartbeat', entry, isNew || isGloballyNew);
-    res.json({ active: countOnlineUsers() });
+    broadcastPresence();
+    res.json(presencePayload());
   } catch (error) {
     next(error);
   }
@@ -2650,12 +2800,38 @@ app.post('/api/visitors/event', (req, res) => {
   res.status(204).end();
 });
 
+/* Goodbye signal. Fired by navigator.sendBeacon on pagehide — the one moment a
+   browser is willing to deliver a request while the page is being torn down.
+   sendBeacon cannot set headers, so the identity travels in the query string
+   here; it is the same signed, IP-bound, 24h token the header path uses, and
+   the only thing it authorises is marking this one identity as gone. Without
+   it a closed tab stayed in the count until its heartbeat aged out (up to 75s)
+   — that is the "count is slow" half of the problem. */
+app.post('/api/visitors/leave', (req, res) => {
+  if (!isAuthorizedSiteRequest(req)) return rejectUnauthorizedSiteRequest(res);
+  const userId = normalizeVisitorId(req.query.uid || req.headers['x-user-id']);
+  const token = String(req.query.token || req.headers['x-visitor-token'] || '');
+  if (!userId) return res.status(400).json({ error: 'Missing user ID' });
+  const ip = getClientIp(req);
+  if (!verifyVisitorToken(token, userId, ip)) return res.status(403).json({ error: 'Invalid or expired visitor token' });
+  const entry = activeUsers.get(userId);
+  if (entry) {
+    entry.leftAt = Date.now();
+    // Analytics keeps the session; presence just stops counting them.
+    broadcastVisitorChange('update', entry, false);
+    broadcastPresence(true);
+  }
+  res.status(204).end();
+});
+
 app.get('/api/visitors/active', (req, res) => {
   if (!consumeVisitorRateLimit(`active:${getClientIp(req)}`)) {
     res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
     return res.status(429).json({ error: 'Too many requests. Try again later.' });
   }
-  res.json({ active: countOnlineUsers() });
+  // Same shape as the heartbeat response, so nothing ever has to guess what
+  // `active` means: watching is the headline, online is the wider number.
+  res.json(presencePayload());
 });
 
 // ─────────────────────────────────────────────
@@ -3146,6 +3322,8 @@ app.get('/api/events', async (req, res, next) => {
     res.write(`event: stream_override\ndata: ${initPayload}\n\n`);
     res.write(`event: stream_update\ndata: ${initPayload}\n\n`);
     res.write(`event: stream_window_update\ndata: ${JSON.stringify(publicStreamWindowState())}\n\n`);
+    // Live count on connect, then pushed on every change.
+    res.write(`event: presence\ndata: ${JSON.stringify(presencePayload())}\n\n`);
     res.write(`event: maintenance_update\ndata: ${JSON.stringify(publicMaintenanceState())}\n\n`);
     res.write(`event: news_update\ndata: ${JSON.stringify({ news: getPublicNewsItems() })}\n\n`);
     res.write(`event: experimental_update\ndata: ${JSON.stringify(publicExperimentalState())}\n\n`);

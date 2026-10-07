@@ -12,7 +12,7 @@
 <link rel="preload" as="font" type="font/woff2" href="/admin/assets/fonts/Archivo-latin.woff2" crossorigin>
 <link rel="preload" as="font" type="font/woff2" href="/admin/assets/fonts/JetBrainsMono-latin.woff2" crossorigin>
 <link rel="stylesheet" href="/admin/fonts.css?v=20261006-selfhost1">
-<link rel="stylesheet" href="/admin/admin.css?v=20261005-admin7">
+<link rel="stylesheet" href="/admin/admin.css?v=20261007-presence1">
 </head>
 <body>
 
@@ -75,9 +75,9 @@
         <!-- Stats — 5 cards, uses same .card look via .stat-card -->
         <div class="stats-row">
           <div class="stat-card accent-green">
-            <div class="stat-label">Live Visitors</div>
+            <div class="stat-label">Watching Now</div>
             <div class="stat-value green" id="onlineCount">0</div>
-            <div class="stat-sub">Currently connected</div>
+            <div class="stat-sub" id="onlineBreakdown">viewers with the site on screen</div>
           </div>
           <div class="stat-card accent-blue">
             <div class="stat-label">Unique Visitors</div>
@@ -423,8 +423,8 @@
           <div class="panel" id="sessionsPanel" hidden>
             <div class="panel-head">
               <div class="panel-title">Active Sessions</div>
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                <input class="url-input" id="sessionsSearch" type="search" placeholder="Search IP, location, page…" style="width:220px;min-height:34px;padding:7px 10px;font-size:.78rem" autocomplete="off">
+              <div class="panel-head-tools">
+                <input class="url-input" id="sessionsSearch" type="search" placeholder="Search IP, location, page…" autocomplete="off">
                 <div class="panel-badge live" id="tableBadge">● Live</div>
                 <button class="btn sm" id="closeSessionsBtn" type="button" aria-label="Close sessions">✕</button>
               </div>
@@ -523,6 +523,6 @@
 
 <script src="/admin/charts.js?v=20261005-admin7" defer></script>
 <script src="/admin/analytics.js?v=20261005-admin7" defer></script>
-<script src="/admin/admin.js?v=20261005-admin7" defer></script>
+<script src="/admin/admin.js?v=20261007-presence1" defer></script>
 </body>
 </html>

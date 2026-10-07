@@ -8,6 +8,13 @@
 // ─────────────────────────────────────────────
 // CONFIG
 // ─────────────────────────────────────────────
+
+/* Motion preference, same contract as the public site: when the OS asks for
+   reduced motion we say so in one place — html.lite-motion — which the
+   stylesheet already honours, and any future JS animation can check. */
+const reduceMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+if (reduceMotion) document.documentElement.classList.add('lite-motion');
+
 const API_BASE   = '/admin/api';
 const SSE_URL    = `${API_BASE}/events`;
 const REFRESH_MS = 15000; // fallback only; live updates normally arrive over SSE
@@ -27,6 +34,7 @@ const loginBtn       = $('loginBtn');
 const logoutBtn      = $('logoutBtn');
 const navStatus      = $('navStatus');
 const onlineCountEl  = $('onlineCount');
+const onlineBreakdownEl = $('onlineBreakdown');
 const uniqueCountEl  = $('uniqueCount');
 const overrideCountEl = $('overrideCount');
 const overrideSubEl   = $('overrideSub');
@@ -190,6 +198,26 @@ function showLogin() {
   if (sse) { sse.close(); sse = null; sseConnected = false; }
   if (typeof Analytics !== 'undefined') Analytics.stop();
 }
+
+/* The dashboard reuses the site's sticky nav, stylesheet and all. The site adds
+   `.nav.stuck` while scrolling (netlifyf1/app.js, onScroll); the admin never
+   did, so the fixed bar stayed at `background: rgba(10,10,11,0)` and the page
+   scrolled straight through it — on a phone the panels visibly collided with
+   the brand, the LOGOUT button and the sessions toolbar. Same rule, same
+   threshold, same rAF coalescing as the site. */
+const navEl = document.getElementById('adminNav');
+let navTicking = false;
+function onScroll() {
+  if (navTicking) return;
+  navTicking = true;
+  requestAnimationFrame(() => {
+    navEl?.classList.toggle('stuck', window.scrollY > 40);
+    navTicking = false;
+  });
+}
+addEventListener('scroll', onScroll, { passive: true });
+addEventListener('resize', onScroll, { passive: true });
+onScroll();
 
 function showDashboard() {
   isAdmin = true;
@@ -481,6 +509,24 @@ function connectSSE() {
     if (data) handleStatsUpdate(data);
   });
 
+  /* Live counts, pushed the moment they change — no waiting for the 15s poll. */
+  sse.addEventListener('presence', e => {
+    try {
+      const data = JSON.parse(e.data);
+      const watching = Number.isFinite(data.watching) ? data.watching : data.active;
+      if (!Number.isFinite(watching)) return;
+      const online = Number.isFinite(data.online) ? data.online : watching;
+      if (onlineCountEl) onlineCountEl.textContent = String(watching);
+      if (onlineBreakdownEl) {
+        onlineBreakdownEl.textContent = watching === online
+          ? `${online} ${online === 1 ? 'tab' : 'tabs'} open`
+          : `${watching} watching · ${online} on site (incl. background tabs)`;
+      }
+      if (tableBadge) tableBadge.textContent = `● ${watching} Watching`;
+      lastSseMessageAt = Date.now();
+    } catch (_) {}
+  });
+
   sse.addEventListener('stats', e => {
     const data = readSseEvent(e);
     if (data) handleStatsUpdate(data);
@@ -609,8 +655,17 @@ function renderServerClock() {
 }
 
 function updateStatCards(data) {
+  // The headline is VIEWERS — visible tab, player on screen, fresh heartbeat.
+  // `onlineCount` (site open somewhere, background tabs included) sits beneath
+  // it as context; falling back to it keeps older payloads working.
+  const watching = Number.isFinite(data.watchingCount) ? data.watchingCount : (data.onlineCount ?? 0);
   const online = data.onlineCount ?? 0;
-  if (onlineCountEl) onlineCountEl.textContent = String(online);
+  if (onlineCountEl) onlineCountEl.textContent = String(watching);
+  if (onlineBreakdownEl) {
+    onlineBreakdownEl.textContent = watching === online
+      ? `${online} ${online === 1 ? 'tab' : 'tabs'} open`
+      : `${watching} watching · ${online} on site (incl. background tabs)`;
+  }
   if (uniqueCountEl) uniqueCountEl.textContent = String(data.totalUnique ?? 0);
 
   const override = data.override || { active: false };
@@ -624,7 +679,7 @@ function updateStatCards(data) {
       ? `${(override.type || 'custom').toUpperCase()} · ${formatTimeAgo(override.startedAt)}`
       : 'No override active';
   }
-  if (tableBadge) tableBadge.textContent = `● ${online} Live`;
+  if (tableBadge) tableBadge.textContent = `● ${watching} Watching`;
 
   renderServerClock();
 }
@@ -751,8 +806,11 @@ function updateSystemInfo(data) {
   const uptimeMs = data?.server?.uptimeMs ?? (data?.server?.startedAt ? Date.now() - data.server.startedAt : 0);
   if (sysUptime) sysUptime.textContent = formatDuration(uptimeMs);
   if (sysVisitorStore) {
-    const active = data?.activeSessions ?? data?.visitors?.length ?? 0;
-    sysVisitorStore.textContent = `${active} active / ${data?.totalUnique ?? '—'} unique`;
+    // "N active" was the number of sessions in the list, every one of them
+    // long gone included. Name the two numbers they actually are.
+    const watching = data?.watchingCount ?? data?.activeSessions ?? 0;
+    const onSite = data?.onlineCount ?? data?.visitors?.length ?? 0;
+    sysVisitorStore.textContent = `${watching} watching · ${onSite} on site / ${data?.totalUnique ?? '—'} unique`;
   }
   const renderStore = (element, value) => {
     if (!element) return;
@@ -1213,7 +1271,10 @@ function renderSessionsPagination(total, page, pageSize, container) {
 function updateSessionsGateMeta() {
   const total = (currentStats && currentStats.visitors) ? currentStats.visitors.length : 0;
   const online = (currentStats && currentStats.visitors) ? currentStats.visitors.filter(v => Date.now() - (v.lastSeen||0) <= ONLINE_WINDOW_MS).length : 0;
-  if (sessionsCountPill) sessionsCountPill.textContent = total ? `${total} live` : '0 live';
+  const watching = (currentStats && currentStats.visitors)
+    ? currentStats.visitors.filter(v => visitorStatus(v, Date.now()).slug === 'online').length
+    : 0;
+  if (sessionsCountPill) sessionsCountPill.textContent = watching ? `${watching} live` : '0 live';
   if (tabSessionsCount) {
     if (total) { tabSessionsCount.textContent = String(total); tabSessionsCount.hidden = false; }
     else tabSessionsCount.hidden = true;
@@ -1221,7 +1282,7 @@ function updateSessionsGateMeta() {
   if (openSessionsLabel) openSessionsLabel.textContent = sessionsGateOpen ? 'Refresh Sessions' : 'View Active Sessions';
   if (sessionsHint) {
     const q = sessionsSearchQuery ? ` · filtered` : '';
-    sessionsHint.textContent = total ? `${online} online · ${total} total${q} · paginated 50 per page` : 'No active sessions right now';
+    sessionsHint.textContent = total ? `${watching} watching · ${online} on site · ${total} total${q} · paginated 50 per page` : 'No active sessions right now';
   }
   // keep meta bars updated when open
   return { total, online };
@@ -1258,20 +1319,20 @@ function updateVisitorTable(data) {
   const orderedRows = [];
   slice.forEach(visitor => {
     const key = String(visitor.id || visitor.ip || visitor.lastSeen);
-    const online = now - (visitor.lastSeen || 0) <= ONLINE_WINDOW_MS;
+    const st = visitorStatus(visitor, now);
     const flag = visitor.countryCode ? getFlag(visitor.countryCode) : '🌐';
     const country = visitor.country || visitor.countryCode || 'Unknown';
     const place = visitor.city ? `${visitor.city}, ${country}` : country;
     const device = String(visitor.deviceType || '—');
     const deviceSlug = /^(mobile|tablet|desktop)$/i.test(device) ? device.toLowerCase() : 'unknown';
-    const signature = JSON.stringify([visitor.ip, place, visitor.countryCode, visitor.browser, visitor.os, device, visitor.page, online]);
+    const signature = JSON.stringify([visitor.ip, place, visitor.countryCode, visitor.browser, visitor.os, device, visitor.page, st.slug]);
     let row = existingRows.get(key);
     if (!row) {
       row = document.createElement('tr');
       row.dataset.key = key;
       row.className = 'fade-in';
     }
-    row.dataset.online = online ? '1' : '0';
+    row.dataset.status = st.slug;
     if (row.dataset.signature !== signature) {
       row.dataset.signature = signature;
       row.innerHTML = `
@@ -1281,7 +1342,7 @@ function updateVisitorTable(data) {
         <td data-label="OS">${escapeHtml(visitor.os || '—')}</td>
         <td class="device-${deviceSlug}" data-label="Device">${escapeHtml(device)}</td>
         <td class="page-cell" data-label="Page" title="${escapeHtml(visitor.page || '/')}">${escapeHtml(visitor.page || '/')}</td>
-        <td class="status-cell" data-label="Status"><span class="pill-sm status-pill ${online ? 'pill-online' : 'pill-offline'}"><span class="${online ? 'dot-online' : 'dot-offline'}"></span>${online ? 'Online' : 'Offline'}</span></td>
+        <td class="status-cell" data-label="Status">${statusPillHTML(visitor, now)}</td>
         <td class="timestamp-cell" data-label="Last Seen">${formatTimeAgo(visitor.lastSeen)}</td>`;
     } else {
       const timeCell = row.querySelector('.timestamp-cell');
@@ -1294,12 +1355,13 @@ function updateVisitorTable(data) {
   orderedRows.forEach(row => fragment.appendChild(row));
   visitorTableBody.replaceChildren(fragment);
 
+  const watchingInList = currentStats.visitors.filter(v => visitorStatus(v, now).slug === 'online').length;
   const rangeText = `Showing ${start+1}–${Math.min(start+slice.length, total)} of ${total} sessions · page ${sessionsPage}/${pages}`;
   if (sessionsMeta) sessionsMeta.textContent = rangeText;
   if (sessionsMetaBottom) sessionsMetaBottom.textContent = rangeText;
   renderSessionsPagination(total, sessionsPage, SESSIONS_PAGE_SIZE, sessionsPagination);
   renderSessionsPagination(total, sessionsPage, SESSIONS_PAGE_SIZE, sessionsPaginationBottom);
-  if (tableBadge) tableBadge.textContent = '● ' + total + ' Live';
+  if (tableBadge) tableBadge.textContent = `● ${watchingInList} Watching`;
   // update outer meta pill
   updateSessionsGateMeta();
 }
@@ -1311,36 +1373,64 @@ function renderEmptyVisitors() {
     </tr>`;
 }
 
+/* Status has three live states plus gone: Watching (visible tab, player on
+   screen, fresh), Idle (on the site but not looking — background tab or the
+   player is off), Offline (heartbeat has aged out). The server computes it;
+   this only decides how it reads. */
+function visitorStatus(visitor, now) {
+  const online = now - (visitor.lastSeen || 0) <= ONLINE_WINDOW_MS;
+  const watching = visitor.watching === undefined ? online : Boolean(visitor.watching);
+  if (watching) return { slug: 'online', label: 'Watching' };
+  if (online) return visitor.visible === false
+    ? { slug: 'idle', label: 'Background' }
+    : { slug: 'idle', label: 'Idle' };
+  return { slug: 'offline', label: 'Offline' };
+}
+const statusPillHTML = (visitor, now) => {
+  const st = visitorStatus(visitor, now);
+  return `<span class="pill-sm status-pill pill-${st.slug}"><span class="dot-${st.slug}"></span>${st.label}</span>`;
+};
+
 function refreshVisitorTimes() {
   if (!visitorTableBody || !currentStats?.visitors?.length) return;
   if (!sessionsGateOpen) {
     // still update counts for pill
     const now = Date.now();
+    const watching = currentStats.visitors.filter(v => visitorStatus(v, now).slug === 'online').length;
     const online = currentStats.visitors.filter(v => now - (v.lastSeen||0) <= ONLINE_WINDOW_MS).length;
-    if (onlineCountEl) onlineCountEl.textContent = String(online);
+    if (onlineCountEl) onlineCountEl.textContent = String(watching);
+    if (onlineBreakdownEl) {
+      onlineBreakdownEl.textContent = watching === online
+        ? `${online} ${online === 1 ? 'tab' : 'tabs'} open`
+        : `${watching} watching · ${online} on site (incl. background tabs)`;
+    }
     updateSessionsGateMeta();
     return;
   }
   const now = Date.now();
   const visitors = new Map(currentStats.visitors.map(visitor => [String(visitor.id || visitor.ip || visitor.lastSeen), visitor]));
-  let onlineInPage = 0;
-  const totalOnline = currentStats.visitors.filter(v => now - (v.lastSeen||0) <= ONLINE_WINDOW_MS).length;
   visitorTableBody.querySelectorAll('tr[data-key]').forEach(row => {
     const visitor = visitors.get(row.dataset.key);
     if (!visitor) return;
     const cell = row.querySelector('.timestamp-cell');
     if (cell) cell.textContent = formatTimeAgo(visitor.lastSeen);
-    const isOnline = now - (visitor.lastSeen || 0) <= ONLINE_WINDOW_MS;
-    if (isOnline) onlineInPage++;
-    if (row.dataset.online === (isOnline ? '1' : '0')) return;
-    row.dataset.online = isOnline ? '1' : '0';
+    const st = visitorStatus(visitor, now);
+    if (row.dataset.status === st.slug) return;
+    row.dataset.status = st.slug;
     const status = row.querySelector('.status-cell');
-    if (status) {
-      status.innerHTML = `<span class="pill-sm status-pill ${isOnline ? 'pill-online' : 'pill-offline'}"><span class="${isOnline ? 'dot-online' : 'dot-offline'}"></span>${isOnline ? 'Online' : 'Offline'}</span>`;
-    }
+    if (status) status.innerHTML = statusPillHTML(visitor, now);
   });
-  if (onlineCountEl) onlineCountEl.textContent = String(totalOnline);
+  // The headline is the viewer count everywhere, including here.
+  const totalWatching = currentStats.visitors.filter(v => visitorStatus(v, now).slug === 'online').length;
+  const totalOnline = currentStats.visitors.filter(v => now - (v.lastSeen||0) <= ONLINE_WINDOW_MS).length;
+  if (onlineCountEl) onlineCountEl.textContent = String(totalWatching);
+  if (onlineBreakdownEl) {
+    onlineBreakdownEl.textContent = totalWatching === totalOnline
+      ? `${totalOnline} ${totalOnline === 1 ? 'tab' : 'tabs'} open`
+      : `${totalWatching} watching · ${totalOnline} on site (incl. background tabs)`;
+  }
   currentStats.onlineCount = totalOnline;
+  currentStats.watchingCount = totalWatching;
   updateSessionsGateMeta();
 }
 
@@ -1430,8 +1520,21 @@ function openSessionsGate() {
   if (sessionsPanel) sessionsPanel.classList.add('active');
   // switch to sessions tab if not already there
   if (activeTab !== 'sessions') switchTab('sessions', true);
-  // smooth scroll to panel
-  setTimeout(() => sessionsPanel?.scrollIntoView({ behavior:'smooth', block:'start' }), 60);
+  /* Scroll the sessions SECTION into view, once the tab swap has finished.
+     Two measurements drove this shape:
+       · the old 60ms timer fired while the leaving view was still animating, so
+         when that view was hidden ~240ms later the document got shorter and the
+         scroll landed past the panel — at 430px the panel header ended up 129px
+         above the viewport;
+       · aligning the panel itself puts it flush against the viewport top, which
+         is where the dashboard's fixed nav lives.
+     The intro block sits directly above the panel, so aiming at it leaves the
+     whole header (search, live badge, close) clear of the nav, and
+     scroll-margin-top does the same job for the nav on every screen. The site's
+     showView() uses this same wait-out-the-swap shape. */
+  const motionOk = !document.documentElement.classList.contains('lite-motion');
+  const target = document.querySelector('.sessions-intro') || sessionsPanel;
+  setTimeout(() => target?.scrollIntoView({ behavior: motionOk ? 'smooth' : 'instant', block: 'start' }), 300 + 40);
   // immediate render
   if (currentStats) updateVisitorTable(currentStats);
   updateSessionsGateMeta();

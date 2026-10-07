@@ -1,4 +1,7 @@
 node_modules/
+# A symlink is not matched by the trailing-slash form above; local dev links
+# node_modules to a persistent vendor dir, and that must never be committed.
+node_modules
 data/*
 !data/.gitkeep
 # Runtime state (visitor hashes, analytics, news, overrides) belongs to the

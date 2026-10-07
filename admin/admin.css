@@ -256,7 +256,9 @@ body.has-stream .deck:has([aria-expanded="true"]) {
   background: rgba(10,10,11,0);
   backdrop-filter: blur(0px);
   border-bottom: 1px solid transparent;
-  transition: background .5s var(--ease),backdrop-filter .5s var(--ease),border-color .5s var(--ease),padding .5s var(--ease);
+  /* See netlifyf1/app.css: a non-compositable backdrop-filter ramp is re-blurred
+     every frame, so the ramp is shortened while every end state is unchanged. */
+  transition: background .5s var(--ease),backdrop-filter .22s var(--ease),border-color .5s var(--ease),padding .5s var(--ease);
 }
 
 .nav.stuck {
@@ -496,6 +498,13 @@ body.has-stream .deck:has([aria-expanded="true"]) {
   inset: -8% -4%;
   z-index: -3;
   will-change: transform;
+}
+
+/* Phones never parallax the hero or hover driver cards (see app.js), so the
+   permanent layer hints are pure GPU cost there. */
+html.lite-motion .hero-layer,
+html.lite-motion .dcard img {
+  will-change: auto;
 }
 
 .hero-layer img {
@@ -1559,8 +1568,9 @@ to {
   object-fit: contain;
   object-position: 50% 100%;
   filter: saturate(1.02) contrast(1.03) drop-shadow(0 22px 26px rgba(0,0,0,.62));
-  transition: transform .8s var(--ease),filter .55s var(--ease);
-  will-change: transform;
+  /* transform only — the filter never changes between states, and a permanent
+     will-change kept one full-size composited layer alive per driver card. */
+  transition: transform .8s var(--ease);
 }
 
 .dcard.noimg img {
@@ -1801,7 +1811,6 @@ to {
   left: 0;
   filter: grayscale(.55) contrast(1.1) brightness(.78);
   transition: transform 1.1s var(--ease),filter .7s var(--ease);
-  will-change: transform;
 }
 
 .shot::after {
@@ -3206,7 +3215,7 @@ footer {
 }
 
 @media(prefers-reduced-motion:reduce) {
-* {
+* , html.lite-motion * {
     animation-duration: .01ms!important;
     transition-duration: .01ms!important;
   }
@@ -4969,7 +4978,7 @@ body.view-swapping {
   font-family: 'JetBrains Mono', monospace;
   font-size: .75rem;
   cursor: pointer;
-  transition: all .15s ease;
+  transition:background-color .15s ease,border-color .15s ease,color .15s ease,box-shadow .15s ease,transform .15s ease,opacity .15s ease,filter .15s ease;
 }
 
 .audio-station-btn:hover {
@@ -5061,28 +5070,6 @@ body.view-swapping {
   border-bottom: 1px solid var(--line);
 }
 
-.audio-eq-bars {
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 4px;
-  height: 54px;
-  padding: 0 10px 10px;
-}
-
-.eq-bar {
-  width: 6px;
-  min-height: 4px;
-  height: 6px;
-  border-radius: 2px;
-  background: linear-gradient(180deg, var(--team, #e10600) 0%, rgba(225, 6, 0, 0.3) 100%);
-}
-
-@keyframes eqBounce {
-  0%, 100% { height: 6px; }
-  50% { height: 46px; }
-}
-
 .audio-meta-deck {
   display: flex;
   align-items: center;
@@ -5127,10 +5114,6 @@ body.view-swapping {
 .eq-bar {
   animation: none;
   height: 6px;
-}
-
-.audio-player-card.is-playing .eq-bar {
-  animation: eqBounce 1.2s infinite ease-in-out;
 }
 
 .live247-frame-wrap {
@@ -5531,7 +5514,7 @@ body.view-swapping {
   appearance:none;background:transparent;border:1px solid var(--line);color:var(--muted);
   padding:7px 14px;border-radius:var(--r-xs);cursor:pointer;
   font-family:'JetBrains Mono',monospace;font-size:.68rem;font-weight:700;
-  letter-spacing:.1em;text-transform:uppercase;transition:all .3s var(--ease);
+  letter-spacing:.1em;text-transform:uppercase;transition:background-color .3s var(--ease),border-color .3s var(--ease),color .3s var(--ease),box-shadow .3s var(--ease),transform .3s var(--ease),opacity .3s var(--ease),filter .3s var(--ease);
 }
 .btn-logout:hover{border-color:rgba(225,6,0,.4);color:#ff6b62;background:rgba(225,6,0,.07)}
 .conn-bar{
@@ -5616,7 +5599,7 @@ body.view-swapping {
 }
 .stream-status.active-override{background:rgba(225,6,0,.06);border-color:rgba(225,6,0,.2)}
 .stream-status.active-normal{background:rgba(0,213,126,.08);border-color:rgba(0,213,126,.2)}
-.status-indicator{width:10px;height:10px;border-radius:50%;flex:none;background:var(--dim);transition:all .3s}
+.status-indicator{width:10px;height:10px;border-radius:50%;flex:none;background:var(--dim);transition:background-color .3s ease,border-color .3s ease,color .3s ease,box-shadow .3s ease,transform .3s ease,opacity .3s ease,filter .3s ease}
 .status-indicator.online{background:var(--green);box-shadow:0 0 10px var(--green)}
 .status-indicator.override{background:var(--red);box-shadow:0 0 10px var(--red);animation:beat 1.6s ease-in-out infinite}
 .status-text{flex:1}.status-text strong{display:block;font-size:.82rem;font-weight:700}
@@ -5637,7 +5620,7 @@ body.view-swapping {
   padding:9px 16px;border-radius:var(--r-xs);cursor:pointer;
   font-family:'JetBrains Mono',monospace;font-size:.66rem;font-weight:700;
   letter-spacing:.1em;text-transform:uppercase;
-  transition:all .3s var(--ease);border:1px solid transparent;
+  transition:background-color .3s var(--ease),border-color .3s var(--ease),color .3s var(--ease),box-shadow .3s var(--ease),transform .3s var(--ease),opacity .3s var(--ease),filter .3s var(--ease);border:1px solid transparent;
 }
 .btn-sm.btn-red{background:var(--red);color:#fff;border-color:var(--red);box-shadow:0 8px 24px var(--red-glow)}
 .btn-sm.btn-red:hover{background:#f01400;transform:translateY(-1px)}
@@ -5688,7 +5671,7 @@ body.view-swapping {
 .admin-news-item-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .admin-news-date{font-family:'JetBrains Mono',monospace;font-size:.59rem;color:var(--dim)}
 .admin-news-actions{display:flex;gap:6px}
-.news-action{padding:6px 9px;border:1px solid var(--line);border-radius:var(--r-xs);background:transparent;color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:.58rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;transition:all .25s var(--ease)}
+.news-action{padding:6px 9px;border:1px solid var(--line);border-radius:var(--r-xs);background:transparent;color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:.58rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;cursor:pointer;transition:background-color .25s var(--ease),border-color .25s var(--ease),color .25s var(--ease),box-shadow .25s var(--ease),transform .25s var(--ease),opacity .25s var(--ease),filter .25s var(--ease)}
 .news-action:hover{color:var(--text);border-color:var(--line-2)}
 .news-action.delete:hover{color:#ff6b62;border-color:rgba(225,6,0,.4);background:rgba(225,6,0,.07)}
 .stream-preview{
@@ -5756,8 +5739,13 @@ td.country{display:flex;align-items:center;gap:7px}
 td .pill-sm{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:99px;font-family:'JetBrains Mono',monospace;font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
 .pill-online{background:rgba(0,213,126,.1);border:1px solid rgba(0,213,126,.2);color:var(--green)}
 .pill-offline{background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--dim)}
+/* On the site but not watching (tab in the background, or the player is off).
+   Amber is already the dashboard's "attention/partial" accent, so this reads
+   as a middle state between watching and gone without inventing a colour. */
+.pill-idle{background:rgba(255,193,7,.1);border:1px solid rgba(255,193,7,.22);color:var(--amber,#FFB020)}
 .dot-online{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:beat 1.6s ease-in-out infinite}
 .dot-offline{width:6px;height:6px;border-radius:50%;background:var(--dim)}
+.dot-idle{width:6px;height:6px;border-radius:50%;background:var(--amber,#FFB020);opacity:.85}
 .device-desktop{color:#60a5fa}.device-mobile{color:var(--amber)}.device-tablet{color:#a78bfa}
 .timestamp{font-family:'JetBrains Mono',monospace;color:var(--muted);font-size:.75rem}
 .page-cell{max-width:160px;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
@@ -5775,7 +5763,7 @@ td .pill-sm{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;bord
 .sessions-pagination .page-btn{
   min-width:32px;height:32px;padding:0 10px;display:inline-flex;align-items:center;justify-content:center;
   border-radius:8px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--muted);
-  font-family:'JetBrains Mono',monospace;font-size:.68rem;font-weight:700;cursor:pointer;transition:all .18s var(--ease);
+  font-family:'JetBrains Mono',monospace;font-size:.68rem;font-weight:700;cursor:pointer;transition:background-color .18s var(--ease),border-color .18s var(--ease),color .18s var(--ease),box-shadow .18s var(--ease),transform .18s var(--ease),opacity .18s var(--ease),filter .18s var(--ease);
 }
 .sessions-pagination .page-btn:hover{border-color:var(--line-2);color:var(--text)}
 .sessions-pagination .page-btn.active{background:var(--red);border-color:var(--red);color:#fff;box-shadow:0 8px 24px var(--red-glow)}
@@ -5861,3 +5849,37 @@ table.busiest th.num,table.busiest td.num{text-align:right;font-variant-numeric:
 .nav .nav-links .admin-tab-link.current{color:var(--text)}
 .nav .nav-links .admin-tab-link.current::after{transform:scaleX(1)}
 
+
+/* ── Sessions panel header on narrow screens ──────────────────────────────
+   .panel-head is a single nowrap flex row: the title, a fixed 220px search
+   field, the live badge and the close button. On a phone those controls are
+   wider than the panel and .panel clips its own overflow, so the close button
+   was pushed off the edge with no way to reach it. The search field keeps its
+   desktop size from here on (its width used to live in a style attribute,
+   which no media query can override) and the row wraps below 640px. */
+#sessionsSearch{width:220px;min-height:34px;padding:7px 10px;font-size:.78rem}
+.panel-head-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+@media(max-width:640px) {
+  .panel-head{flex-wrap:wrap;row-gap:10px}
+  .panel-head-tools{flex:1 1 100%}
+  #sessionsSearch{flex:1 1 150px;width:auto;min-width:0}
+  /* The site makes every .btn full-width on a phone because they are hero
+     CTAs. The admin inherits that rule, so its icon buttons — the sessions
+     ✕, the ↻ refresh and the ⤓ CSV — stretched to the full row, which is how
+     a 38px close control ended up as a 316px red bar. The site's own close
+     control is a fixed square (.x { width: 44px } at this breakpoint); panel
+     header controls keep the same treatment. Call-to-action buttons are not
+     inside .panel-head and stay full-width. */
+  .panel-head .btn{width:auto;flex:0 0 auto}
+}
+
+/* Opening the sessions panel scrolls it to the top of the viewport, but the
+   dashboard's nav is fixed over the first ~59px — measured at 430px the panel
+   header (search, live badge, close button) ended up 129px ABOVE the viewport
+   and could not be reached without scrolling back up by hand. scroll-margin
+   is the standard way to tell the browser how much of the top is occupied. */
+#sessionsPanel,
+.sessions-intro {
+  scroll-margin-top: 78px;
+}
