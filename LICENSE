@@ -1,0 +1,27 @@
+Copyright (c) 2026 FreeF1 — https://freef1.netlify.app
+All rights reserved.
+
+This repository (the FreeF1 backend) and the site it serves are the work of the
+FreeF1 project. You are welcome to visit and use the site. You may not copy,
+redistribute, rehost, or publish this source code, or a derivative of it, or use
+it to operate a look-alike service, without written permission from the owner.
+
+Nothing here grants a licence to the project name, the FreeF1 marks, or the
+visual design.
+
+Third-party material is NOT ours and keeps its own terms — a takedown request
+must not claim these:
+
+  * Typefaces (Archivo, Inter, JetBrains Mono) — SIL Open Font License 1.1,
+    see admin/assets/fonts/README.md for the bundled files and their notice.
+  * Driver, team and car imagery — (c) Formula 1, loaded at runtime from the
+    official F1 media CDN (media.formula1.com) and NOT redistributed here.
+  * Timing, results and championship data — via Jolpica (Ergast-compatible) and
+    OpenF1, under those projects' terms.
+  * Live video sources — third-party streams; FreeF1 does not host or record
+    them, and links to them are provided as a directory only.
+  * "Formula 1", "F1", "Grand Prix", team names and marks — the property of
+    their owners. FreeF1 is an independent, unofficial fan project with no
+    affiliation with or endorsement by Formula 1 or any team.
+
+The software is provided "as is", without warranty of any kind.

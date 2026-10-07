@@ -513,16 +513,11 @@ function connectSSE() {
   sse.addEventListener('presence', e => {
     try {
       const data = JSON.parse(e.data);
-      const watching = Number.isFinite(data.watching) ? data.watching : data.active;
-      if (!Number.isFinite(watching)) return;
-      const online = Number.isFinite(data.online) ? data.online : watching;
-      if (onlineCountEl) onlineCountEl.textContent = String(watching);
-      if (onlineBreakdownEl) {
-        onlineBreakdownEl.textContent = watching === online
-          ? `${online} ${online === 1 ? 'tab' : 'tabs'} open`
-          : `${watching} watching · ${online} on site (incl. background tabs)`;
-      }
-      if (tableBadge) tableBadge.textContent = `● ${watching} Watching`;
+      const live = data.active;
+      if (!Number.isFinite(live)) return;
+      if (onlineCountEl) onlineCountEl.textContent = String(live);
+      if (onlineBreakdownEl) onlineBreakdownEl.textContent = live === 1 ? 'browser on the site' : 'browsers on the site';
+      if (tableBadge) tableBadge.textContent = `● ${live} on site`;
       lastSseMessageAt = Date.now();
     } catch (_) {}
   });
@@ -616,7 +611,7 @@ function handleStatsUpdate(data) {
   // viewer headline with a count derived from the dashboard's local 60s window
   // — a different number from the one the server had just sent.
   else if (tableBadge) {
-    tableBadge.textContent = `● ${Number.isFinite(data.watchingCount) ? data.watchingCount : (data.onlineCount ?? 0)} Watching`;
+    tableBadge.textContent = `● ${Number.isFinite(data.liveCount) ? data.liveCount : (data.visitors || []).length} on site`;
   }
   updateStreamStatus(data.override);
   updateMaintenanceStatus(data.maintenance);
@@ -655,17 +650,11 @@ function renderServerClock() {
 }
 
 function updateStatCards(data) {
-  // The headline is VIEWERS — visible tab, player on screen, fresh heartbeat.
-  // `onlineCount` (site open somewhere, background tabs included) sits beneath
-  // it as context; falling back to it keeps older payloads working.
-  const watching = Number.isFinite(data.watchingCount) ? data.watchingCount : (data.onlineCount ?? 0);
-  const online = data.onlineCount ?? 0;
-  if (onlineCountEl) onlineCountEl.textContent = String(watching);
-  if (onlineBreakdownEl) {
-    onlineBreakdownEl.textContent = watching === online
-      ? `${online} ${online === 1 ? 'tab' : 'tabs'} open`
-      : `${watching} watching · ${online} on site (incl. background tabs)`;
-  }
+  // One number: browsers on the site right now. The server owns it, and the
+  // rows in the table are the same predicate with the same deadline.
+  const live = Number.isFinite(data.liveCount) ? data.liveCount : (data.visitors || []).filter(v => v.live).length;
+  if (onlineCountEl) onlineCountEl.textContent = String(live);
+  if (onlineBreakdownEl) onlineBreakdownEl.textContent = live === 1 ? 'browser on the site' : 'browsers on the site';
   if (uniqueCountEl) uniqueCountEl.textContent = String(data.totalUnique ?? 0);
 
   const override = data.override || { active: false };
@@ -679,7 +668,7 @@ function updateStatCards(data) {
       ? `${(override.type || 'custom').toUpperCase()} · ${formatTimeAgo(override.startedAt)}`
       : 'No override active';
   }
-  if (tableBadge) tableBadge.textContent = `● ${watching} Watching`;
+  if (tableBadge) tableBadge.textContent = `● ${live} on site`;
 
   renderServerClock();
 }
@@ -806,11 +795,8 @@ function updateSystemInfo(data) {
   const uptimeMs = data?.server?.uptimeMs ?? (data?.server?.startedAt ? Date.now() - data.server.startedAt : 0);
   if (sysUptime) sysUptime.textContent = formatDuration(uptimeMs);
   if (sysVisitorStore) {
-    // "N active" was the number of sessions in the list, every one of them
-    // long gone included. Name the two numbers they actually are.
-    const watching = data?.watchingCount ?? data?.activeSessions ?? 0;
-    const onSite = data?.onlineCount ?? data?.visitors?.length ?? 0;
-    sysVisitorStore.textContent = `${watching} watching · ${onSite} on site / ${data?.totalUnique ?? '—'} unique`;
+    const live = data?.liveCount ?? (data?.visitors || []).length;
+    sysVisitorStore.textContent = `${live} on site / ${data?.totalUnique ?? '—'} unique`;
   }
   const renderStore = (element, value) => {
     if (!element) return;
@@ -1233,7 +1219,7 @@ function getFilteredVisitors() {
   let filtered = all;
   if (q) {
     filtered = all.filter(v => {
-      const hay = [v.ip, v.country, v.city, v.countryCode, v.browser, v.os, v.deviceType, v.page, v.id].join(' ').toLowerCase();
+      const hay = [v.country, v.city, v.countryCode, v.browser, v.os, v.deviceType, v.page, v.id].join(' ').toLowerCase();
       return hay.includes(q);
     });
   }
@@ -1271,15 +1257,12 @@ function renderSessionsPagination(total, page, pageSize, container) {
 function updateSessionsGateMeta() {
   const total = (currentStats && currentStats.visitors) ? currentStats.visitors.length : 0;
   const now = serverNow();
-  // Server-owned when the payload carries them; derived from the rows (with the
-  // server's own deadlines) only for an older payload that does not.
-  const online = Number.isFinite(currentStats?.onlineCount)
-    ? currentStats.onlineCount
-    : (currentStats?.visitors || []).filter(v => rowOnline(v, now)).length;
-  const watching = Number.isFinite(currentStats?.watchingCount)
-    ? currentStats.watchingCount
-    : (currentStats?.visitors || []).filter(v => visitorStatus(v, now).slug === 'online').length;
-  if (sessionsCountPill) sessionsCountPill.textContent = watching ? `${watching} live` : '0 live';
+  // Server-owned when the payload carries it; derived from the rows (with the
+  // server's own deadline) only for an older payload that does not.
+  const live = Number.isFinite(currentStats?.liveCount)
+    ? currentStats.liveCount
+    : (currentStats?.visitors || []).filter(v => rowLive(v, now)).length;
+  if (sessionsCountPill) sessionsCountPill.textContent = `${live} live`;
   if (tabSessionsCount) {
     if (total) { tabSessionsCount.textContent = String(total); tabSessionsCount.hidden = false; }
     else tabSessionsCount.hidden = true;
@@ -1287,10 +1270,10 @@ function updateSessionsGateMeta() {
   if (openSessionsLabel) openSessionsLabel.textContent = sessionsGateOpen ? 'Refresh Sessions' : 'View Active Sessions';
   if (sessionsHint) {
     const q = sessionsSearchQuery ? ` · filtered` : '';
-    sessionsHint.textContent = total ? `${watching} watching · ${online} on site · ${total} total${q} · paginated 50 per page` : 'No active sessions right now';
+    sessionsHint.textContent = total ? `${live} on site · ${total} total${q} · paginated 50 per page` : 'Nobody on the site right now';
   }
   // keep meta bars updated when open
-  return { total, online };
+  return { total, live };
 }
 function updateVisitorTable(data) {
   if (!visitorTableBody || !data) return;
@@ -1309,7 +1292,7 @@ function updateVisitorTable(data) {
 
   if (!filtered.length) {
     if (sessionsSearchQuery) {
-      visitorTableBody.innerHTML = `<tr><td colspan="8"><div class="empty-state">No sessions match “${escapeHtml(sessionsSearchQuery)}”.</div></td></tr>`;
+      visitorTableBody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No sessions match “${escapeHtml(sessionsSearchQuery)}”.</div></td></tr>`;
     } else {
       renderEmptyVisitors();
     }
@@ -1325,22 +1308,17 @@ function updateVisitorTable(data) {
   visitorTableBody.querySelectorAll('tr[data-key]').forEach(row => existingRows.set(row.dataset.key, row));
   const orderedRows = [];
   slice.forEach(visitor => {
-    const key = String(visitor.id || visitor.ip || visitor.lastSeen);
+    const key = String(visitor.id || visitor.lastSeen);
     const st = visitorStatus(visitor, now);
-    const flag = visitor.countryCode ? getFlag(visitor.countryCode) : (visitor.ipPrivate ? '🏠' : '🌐');
-    const country = visitor.country || visitor.countryCode || 'Unknown';
-    // A private address cannot be located: either the viewer is on the same
-    // private network, or the deployment is handing us the proxy instead of the
-    // visitor. Saying so is more useful than a globe next to "Unknown".
-    const place = visitor.ipPrivate && !visitor.country
-      ? 'Private network'
-      : (visitor.city ? `${visitor.city}, ${country}` : country);
-    const placeTitle = visitor.ipPrivate && !visitor.country
-      ? 'Private address (10.x / 192.168.x / 172.16-31.x / loopback): it cannot be located. In production this usually means the app is seeing the proxy rather than the visitor — check TRUST_PROXY_HOPS on Render. Rows are per viewer identity (one signed id each), so several of them can legitimately share one address; that is not a duplicate session.'
-      : '';
+    // Country only, and only when the server could locate the visitor. No
+    // address is ever sent to this page, so none can leak into a screenshot.
+    const country = visitor.country || visitor.countryCode || null;
+    const flag = visitor.countryCode ? getFlag(visitor.countryCode) : '🌐';
+    const place = country ? (visitor.city ? `${visitor.city}, ${country}` : country) : '—';
+    const placeTitle = visitor.city && country ? `${visitor.city}, ${country}` : '';
     const device = String(visitor.deviceType || '—');
     const deviceSlug = /^(mobile|tablet|desktop)$/i.test(device) ? device.toLowerCase() : 'unknown';
-    const signature = JSON.stringify([visitor.ip, place, visitor.countryCode, visitor.browser, visitor.os, device, visitor.page, st.slug]);
+    const signature = JSON.stringify([place, visitor.countryCode, visitor.browser, visitor.os, device, visitor.page, st.slug]);
     let row = existingRows.get(key);
     if (!row) {
       row = document.createElement('tr');
@@ -1351,7 +1329,6 @@ function updateVisitorTable(data) {
     if (row.dataset.signature !== signature) {
       row.dataset.signature = signature;
       row.innerHTML = `
-        <td class="ip" data-label="IP Address">${escapeHtml(visitor.ip || key)}</td>
         <td class="country" data-label="Location"${placeTitle ? ` title="${escapeHtml(placeTitle)}"` : ''}><span class="flag">${flag}</span>${escapeHtml(place)}</td>
         <td data-label="Browser">${escapeHtml(visitor.browser || '—')}</td>
         <td data-label="OS">${escapeHtml(visitor.os || '—')}</td>
@@ -1385,37 +1362,24 @@ function updateVisitorTable(data) {
 function renderEmptyVisitors() {
   visitorTableBody.innerHTML = `
     <tr id="visitorEmpty">
-      <td colspan="8"><div class="empty-state">Waiting for visitor data…</div></td>
+      <td colspan="7"><div class="empty-state">Waiting for visitor data…</div></td>
     </tr>`;
 }
 
-/* Status has three live states plus gone: Watching (visible tab, player on
-   screen, fresh), Idle (on the site but not looking — background tab or the
-   player is off), Offline (heartbeat has aged out).
-
-   The server decides, and it hands over the moment each decision expires
-   (`watchingUntil`/`onlineUntil`, ms since epoch). This reads those, so a
-   table that keeps aging between polls expires its rows exactly when the count
-   does. It used to re-derive the answer from the `watching` boolean plus its
-   own 60s window, which kept a snapshot's `true` alive for an extra 35s: three
-   rows said WATCHING while the count said two. */
-const rowWatching = (visitor, now) => Number.isFinite(visitor.watchingUntil)
-  ? now < visitor.watchingUntil
-  : (visitor.watching === undefined
-    ? now - (Number(visitor.lastSeen) || 0) <= ONLINE_WINDOW_MS
-    : Boolean(visitor.watching) && now - (Number(visitor.lastSeen) || 0) <= ONLINE_WINDOW_MS);
-const rowOnline = (visitor, now) => Number.isFinite(visitor.onlineUntil)
-  ? now < visitor.onlineUntil
-  : now - (Number(visitor.lastSeen) || 0) <= ONLINE_WINDOW_MS;
+/* Two states, decided by the server's own deadline: on the site, or gone. The
+   deadline is the exact moment the count loses them, so the table and the
+   headline above it expire together — a row can never say "On site" beside a
+   number that already dropped it. */
+const rowLive = (visitor, now) => Number.isFinite(visitor.liveUntil)
+  ? now < visitor.liveUntil
+  : (visitor.live === undefined
+    ? now - (Number(visitor.lastSeen) || 0) <= LIVE_WINDOW_MS
+    : Boolean(visitor.live) && now - (Number(visitor.lastSeen) || 0) <= LIVE_WINDOW_MS);
 
 function visitorStatus(visitor, now) {
-  const watching = rowWatching(visitor, now);
-  const online = rowOnline(visitor, now);
-  if (watching) return { slug: 'online', label: 'Watching' };
-  if (online) return visitor.visible === false
-    ? { slug: 'idle', label: 'Background' }
-    : { slug: 'idle', label: 'Idle' };
-  return { slug: 'offline', label: 'Offline' };
+  return rowLive(visitor, now)
+    ? { slug: 'online', label: 'On site' }
+    : { slug: 'offline', label: 'Gone' };
 }
 const statusPillHTML = (visitor, now) => {
   const st = visitorStatus(visitor, now);
@@ -1440,7 +1404,7 @@ function refreshVisitorTimes() {
     return;
   }
   const now = serverNow();
-  const visitors = new Map(currentStats.visitors.map(visitor => [String(visitor.id || visitor.ip || visitor.lastSeen), visitor]));
+  const visitors = new Map(currentStats.visitors.map(visitor => [String(visitor.id || visitor.lastSeen), visitor]));
   visitorTableBody.querySelectorAll('tr[data-key]').forEach(row => {
     const visitor = visitors.get(row.dataset.key);
     if (!visitor) return;
@@ -1465,12 +1429,12 @@ let visitorIndex = new Map();
 let visitorRenderTimer = null;
 let visitorRenderPending = false;
 const VISITOR_RENDER_COALESCE_MS = 250;
-// Matches the server's HEARTBEAT_TIMEOUT default (60s) for the online pill.
-const ONLINE_WINDOW_MS = 60_000;
+// Fallback window for a payload that carries no deadline: the server's PRESENCE_TTL_MS.
+const LIVE_WINDOW_MS = 30_000;
 
 function indexVisitors(visitors) {
   const index = new Map();
-  for (const visitor of visitors || []) index.set(String(visitor.id || visitor.ip), visitor);
+  for (const visitor of visitors || []) index.set(String(visitor.id), visitor);
   return index;
 }
 
@@ -1505,7 +1469,7 @@ function scheduleVisitorRender() {
 function handleVisitorUpdate(type, visitor) {
   if (!visitor || !currentStats) return;
   if (!Array.isArray(currentStats.visitors)) currentStats.visitors = [];
-  const key = String(visitor.id || visitor.ip);
+  const key = String(visitor.id);
   const existing = visitorIndex.get(key);
 
   if (type === 'offline') {
@@ -1522,10 +1486,10 @@ function handleVisitorUpdate(type, visitor) {
   }
 
   currentStats.activeSessions = currentStats.visitors.length;
-  // watchingCount/onlineCount are deliberately NOT recalculated from the rows
-  // here. An incrementally merged row is not the whole picture, and the server
-  // owns both numbers: the `presence` push arrives with them on every change,
-  // and the next full snapshot re-asserts them.
+  // liveCount is deliberately NOT recalculated from the rows here. An
+  // incrementally merged row is not the whole picture, and the server owns the
+  // number: the `presence` push arrives with it on every change, and the next
+  // full snapshot re-asserts it.
   // totalUnique is an all-time counter owned by the server — never derive it
   // from the number of rows currently on screen.
   scheduleVisitorRender();

@@ -301,7 +301,6 @@ let persistentUniqueCount = 0;
 let uniqueVisitorStoreReady = false;
 let lastUniqueStoreWarningAt = 0;
 // O(1) IP lookups avoid scanning every active visitor on each heartbeat.
-const visitorKeyByIp = new Map();
 // Geo responses are reused and concurrent lookups for one IP are deduplicated.
 const geoCache = new Map();
 const pendingGeoLookups = new Map();
@@ -393,9 +392,17 @@ const HEARTBEAT_TIMEOUT = Number(process.env.HEARTBEAT_TIMEOUT_MS || 60_000);
 // watching. Everything that ends watching *deliberately* — hiding the tab,
 // closing the player, leaving the page — is reported by the browser and takes
 // effect immediately, so this window only covers silence.
-const PRESENCE_WATCHING_TTL_MS = Number(process.env.PRESENCE_WATCHING_TTL_MS || 40_000);
-const PRESENCE_SITE_TTL_MS = Number(process.env.PRESENCE_SITE_TTL_MS || 75_000);
-const PRESENCE_LEAVE_GRACE_MS = Number(process.env.PRESENCE_LEAVE_GRACE_MS || 4_000);
+/* Presence is one number and one window. A browser counts as "on the site"
+   while its tab is visible (the client stops beating when it is not) and its
+   heartbeat is fresh. The site beats every 15s, so 30s forgives a lost beat
+   without letting a closed tab linger in the count. */
+const PRESENCE_TTL_MS = Number(process.env.PRESENCE_TTL_MS || 30_000);
+/* The leave beacon fires per TAB, and a browser can have several. Closing one
+   of two tabs must not drop the browser, so a goodbye only ends the count if
+   no heartbeat follows it — and the grace is deliberately longer than the
+   site's beat interval, so the surviving tab's next beat clears it first. A
+   browser whose LAST tab closed is out of the count at this mark. */
+const PRESENCE_LEAVE_GRACE_MS = Number(process.env.PRESENCE_LEAVE_GRACE_MS || 18_000);
 const CLEANUP_INTERVAL = Number(process.env.CLEANUP_INTERVAL_MS || 30_000);
 const VISITOR_TOKEN_TTL_MS = Number(process.env.VISITOR_TOKEN_TTL_MS || 24 * 60 * 60 * 1000);
 const VISITOR_RATE_LIMIT_WINDOW_MS = Number(process.env.VISITOR_RATE_LIMIT_WINDOW_MS || 60_000);
@@ -690,8 +697,24 @@ function pruneGeoCache() {
   while (geoCache.size > 5000) geoCache.delete(geoCache.keys().next().value);
 }
 
+/* Two counters and no addresses: if a production deploy resolves nothing but
+   private addresses (a proxy chain whose hop count does not match), every
+   country comes back empty and there is no obvious symptom. This says so, at
+   most once per window, in the server log only. */
+let geoPrivateSkips = 0;
+let geoPublicLookups = 0;
+setInterval(() => {
+  if (GEO_ENABLED && geoPrivateSkips >= 5 && geoPublicLookups === 0) {
+    console.warn(`[Geo] ${geoPrivateSkips} visitors had no locatable address in the last 5 min — on a deployment, check that TRUST_PROXY_HOPS matches the proxy chain in front of the server.`);
+  }
+  geoPrivateSkips = 0;
+  geoPublicLookups = 0;
+}, 300_000).unref?.();
+
 async function lookupGeo(ip) {
-  if (!GEO_ENABLED || !isPublicIp(ip) || typeof fetch !== 'function') return null;
+  if (!GEO_ENABLED || typeof fetch !== 'function') return null;
+  if (!isPublicIp(ip)) { geoPrivateSkips++; return null; }
+  geoPublicLookups++;
   const cached = geoCache.get(ip);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
   if (pendingGeoLookups.has(ip)) return pendingGeoLookups.get(ip);
@@ -1606,10 +1629,6 @@ function getClientIp(req) {
   return proxyIp || socketIp || 'unknown';
 }
 
-function hashClientIp(ip) {
-  return crypto.createHmac('sha256', VISITOR_SECRET).update('ip:' + String(ip || '')).digest('hex').slice(0, 16);
-}
-
 function normalizeVisitorId(value) {
   return String(value || '')
     .trim()
@@ -1617,17 +1636,23 @@ function normalizeVisitorId(value) {
     .slice(0, 128);
 }
 
-function createVisitorToken(userId, ip) {
+/* The identity is the browser, and only the browser. A token is signed with the
+   installation secret and carries just the id and an expiry — never an address.
+   Binding tokens to an address made a phone that changed cell, or a viewer
+   behind a rotating proxy, fail verification mid-session (403 -> re-mint), and
+   it made two people behind one address indistinguishable. What a token
+   authorises is unchanged: "this heartbeat comes from the browser that claimed
+   this id". */
+function createVisitorToken(userId) {
   const payload = Buffer.from(JSON.stringify({
     id: userId,
-    ip: hashClientIp(ip),
     exp: Date.now() + VISITOR_TOKEN_TTL_MS
   })).toString('base64url');
   const signature = crypto.createHmac('sha256', VISITOR_SECRET).update(payload).digest('base64url');
   return `${payload}.${signature}`;
 }
 
-function verifyVisitorToken(token, userId, ip) {
+function verifyVisitorToken(token, userId) {
   const parts = String(token || '').split('.');
   if (parts.length !== 2) return false;
   const [payload, signature] = parts;
@@ -1635,9 +1660,7 @@ function verifyVisitorToken(token, userId, ip) {
   if (!safeEqual(signature, expected)) return false;
   try {
     const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    return normalizeVisitorId(decoded.id) === userId &&
-      decoded.ip === hashClientIp(ip) &&
-      Number(decoded.exp) > Date.now();
+    return normalizeVisitorId(decoded.id) === userId && Number(decoded.exp) > Date.now();
   } catch (_) {
     return false;
   }
@@ -1653,13 +1676,6 @@ function consumeVisitorRateLimit(key, max = VISITOR_RATE_LIMIT_MAX) {
   if (current.count >= max) return false;
   current.count++;
   return true;
-}
-
-function findVisitorKeyByIp(ip) {
-  const key = visitorKeyByIp.get(ip);
-  if (key && activeUsers.has(key)) return key;
-  if (key) visitorKeyByIp.delete(ip);
-  return null;
 }
 
 function pageFromReferer(req, fallback = '/') {
@@ -1759,6 +1775,11 @@ function isBotUserAgent(ua) {
   return !ua || BOT_UA_RE.test(String(ua));
 }
 
+/* One row per browser. `key` is the id the site generates once and keeps in
+   localStorage, so every tab of one browser lands on the same row and counts
+   once. The address is used for exactly two things — the geo lookup and the
+   per-address rate limits — and is never stored on the row, never sent to a
+   client, and never part of an identity. */
 function upsertVisitor(key, req, options = {}) {
   const now = Date.now();
   const ip = getClientIp(req);
@@ -1772,7 +1793,6 @@ function upsertVisitor(key, req, options = {}) {
   if (!entry) {
     entry = {
       id: key,
-      ip,
       country: null,
       city: null,
       countryCode: null,
@@ -1782,16 +1802,9 @@ function upsertVisitor(key, req, options = {}) {
       page,
       connectedAt: now,
       lastSeen: now,
-      online: true,
-      // Optimistic defaults: a client that cannot report the flags (an older
-      // cached app.js, a curl probe) behaves exactly as it did before this
-      // model existed instead of silently dropping out of every count.
-      visible: true,
-      watching: true,
       source: options.source || 'page'
     };
     activeUsers.set(key, entry);
-    if (ip && ip !== 'unknown') visitorKeyByIp.set(ip, key);
 
     // lookupGeo() itself refuses anything that cannot be located (private,
     // loopback, link-local), so there is one place that decides this.
@@ -1805,31 +1818,16 @@ function upsertVisitor(key, req, options = {}) {
       broadcastVisitorChange('geo', current, false);
     });
   } else {
-    entry.ip = entry.ip || ip;
     entry.browser = browser || entry.browser;
     entry.os = os || entry.os;
     entry.deviceType = deviceType || entry.deviceType;
     entry.page = options.keepExistingPage ? (entry.page || page) : page;
     entry.lastSeen = now;
-    entry.online = true;
-    // leftAt is cleared at the end of this function, and only for a beat that
-    // reports a visible tab: clearing it here unconditionally is what let the
-    // teardown beat resurrect a closed tab.
+    // Any heartbeat from this browser cancels a goodbye: the beacon that fired
+    // belonged to a tab that closed, and this one is still open.
+    entry.leftAt = null;
     entry.source = options.source || entry.source || 'page';
-    if (entry.ip && entry.ip !== 'unknown') visitorKeyByIp.set(entry.ip, key);
   }
-
-  // Presence flags. Absent means an older client that cannot report them, so
-  // it stays optimistic (visible, watching) and keeps its previous meaning
-  // instead of silently dropping out of every count.
-  if (typeof options.visible === 'boolean') entry.visible = options.visible;
-  if (typeof options.watching === 'boolean') entry.watching = options.watching;
-  /* Coming back means being back. A beat that arrives right after a leave
-     beacon while reporting a hidden tab is teardown noise (the browser fires
-     visibilitychange on the way out), and treating it as a return kept a
-     closed tab in the count for a full window. A real return — restoring the
-     page, or switching back to a tab that is still open — reports visible. */
-  if (options.cameBack && options.visible !== false) entry.leftAt = null;
 
   return { entry, isNew };
 }
@@ -1954,7 +1952,7 @@ function normalizeSitePage(value) {
 function recordSessionStart(entry) {
   if (!entry || entry.analyticsStarted) return;
   entry.analyticsStarted = true;
-  const online = countOnlineUsers();
+  const online = countLiveUsers();
   const page = normalizeSitePage(entry.page) || '/other';
   const hasGeo = Boolean(entry.countryCode);
   if (hasGeo) entry.analyticsGeo = true;
@@ -2038,7 +2036,7 @@ function recordViewerEvent(type, value, entry) {
 function sampleAnalytics() {
   const now = Date.now();
   const minute = Math.floor(now / 60_000) * 60_000;
-  const online = countOnlineUsers(now);
+  const online = countLiveUsers(now);
   const last = analytics.live[analytics.live.length - 1];
   if (last && last[0] === minute) last[1] = Math.max(last[1], online);
   else analytics.live.push([minute, online]);
@@ -2397,7 +2395,7 @@ function getAnalyticsSnapshot(rangeKey = null, timeZone = 'UTC') {
     retention: { hourlyHours: ANALYTICS_HOURLY_RETENTION_HOURS, dailyDays: ANALYTICS_DAILY_RETENTION_DAYS, liveMinutes: ANALYTICS_LIVE_POINTS },
     store: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, analyticsStoreReady),
     serverStartedAt: SERVER_STARTED_AT,
-    current: { online: countOnlineUsers(now), openSessions, openSessionMs },
+    current: { online: countLiveUsers(now), openSessions, openSessionMs },
     live: analytics.live,
     hourly: hourly.map(([key, bucket]) => ({ t: key * 3_600_000, ...compactAnalyticsBucket(bucket) })),
     daily: daily.map(([key, bucket]) => ({ d: key, t: Date.parse(`${key}T00:00:00Z`), ...compactAnalyticsBucket(bucket) })),
@@ -2427,12 +2425,10 @@ function cleanupInactiveVisitors() {
   for (const [key, state] of loginGuard) if (!state.lockedUntil && state.resetAt <= now) loginGuard.delete(key);
   let removed = 0;
   for (const [id, visitor] of activeUsers) {
-    if (now - visitor.lastSeen > PRESENCE_SITE_TTL_MS) {
-      visitor.online = false;
+    if (now - visitor.lastSeen > PRESENCE_TTL_MS) {
       recordSessionEnd(visitor);
       broadcastSSE('visitor_update', { type: 'offline', visitor: sanitizeVisitor(visitor) });
       activeUsers.delete(id);
-      if (visitorKeyByIp.get(visitor.ip) === id) visitorKeyByIp.delete(visitor.ip);
       removed++;
     }
   }
@@ -2442,18 +2438,24 @@ function cleanupInactiveVisitors() {
 
 setInterval(cleanupInactiveVisitors, CLEANUP_INTERVAL).unref?.();
 
+/* The shape the dashboard sees. Note what is absent: no address, ever. The row
+   carries what a person reading the table needs — who (browser / OS / device /
+   page), how recently (lastSeen), the exact moment they stop counting, and the
+   country when the server could locate them. */
 function sanitizeVisitor(v) {
   const now = Date.now();
   const lastSeen = Number(v.lastSeen || v.connectedAt || now);
-  const started = Boolean(v.analyticsStarted) && !presenceGone(v, now);
-  const onlineUntil = started && now - lastSeen <= PRESENCE_SITE_TTL_MS
-    ? lastSeen + PRESENCE_SITE_TTL_MS : 0;
-  const watchingUntil = onlineUntil && now - lastSeen <= PRESENCE_WATCHING_TTL_MS &&
-    v.visible !== false && v.watching !== false
-    ? lastSeen + PRESENCE_WATCHING_TTL_MS : 0;
+  // "On the site" is one decision with one deadline. A verified browser session
+  // whose heartbeat is fresh is live; the deadline is the same instant the
+  // count loses them, so a row can never linger past the number it belongs to.
+  // A goodbye moves that moment to leftAt + grace (whichever is sooner).
+  const staleAt = lastSeen + PRESENCE_TTL_MS;
+  const goneAt = v.leftAt ? v.leftAt + PRESENCE_LEAVE_GRACE_MS : Infinity;
+  const liveUntil = v.analyticsStarted && now - lastSeen <= PRESENCE_TTL_MS &&
+    !(v.leftAt && now - v.leftAt > PRESENCE_LEAVE_GRACE_MS)
+    ? Math.min(staleAt, goneAt) : 0;
   return {
     id: v.id,
-    ip: v.ip,
     country: v.country,
     city: v.city,
     countryCode: v.countryCode,
@@ -2463,78 +2465,46 @@ function sanitizeVisitor(v) {
     page: v.page,
     connectedAt: v.connectedAt,
     lastSeen,
-    // "Online" means a verified browser session (heartbeat) that is fresh —
-    // not a crawler's page hit that happened to land within the window.
-    // `onlineUntil`/`watchingUntil` are the same two decisions expressed as
-    // absolute times. The booleans answer "is this person one right now"; the
-    // deadlines let a dashboard that holds an aging payload expire them at the
-    // right moment instead of keeping a `true` from an old snapshot — the bug
-    // that let three rows say WATCHING while the count said two.
-    online: Boolean(onlineUntil),
-    onlineUntil,
-    // What the operator actually wants to know: is this person looking at the
-    // site right now, or is theirs just a tab they forgot about?
-    watching: Boolean(watchingUntil),
-    watchingUntil,
-    visible: v.visible !== false,
-    ipPrivate: !isPublicIp(v.ip),
+    live: Boolean(liveUntil),
+    liveUntil,
     source: v.source
   };
 }
 
-/* One viewer is gone when they said goodbye (leave beacon), even if their last
-   heartbeat is still inside a window — the grace window only survives a reload. */
-function presenceGone(visitor, now) {
-  return Boolean(visitor.leftAt) && now - visitor.leftAt > PRESENCE_LEAVE_GRACE_MS;
-}
-
-/* Viewers: tab visible, player on screen, heartbeat fresh. */
-function countWatchingUsers(now = Date.now()) {
+/* People on the site right now. One browser is one count: the site heartbeats
+   every 15s while its tab is visible and stops when it is not, so a fresh
+   heartbeat is the whole rule. */
+function countLiveUsers(now = Date.now()) {
   let count = 0;
   for (const visitor of activeUsers.values()) {
     if (!visitor.analyticsStarted) continue;
-    if (now - visitor.lastSeen > PRESENCE_WATCHING_TTL_MS) continue;
-    if (presenceGone(visitor, now)) continue;
-    if (visitor.visible === false || visitor.watching === false) continue;
-    count++;
-  }
-  return count;
-}
-
-/* On site: the tab is open at all (background included). */
-function countOnlineUsers(now = Date.now()) {
-  let count = 0;
-  for (const visitor of activeUsers.values()) {
-    if (!visitor.analyticsStarted) continue;
-    if (now - visitor.lastSeen > PRESENCE_SITE_TTL_MS) continue;
-    if (presenceGone(visitor, now)) continue;
+    if (now - visitor.lastSeen > PRESENCE_TTL_MS) continue;
+    if (visitor.leftAt && now - visitor.leftAt > PRESENCE_LEAVE_GRACE_MS) continue;
     count++;
   }
   return count;
 }
 
 /* The count is pushed, not polled. Changes are coalesced to at most one message
-   per PRESENCE_BROADCAST_MS so a burst (a channel change, a flurry of tab
-   switches) cannot turn into a message storm. Zero is always sent straight
-   away: "nobody is watching" must never be delayed by a throttle. */
+   per PRESENCE_BROADCAST_MS so a burst (a flurry of tabs opening) cannot turn
+   into a message storm. Zero is always sent straight away: "nobody is on the
+   site" must never be delayed by a throttle. */
 const PRESENCE_BROADCAST_MS = Number(process.env.PRESENCE_BROADCAST_MS || 900);
 let presenceBroadcastTimer = null;
 let lastPresenceSentAt = 0;
 let lastPresencePayload = '';
 
+/* The public payload is deliberately tiny: one number and its timestamp. */
 function presencePayload(now = Date.now()) {
-  const watching = countWatchingUsers(now);
-  const online = countOnlineUsers(now);
-  return { active: watching, watching, online, at: now };
+  return { active: countLiveUsers(now), at: now };
 }
 
-/* Every number in a presence payload has an expiry attached: a heartbeat stops
-   making someone a viewer after 25s, keeps them "on site" for 75s, and a leave
-   grace runs out 4s after the goodbye. Without a clock the count only changed
-   when somebody else happened to beat — on a quiet site a closed tab sat in the
-   count until the next visitor arrived. This arms one timer for the earliest
-   deadline among the current visitors, so the drop is pushed the moment it is
-   true, no matter how quiet the site is. */
+/* The number has an expiry attached: a heartbeat stops counting its browser
+   after PRESENCE_TTL_MS. Without a clock the count only changed when somebody
+   else happened to beat — on a quiet site a closed tab sat in the count until
+   the next visitor arrived. This arms one timer for the earliest deadline among
+   the current visitors, so the drop is pushed the moment it is true, no matter
+   how quiet the site is. */
 let presenceTickTimer = null;
 function schedulePresenceTick() {
   if (presenceTickTimer) { clearTimeout(presenceTickTimer); presenceTickTimer = null; }
@@ -2542,14 +2512,9 @@ function schedulePresenceTick() {
   let next = null;
   for (const visitor of activeUsers.values()) {
     if (!visitor.analyticsStarted) continue;
-    const deadlines = [
-      visitor.lastSeen + PRESENCE_WATCHING_TTL_MS,
-      visitor.lastSeen + PRESENCE_SITE_TTL_MS,
-      visitor.leftAt ? visitor.leftAt + PRESENCE_LEAVE_GRACE_MS : null
-    ];
-    for (const at of deadlines) {
-      if (at !== null && at > now && (next === null || at < next)) next = at;
-    }
+    let deadline = visitor.lastSeen + PRESENCE_TTL_MS;
+    if (visitor.leftAt) deadline = Math.min(deadline, visitor.leftAt + PRESENCE_LEAVE_GRACE_MS);
+    if (deadline > now && (next === null || deadline < next)) next = deadline;
   }
   if (next === null) return;
   presenceTickTimer = setTimeout(() => {
@@ -2565,10 +2530,10 @@ function broadcastPresence(force = false) {
   const payload = presencePayload();
   // Compare the numbers only: `at` changes on every call, so comparing the
   // whole payload would make the "nothing changed, stay quiet" check useless.
-  const encoded = `${payload.watching}|${payload.online}`;
+  const encoded = String(payload.active);
   const settled = lastPresenceSentAt && Date.now() - lastPresenceSentAt < PRESENCE_BROADCAST_MS;
   if (!force && encoded === lastPresencePayload) return;
-  if (!force && settled && payload.watching !== 0 && payload.online !== 0) {
+  if (!force && settled && payload.active !== 0) {
     if (presenceBroadcastTimer) return;
     presenceBroadcastTimer = setTimeout(() => {
       presenceBroadcastTimer = null;
@@ -2586,9 +2551,7 @@ function broadcastPresence(force = false) {
 
 function getStats() {
   const now = Date.now();
-  let onlineCount = 0;
-  let watchingCount = 0;
-  let activeSessions = 0;
+  let liveCount = 0;
   const visitors = [];
 
   for (const visitor of activeUsers.values()) {
@@ -2596,20 +2559,18 @@ function getStats() {
     // are crawler/monitor noise and were the "fake users" bug.
     if (!visitor.analyticsStarted) continue;
     const sanitized = sanitizeVisitor(visitor);
-    if (sanitized.online) onlineCount++;
-    if (sanitized.watching) watchingCount++;
-    activeSessions++;
+    // Rows and the headline share one predicate and one deadline, so the table
+    // can never show more people than the number above it.
+    if (!sanitized.live) continue;
+    liveCount++;
     visitors.push(sanitized);
   }
 
   visitors.sort((a, b) => b.lastSeen - a.lastSeen);
 
   return {
-    // watchingCount is the headline: real viewers, tabs visible, player on
-    // screen. onlineCount is "has the site open somewhere", kept for context.
-    watchingCount,
-    onlineCount,
-    activeSessions,
+    // One number: browsers on the site right now.
+    liveCount,
     totalUnique: getTotalUniqueVisitors(),
     // Surfaced so an operator can see identity inflation being refused rather
     // than discovering it as an unexplained jump in the permanent total.
@@ -2761,7 +2722,7 @@ app.get('/api/visitors/token', (req, res) => {
     return res.status(429).json({ error: 'Too many token requests. Try again later.' });
   }
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ token: createVisitorToken(userId, getClientIp(req)), expiresAt: Date.now() + VISITOR_TOKEN_TTL_MS });
+  res.json({ token: createVisitorToken(userId), expiresAt: Date.now() + VISITOR_TOKEN_TTL_MS });
 });
 
 // Visitor heartbeat used by the public site. It updates the same object shape
@@ -2776,8 +2737,9 @@ app.get('/api/visitors/heartbeat', async (req, res, next) => {
 
     const ip = getClientIp(req);
     // Token first: only a verified identity is charged a budget, so a forged
-    // token cannot burn somebody else's.
-    if (!verifyVisitorToken(req.headers['x-visitor-token'], suppliedUserId, ip)) {
+    // token cannot burn somebody else's. The address is not part of the token —
+    // identity is the browser.
+    if (!verifyVisitorToken(req.headers['x-visitor-token'], suppliedUserId)) {
       return res.status(403).json({ error: 'Invalid or expired visitor token' });
     }
     if (!consumeVisitorRateLimit(`heartbeat:${suppliedUserId}`, HEARTBEAT_RATE_LIMIT_MAX) ||
@@ -2786,22 +2748,14 @@ app.get('/api/visitors/heartbeat', async (req, res, next) => {
       return res.status(429).json({ error: 'Too many heartbeat requests. Try again later.' });
     }
 
-    // Presence rows are keyed by the signed user id ONLY. Anonymous page-hit
-    // rows (keyed by raw IP) are excluded from every count and the dashboard
-    // anyway, and IP-based adoption collapsed real viewers sharing a NAT,
-    // mobile carrier or campus into a single row. One signed id = one user.
+    // Presence rows are keyed by the browser's own id and nothing else, so
+    // every tab of one browser is one row and one count.
     const key = suppliedUserId;
     const headerPage = normalizeSitePage(req.query.page);
-    // visible/watching describe the tab, not the person: 0 is a backgrounded
-    // tab or a player that is not on screen, and it must drop the viewer out of
-    // the watching count immediately rather than at the next timeout.
     const { entry, isNew } = upsertVisitor(key, req, {
       page: headerPage || pageFromReferer(req, activeUsers.get(key)?.page || '/'),
       source: 'heartbeat',
-      keepExistingPage: !headerPage && !req.headers.referer,
-      visible: req.query.visible === undefined ? undefined : req.query.visible !== '0',
-      watching: req.query.watching === undefined ? undefined : req.query.watching !== '0',
-      cameBack: true
+      keepExistingPage: !headerPage && !req.headers.referer
     });
     // Analytics: a heartbeat means a real browser running the site, so this is
     // where a session starts counting (page-only hits from crawlers are not).
@@ -2830,7 +2784,7 @@ app.post('/api/visitors/event', (req, res) => {
   if (!suppliedUserId) return res.status(400).json({ error: 'Missing user ID' });
   if (!isAuthorizedSiteRequest(req)) return rejectUnauthorizedSiteRequest(res);
   const eventIp = getClientIp(req);
-  if (!verifyVisitorToken(req.headers['x-visitor-token'], suppliedUserId, eventIp)) {
+  if (!verifyVisitorToken(req.headers['x-visitor-token'], suppliedUserId)) {
     return res.status(403).json({ error: 'Invalid or expired visitor token' });
   }
   if (!consumeVisitorRateLimit(`event:${suppliedUserId}`, EVENT_RATE_LIMIT_MAX) ||
@@ -2849,21 +2803,20 @@ app.post('/api/visitors/event', (req, res) => {
 /* Goodbye signal. Fired by navigator.sendBeacon on pagehide — the one moment a
    browser is willing to deliver a request while the page is being torn down.
    sendBeacon cannot set headers, so the identity travels in the query string
-   here; it is the same signed, IP-bound, 24h token the header path uses, and
-   the only thing it authorises is marking this one identity as gone. Without
-   it a closed tab stayed in the count until its heartbeat aged out (up to 75s)
-   — that is the "count is slow" half of the problem. */
+   here; it is the same signed, 24h token the header path uses, and the only
+   thing it authorises is taking this one identity out of the count. */
 app.post('/api/visitors/leave', (req, res) => {
   if (!isAuthorizedSiteRequest(req)) return rejectUnauthorizedSiteRequest(res);
   const userId = normalizeVisitorId(req.query.uid || req.headers['x-user-id']);
   const token = String(req.query.token || req.headers['x-visitor-token'] || '');
   if (!userId) return res.status(400).json({ error: 'Missing user ID' });
-  const ip = getClientIp(req);
-  if (!verifyVisitorToken(token, userId, ip)) return res.status(403).json({ error: 'Invalid or expired visitor token' });
+  if (!verifyVisitorToken(token, userId)) return res.status(403).json({ error: 'Invalid or expired visitor token' });
+  /* A goodbye marks the browser, it does not erase it: another tab of the same
+     browser may still be open and will clear the mark with its next beat. If
+     none comes, the browser leaves the count at the grace deadline. */
   const entry = activeUsers.get(userId);
   if (entry) {
     entry.leftAt = Date.now();
-    // Analytics keeps the session; presence just stops counting them.
     broadcastVisitorChange('update', entry, false);
     broadcastPresence(true);
   }

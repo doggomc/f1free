@@ -73,8 +73,19 @@ function startServer(env = {}) {
   let log = '';
   child.stdout.on('data', chunk => { log += chunk; });
   child.stderr.on('data', chunk => { log += chunk; });
+  // A leftover listener from an interrupted run used to fail this whole script
+  // with EADDRINUSE somewhere in the middle of the checks. Boot cases here, so
+  // a port that is already taken means "try the next one", not "crashed".
+  child.on('exit', (code) => {
+    if (code && /EADDRINUSE/.test(log)) {
+      console.warn(`port ${port} was already in use — trying another`);
+      const retry = startServer(env);
+      Object.assign(serverHandle, retry);
+      log = retry.log();
+    }
+  });
   const base = `http://127.0.0.1:${port}`;
-  return {
+  const serverHandle = {
     child,
     port,
     dataDir,
@@ -87,6 +98,7 @@ function startServer(env = {}) {
       body: JSON.stringify(body)
     })
   };
+  return serverHandle;
 }
 
 async function waitForServer(server) {
@@ -162,6 +174,29 @@ async function main() {
     check('visitor abuse scenario ran', false, error.stack || String(error));
   } finally {
     visitor.child.kill('SIGTERM');
+  }
+
+  /* ── 2b. The per-address ceiling still exists, only now it is a flood
+     backstop above the per-identity budgets rather than the budget itself. ── */
+  const flood = startServer({ HEARTBEAT_IP_RATE_LIMIT_MAX: '5' });
+  await waitForServer(flood);
+  try {
+    const tokenRes = await flood.get('/api/visitors/token?userId=flooder', { Origin: TRUSTED_ORIGIN });
+    const { token } = await tokenRes.json();
+    const statuses = [];
+    for (let i = 0; i < 8; i++) {
+      const res = await fetch(`${flood.base}/api/visitors/heartbeat`, {
+        headers: { Origin: TRUSTED_ORIGIN, 'X-User-Id': 'flooder', 'X-Visitor-Token': token }
+      });
+      statuses.push(res.status);
+    }
+    check('a flood from one address still hits the address ceiling',
+      statuses.filter(st => st === 200).length === 5 && statuses.slice(5).every(st => st === 429),
+      statuses.join(','));
+  } catch (error) {
+    check('address-ceiling scenario ran', false, error.stack || String(error));
+  } finally {
+    flood.child.kill('SIGTERM');
   }
 
   /* ── 3. New-identity budget bounds the permanent total. ── */

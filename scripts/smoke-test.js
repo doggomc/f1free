@@ -260,7 +260,8 @@ async function waitForServer() {
       headers: { cookie }
     });
     assert.equal(visitors.response.status, 200);
-    assert.equal(visitors.body.onlineCount, 1);
+    assert.equal(visitors.body.liveCount, 1);
+    assert.equal(visitors.body.ip, undefined, 'the stats payload must never carry an address');
     assert.ok(Array.isArray(visitors.body.visitors));
     assert.equal(typeof visitors.body.visitors[0], 'object');
     assert.ok(visitors.body.visitors.some(visitor => visitor.page === '/watch'));

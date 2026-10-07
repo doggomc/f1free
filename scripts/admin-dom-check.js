@@ -103,24 +103,34 @@ function json(body, status = 200) {
 
 function buildSnapshot() {
   const now = Date.now();
-  const visitors = Array.from({ length: 12 }, (_, i) => ({
+  /* Eleven sessions, exactly as the server sends them: one row per live
+     browser, each with the moment it stops counting (`liveUntil`). Expired
+     browsers are not in the payload at all — the server drops them from the
+     count and the rows together — so a table that shows more rows than the
+     headline has gone back to inventing people. Two rows have no country
+     (the server could not locate them) and must render as a dash. */
+  const visitors = Array.from({ length: 11 }, (_, i) => ({
     id: `user_${i}`,
-    ip: `41.180.${i}.${10 + i}`,
-    country: i % 2 ? 'South Africa' : 'United Kingdom',
-    city: i % 2 ? 'Pretoria' : 'London',
-    countryCode: i % 2 ? 'ZA' : 'GB',
+    // Country only, and only when the server could locate the visitor: rows 0-1
+    // come back empty, like the live dashboard shows them.
+    country: i < 2 ? null : (i % 2 ? 'South Africa' : 'United Kingdom'),
+    city: i < 2 ? null : (i % 2 ? 'Pretoria' : 'London'),
+    countryCode: i < 2 ? null : (i % 2 ? 'ZA' : 'GB'),
+    // The server sends the moment a browser stops counting, not just a boolean:
+    // the dashboard ages rows between polls and must expire them at the same
+    // instant the count does. Generous here so a row cannot age out mid-test.
+    live: true,
+    liveUntil: now + 60 * 60_000,
     browser: 'Chrome 141',
     os: i % 3 ? 'Windows 11' : 'macOS 15.3',
     deviceType: i % 4 ? 'Desktop' : 'Mobile',
     page: i % 3 ? '/' : '/news',
     connectedAt: now - (i + 1) * 60_000,
-    lastSeen: now - i * 7_000,
-    online: true,
+    lastSeen: now - (i % 5) * 7_000,
     source: 'heartbeat'
   }));
   return {
-    onlineCount: visitors.length,
-    activeSessions: visitors.length,
+    liveCount: visitors.length,
     totalUnique: 4821,
     visitors,
     override: { active: false },
@@ -181,7 +191,11 @@ function buildAnalytics() {
    whereas real <script> tags share the global lexical scope. */
 const dashboardSource = ['charts.js', 'analytics.js', 'admin.js']
   .map(file => `/* ${file} */\n${fs.readFileSync(path.join(adminDir, file), 'utf8')}`)
-  .join('\n;\n');
+  .join('\n;\n')
+  // The dashboard's own once-a-second pass, reachable from the harness. Waiting
+  // for the real timer made these checks depend on how busy the machine is;
+  // calling it proves the same thing without the race.
+  + `\n;window.__tick = () => { refreshVisitorTimes(); };`;
 try {
   window.eval(dashboardSource);
 } catch (error) {
@@ -216,9 +230,32 @@ try {
     `${$('visitorTableBody').querySelectorAll('tr[data-key]').length} rows, label "${$('openSessionsLabel').textContent}"`);
   click($('openSessionsBtn'));
   await new Promise(resolve => setTimeout(resolve, 400));
-  check('opening the gate renders the visitor rows', $('visitorTableBody').querySelectorAll('tr[data-key]').length === 12,
+  check('opening the gate renders the visitor rows', $('visitorTableBody').querySelectorAll('tr[data-key]').length === 11,
     `${$('visitorTableBody').querySelectorAll('tr[data-key]').length} rows`);
-  check('online count rendered', $('onlineCount').textContent === '12', $('onlineCount').textContent);
+  /* One number, straight from the payload. */
+  check('the headline shows the server count', $('onlineCount').textContent === '11',
+    `headline=${$('onlineCount').textContent} (payload said liveCount=11)`);
+  check('the caption says what the number counts',
+    $('onlineBreakdown').textContent === 'browsers on the site', $('onlineBreakdown').textContent);
+  const statuses = [...$('visitorTableBody').querySelectorAll('tr[data-key] .status-cell')].map(cell => cell.textContent.trim());
+  const countOf = label => statuses.filter(t => t === label).length;
+  check('every live row says On site', countOf('On site') === 11 && countOf('Gone') === 0,
+    JSON.stringify(statuses));
+  check('rows and the headline agree — no row contradicts the number above it',
+    countOf('On site') === Number($('onlineCount').textContent),
+    `${countOf('On site')} rows vs headline ${$('onlineCount').textContent}`);
+  // The dashboard's own stylesheet must define the states it uses.
+  const adminCss = require('fs').readFileSync(path.join(__dirname, '..', 'admin', 'admin.css'), 'utf8');
+  check('the row states have real styling (pill + dot)',
+    /\.pill-online\{/.test(adminCss) && /\.dot-online\{/.test(adminCss) &&
+    /\.pill-offline\{/.test(adminCss) && /\.dot-offline\{/.test(adminCss),
+    'pill/dot classes missing from admin.css');
+  check('the table badge shows the same number', $('tableBadge').textContent === '● 11 on site',
+    $('tableBadge').textContent);
+  check('the sessions pill shows the same number', $('sessionsCountPill').textContent === '11 live',
+    $('sessionsCountPill').textContent);
+  check('the sessions caption shows the same number',
+    /^11 on site · 11 total/.test($('sessionsHint').textContent), $('sessionsHint').textContent);
   check('unique count is the server total (not the row count)', $('uniqueCount').textContent === '4821', $('uniqueCount').textContent);
 
   // 3. Server clock is server-derived, not the browser clock.
@@ -232,7 +269,8 @@ try {
   // 4. System panel is fully populated.
   check('environment row populated', $('sysNodeEnv').textContent === 'PRODUCTION', $('sysNodeEnv').textContent);
   check('unique store row populated', $('sysUniqueStore').textContent === 'UPSTASH', $('sysUniqueStore').textContent);
-  check('visitor counts row populated', /12 active \/ 4821 unique/.test($('sysVisitorStore').textContent), $('sysVisitorStore').textContent);
+  check('visitor counts row shows on site and unique',
+    /^11 on site \/ 4821 unique$/.test($('sysVisitorStore').textContent), $('sysVisitorStore').textContent);
 
   // 5. Analytics rendered from the range-scoped payload.
   check('analytics requested the selected range', fetchCalls.some(u => u.includes('/admin/api/analytics?range=7d')), fetchCalls.join(' '));
@@ -284,7 +322,127 @@ try {
     `${readsAtFirstMutation} reads before first mutation, ${layoutReads} total`);
 
   // 6. Visitor updates coalesce instead of repainting per event.
+  /* The count is pushed, not polled: the server sends a `presence` event the
+     moment somebody arrives or leaves. Emitting one here proves the badge
+     follows it without waiting for a refresh. */
+  {
+    const es0 = window.EventSource.instances[0];
+    const before = $('onlineCount').textContent;
+    es0.emit('presence', { active: 9, at: Date.now() });
+    check('a pushed presence event moves the headline immediately',
+      $('onlineCount').textContent === '9' && before !== '9',
+      `before=${before} after=${$('onlineCount').textContent}`);
+    check('the pushed event updates the table badge',
+      $('tableBadge').textContent === '● 9 on site', $('tableBadge').textContent);
+    // The push is the freshest truth there is. If the 1s ticker recomputes the
+    // count from the snapshot it is still holding (which the push deliberately
+    // does not touch), it silently undoes the live update a second later.
+    window.__tick();
+    check('the ticker does not undo a pushed count',
+      $('onlineCount').textContent === '9' && $('tableBadge').textContent === '● 9 on site',
+      `${$('onlineCount').textContent} / ${$('tableBadge').textContent} after a ticker pass`);
+    // …and the poll that follows still wins, so the pushed number is never stale
+    es0.emit('stats', snapshot);
+    check('the periodic stats refresh re-asserts the server numbers',
+      $('onlineCount').textContent === '11',
+      `headline=${$('onlineCount').textContent}`);
+  }
+
   const es = window.EventSource.instances[0];
+
+  /* The screenshot bug, one model later: a row must never keep saying "On
+     site" after its deadline, because the dashboard trusted a `live: true`
+     from the last poll instead of the moment the server said it expires. Two
+     cases: a deadline that has already passed when the payload arrives (the
+     stale snapshot), and a deadline that passes while the dashboard is aging
+     rows between polls (the screenshot). */
+  {
+    const now = Date.now();
+    const base = { ...snapshot.visitors[0], lastSeen: now - 45_000 };
+    const expired = { ...base, id: 'stale_expired', live: false, liveUntil: now - 55_000 };
+    const aging = { ...base, id: 'stale_aging', lastSeen: now - 5_000, live: true, liveUntil: now + 900 };
+    const payload = { ...snapshot, liveCount: 2, visitors: [expired, aging],
+      server: { ...snapshot.server, now: Date.now() } };
+
+    es.emit('stats', payload);
+    const pills = () => [...$('visitorTableBody').querySelectorAll('tr[data-key] .status-cell')].map(c => c.textContent.trim());
+    check('a payload whose deadline has already passed renders as Gone',
+      pills().includes('Gone'), JSON.stringify(pills()));
+    // The second row is still inside its window at this instant, so this proves
+    // the flip below is the deadline expiring and not a render that never
+    // marked the row as live in the first place.
+    check('a row still inside its window says On site at this instant',
+      pills().filter(t => t === 'On site').length === 1, JSON.stringify(pills()));
+    check('the headline keeps the payload number instead of the table\'s own count',
+      $('onlineCount').textContent === '2', $('onlineCount').textContent);
+    check('the badge keeps the payload number too', $('tableBadge').textContent === '● 2 on site',
+      $('tableBadge').textContent);
+
+    // The row is still inside its window; age past it and run the dashboard's
+    // own once-a-second pass, which is what flips it in production.
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    window.__tick();
+    check('a row whose deadline passes between polls stops saying On site',
+      pills().filter(t => t === 'On site').length === 0, JSON.stringify(pills()));
+    check('and the count it belongs to did not drift while that happened',
+      $('onlineCount').textContent === '2' && $('tableBadge').textContent === '● 2 on site',
+      `${$('onlineCount').textContent} / ${$('tableBadge').textContent}`);
+
+    es.emit('stats', snapshot);
+    es.emit('presence', { active: 11, at: Date.now() });
+  }
+
+  /* Rows on screen are not the population. The table is paginated and
+     searchable, so "how many rows are watching" is routinely a different number
+     from "how many people are watching" — the headline and badge must stay the
+     server's numbers while the operator has filtered the list down. This is
+     also what makes the two count-derived-from-rows bugs visible: with no
+     filter the rows happen to agree, which is exactly how they hid. */
+  {
+    const search = $('sessionsSearch');
+    search.value = 'user_3';
+    search.dispatchEvent(new window.Event('input', { bubbles: true }));
+    await new Promise(resolve => setTimeout(resolve, 400));
+    const shown = $('visitorTableBody').querySelectorAll('tr[data-key]').length;
+    check('the search narrows the table to one row for this check', shown === 1,
+      `${shown} rows visible for "user_3"`);
+    es.emit('stats', snapshot);                       // liveCount: 11, one row on screen
+    check('the headline stays the server count while the table is filtered',
+      $('onlineCount').textContent === '11', $('onlineCount').textContent);
+    check('the badge stays the server count while the table is filtered',
+      $('tableBadge').textContent === '● 11 on site', $('tableBadge').textContent);
+    window.__tick();
+    check('the ticker does not re-derive the count from the filtered rows',
+      $('onlineCount').textContent === '11' && $('tableBadge').textContent === '● 11 on site',
+      `${$('onlineCount').textContent} / ${$('tableBadge').textContent}`);
+    search.value = '';
+    search.dispatchEvent(new window.Event('input', { bubbles: true }));
+    await new Promise(resolve => setTimeout(resolve, 300));
+    es.emit('stats', snapshot);
+  }
+
+  /* No address, anywhere, ever. The payload cannot carry one and the table has
+     no column and no cell for one — this asserts the whole rendered dashboard,
+     not just the table body. */
+  {
+    const rows = [...$('visitorTableBody').querySelectorAll('tr[data-key]')];
+    check('the table has no IP column',
+      ![...$('visitorTableBody').closest('table').querySelectorAll('th')].some(th => /ip|address/i.test(th.textContent)),
+      [...$('visitorTableBody').closest('table').querySelectorAll('th')].map(th => th.textContent).join(' | '));
+    check('no cell anywhere in the table renders an IP address',
+      !rows.some(r => /(\d{1,3}\.){3}\d{1,3}/.test(r.textContent)),
+      rows.slice(0, 3).map(r => r.textContent.trim().slice(0, 60)).join(' || '));
+    check('the whole dashboard DOM contains no address and no "private network" label',
+      !/(\d{1,3}\.){3}\d{1,3}/.test(window.document.body.textContent) && !/private network/i.test(window.document.body.textContent),
+      'an address or the old private-network label is somewhere on the page');
+    check('a viewer the server could not locate shows a dash, not a guess',
+      [...$('visitorTableBody').querySelectorAll('tr[data-key] .country')].filter(c => c.textContent.trim().endsWith('—')).length === 2,
+      [...$('visitorTableBody').querySelectorAll('tr[data-key] .country')].slice(0, 4).map(c => JSON.stringify(c.textContent.trim())).join(' | '));
+    check('a located viewer shows city and country',
+      [...$('visitorTableBody').querySelectorAll('tr[data-key] .country')].some(c => /Pretoria, South Africa/.test(c.textContent)),
+      [...$('visitorTableBody').querySelectorAll('tr[data-key] .country')].slice(0, 4).map(c => c.textContent.trim()).join(' | '));
+  }
+
   check('admin SSE connected', Boolean(es));
   es.emit('open', {});
   await new Promise(resolve => setTimeout(resolve, 50));
@@ -357,6 +515,71 @@ try {
   check('live experimental_update re-enables the panel', $('experimentalToggle').classList.contains('on') && $('experimentalBadge').textContent === 'Enabled');
 
   // Report.
+  /* ── The dashboard reuses the site's sticky nav. The class that turns it
+     opaque on scroll was styled in admin.css but never applied by any script,
+     so page content scrolled straight through the bar. ── */
+  {
+    const nav = window.document.getElementById('adminNav');
+    const scrolled = (y) => {
+      Object.defineProperty(window, 'scrollY', { configurable: true, value: y });
+      window.dispatchEvent(new window.Event('scroll'));
+    };
+    scrolled(0);
+    await new Promise(resolve => setTimeout(resolve, 60));
+    const atTop = nav.classList.contains('stuck');
+    scrolled(400);
+    await new Promise(resolve => setTimeout(resolve, 60));
+    const onScroll = nav.classList.contains('stuck');
+    check('the admin nav stays transparent at the top of the page', atTop === false);
+    check('the admin nav gets .stuck once the page scrolls', onScroll === true,
+      'nav never receives the class its stylesheet styles');
+    scrolled(0);
+    await new Promise(resolve => setTimeout(resolve, 60));
+    check('the admin nav returns to transparent at the top', nav.classList.contains('stuck') === false);
+  }
+
+  /* ── The sessions panel header has to fit a phone. Its width used to be a
+     style attribute on the search input, which no media query can override. ── */
+  {
+    const search = window.document.getElementById('sessionsSearch');
+    const tools = window.document.querySelector('.panel-head-tools');
+    const css = fs.readFileSync(path.join(adminDir, 'admin.css'), 'utf8');
+    check('the sessions search input carries no hard-coded inline width',
+      Boolean(search) && !(search.getAttribute('style') || '').includes('width'),
+      `style attribute: ${search && search.getAttribute('style')}`);
+    check('the panel head controls sit in a wrapper the stylesheet can reflow',
+      Boolean(tools) && tools.contains(search));
+    check('the stylesheet wraps the panel head on narrow screens',
+      /@media\(max-width:640px\)[^}]*\{[\s\S]*\.panel-head\{flex-wrap:wrap/.test(css),
+      'no 640px rule wrapping .panel-head');
+    /* The site sets .btn{width:100%} at 640px (hero calls to action). The admin
+       inherits it, so without an override the panel-header controls stretch —
+       the sessions ✕ was measured at 316px wide on a 390px screen. */
+    check('a full-width .btn rule still exists at the phone breakpoint',
+      /\.btn\s*\{[^}]*width:\s*100%/.test(css),
+      'site-parity .btn rule missing — panel-head override may now be unnecessary or misplaced');
+    check('panel-head buttons keep their natural size on phones',
+      /@media\(max-width:\s*640px\)[\s\S]{0,1500}?\.panel-head\s+\.btn\s*\{[^}]*width:\s*auto/.test(css),
+      'no .panel-head .btn{width:auto} override at 640px: icon buttons stretch');
+  }
+
+  /* ── Opening the sessions panel scrolls it into view. Two things must hold:
+     the scroll waits for the tab swap (scrolling during it landed the header
+     above the viewport), and the stylesheet reserves room for the fixed nav. ── */
+  {
+    const js = fs.readFileSync(path.join(adminDir, 'admin.js'), 'utf8');
+    const css = fs.readFileSync(path.join(adminDir, 'admin.css'), 'utf8');
+    check('the sessions scroll happens after the tab swap',
+      /setTimeout\(\(\) => target\?*\.scrollIntoView[^)]*\), 300 \+ 40\)/.test(js) || /scrollIntoView[\s\S]{0,80}300 \+ 40/.test(js),
+      'the scroll fires while the view swap is still animating');
+    check('the sessions scroll aims at the section, not the bare panel',
+      /querySelector\('\.sessions-intro'\)/.test(js),
+      'scrolling the panel itself parks its header under the fixed nav');
+    check('the panel reserves room for the fixed nav when scrolled to',
+      /#sessionsPanel[\s\S]{0,120}scroll-margin-top/.test(css),
+      'no scroll-margin-top on #sessionsPanel');
+  }
+
   let failed = 0;
   for (const { label, pass, detail } of checks) {
     if (!pass) failed++;

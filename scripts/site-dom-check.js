@@ -61,6 +61,8 @@ const CSP_HOSTS = new Set(['self', 'f1free.onrender.com', 'api.jolpi.ca']);
 const blockedByCsp = [];
 
 const emptyJson = body => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
+const heartbeatUrls = [];
+const leaveCalls = [];
 window.fetch = async (url, options) => {
   requested.push(String(url));
   const u = String(url);
@@ -74,7 +76,12 @@ window.fetch = async (url, options) => {
   }
   if (u.includes('/api/auth/verify')) return emptyJson({ authorized: true, domain: 'freef1.netlify.app' });
   if (u.includes('/api/visitors/token')) return emptyJson({ token: 'tok.test', expiresAt: Date.now() + 3_600_000 });
-  if (u.includes('/api/visitors/heartbeat')) return emptyJson({ active: 3 });
+  // One number, and the badge must show exactly it.
+  if (u.includes('/api/visitors/heartbeat')) {
+    heartbeatUrls.push(u);
+    return emptyJson({ active: 9, at: Date.now() });
+  }
+  if (u.includes('/api/visitors/leave')) { leaveCalls.push(u); return { ok: true, status: 204, json: async () => ({}), text: async () => '' }; }
   if (u.includes('/api/site/status')) return emptyJson({ maintenance: { active: false } });
   if (u.includes('/api/stream/status')) return emptyJson({ active: false });
   if (u.includes('/api/experimental')) return emptyJson({ enabled: true, updatedAt: Date.now() });
@@ -114,6 +121,45 @@ window.fetch = async (url, options) => {
   return emptyJson({});
 };
 
+/* The beacon fired on pagehide is a navigator.sendBeacon call (the only request
+   a browser reliably delivers while the page is being torn down). jsdom has no
+   implementation, so capture the calls — the checks below prove it happens
+   exactly once per page, with the identity in the query string. */
+const beacons = [];
+if (typeof window.navigator.sendBeacon !== 'function') {
+  Object.defineProperty(window.navigator, 'sendBeacon', {
+    configurable: true,
+    value: (url) => { beacons.push(String(url)); return true; }
+  });
+}
+
+/* EventSource: jsdom has none, so the live-count path used to be untestable here.
+   A stub that records listeners lets the harness fire a real `presence` event at
+   the app and assert the badge follows it — the same thing the server pushes. */
+const sseInstances = [];
+const FakeEventSource = class {
+  constructor(url) {
+    this.url = String(url);
+    this.listeners = new Map();
+    this.readyState = 1;
+    sseInstances.push(this);
+  }
+  addEventListener(name, fn) {
+    if (!this.listeners.has(name)) this.listeners.set(name, []);
+    this.listeners.get(name).push(fn);
+  }
+  removeEventListener(name, fn) {
+    const list = this.listeners.get(name) || [];
+    const i = list.indexOf(fn);
+    if (i !== -1) list.splice(i, 1);
+  }
+  close() { this.readyState = 2; }
+  emit(name, data) {
+    for (const fn of this.listeners.get(name) || []) fn({ data: JSON.stringify(data), type: name });
+  }
+};
+window.EventSource = FakeEventSource;
+
 // Stand in for a page the viewer has not interacted with yet: every modern
 // browser blocks autoplay with sound in that state.
 Object.defineProperty(window.navigator, 'userActivation', { configurable: true, value: { hasBeenActive: false } });
@@ -134,7 +180,20 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   ids: sources.map(s => s.id),
   disabled: [...disabledSources]
 });
-;window.__teams = () => teams.map(t => ({ id: t.id, name: t.name, color: t.color, text: t.text }));`);
+;window.__teams = () => teams.map(t => ({ id: t.id, name: t.name, color: t.color, text: t.text }));
+;window.schedule = schedule;
+;window.isStreamAvailable = isStreamAvailable;
+;window.getCurrentLiveSession = getCurrentLiveSession;
+;window.applyStreamWindow = applyStreamWindow;
+;window.load = load;
+;window.store = store;
+;window.__setSession = (evSlug, sessSlug) => {
+  const ev = schedule.find(e => e.slug === evSlug);
+  const sess = ev && ev.sessions.find(x => x.slug === sessSlug);
+  if (!sess) return null;
+  currentEvent = ev; currentSession = sess;
+  return sess.slug;
+};`);
   } catch (error) {
     bootError = error;
   }
@@ -328,6 +387,147 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
     check('router opens the 24/7 view', !$('view247').hidden && $('viewPerformance').hidden);
     check('24/7 player wrap exists', Boolean($('live247FrameWrap')), 'live247FrameWrap missing');
     check('24/7 controls exist', Boolean($('live247PlayBtn') && $('live247StopBtn') && $('live247FsBtn')));
+  }
+
+  /* ── Force Live ────────────────────────────────────────────────────────
+     Reported bug: the dashboard said FORCED LIVE while the player showed its
+     "setting up the feed" placeholder with no iframe at all. Cause: the
+     availability rule still required the session to have started, so a race
+     weekend days away — exactly what the site shows between rounds — could
+     never play. Reproduced here by putting a not-yet-started session on
+     screen, which is what pickDefault() does before a race weekend. */
+  {
+    const future = (() => {
+      for (const ev of window.schedule) {
+        for (const sess of ev.sessions) {
+          if (Date.parse(sess.start) - Date.now() > 3_600_000) return { ev, sess };
+        }
+      }
+      return null;
+    })();
+
+    if (!future) {
+      check('schedule contains a session that has not started yet', false, 'none found');
+    } else {
+      const onScreen = window.__setSession(future.ev.slug, future.sess.slug);
+      check('a not-yet-started session can be put on screen for the test', onScreen === future.sess.slug);
+
+      window.__FORCE_LIVE__ = false;
+      window.applyStreamWindow({ active: false, reason: '', startedAt: null });
+      window.load();
+      await new Promise(resolve => setTimeout(resolve, 60));
+      const withoutForce = Boolean(window.document.querySelector('#player iframe, #player video'));
+
+      window.__FORCE_LIVE__ = true;
+      window.applyStreamWindow({ active: true, reason: 'test', startedAt: Date.now() });
+      window.load();
+      await new Promise(resolve => setTimeout(resolve, 80));
+      const withForce = Boolean(window.document.querySelector('#player iframe, #player video'));
+      const liveNow = window.getCurrentLiveSession();
+
+      check('a session that has not started stays off air without Force Live', withoutForce === false);
+      check('Force Live puts the session on screen on air', withForce === true,
+        `no player element for ${future.ev.slug}/${future.sess.slug}`);
+      check('the live-session scan agrees with the player while forced',
+        Boolean(liveNow && liveNow.session && liveNow.session.slug === future.sess.slug),
+        `getCurrentLiveSession() → ${liveNow && liveNow.session && liveNow.session.slug}`);
+
+      window.__FORCE_LIVE__ = false;
+      window.applyStreamWindow({ active: false, reason: '', startedAt: null });
+      // hand the on-screen session back to the harness's own live session
+      const back = window.getCurrentLiveSession();
+      if (back) window.__setSession(back.event.slug, back.session.slug);
+      await new Promise(resolve => setTimeout(resolve, 40));
+    }
+  }
+
+  /* ── Visitor identity must survive a reload when localStorage is blocked ── */
+  {
+    const stubbed = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } };
+    const realLocal = window.localStorage, realSession = window.sessionStorage;
+    Object.defineProperty(window, 'localStorage', { configurable: true, value: stubbed });
+    try {
+      window.store.set('probe_key', 'probe_value');
+      const viaSession = window.store.get('probe_key');
+      Object.defineProperty(window, 'sessionStorage', { configurable: true, value: stubbed });
+      window.store.set('probe_key2', 'memory_value');
+      const viaMemory = window.store.get('probe_key2');
+      check('a blocked localStorage falls back instead of losing every key',
+        viaSession === 'probe_value' && viaMemory === 'memory_value',
+        `sessionStorage tier: ${viaSession}, memory tier: ${viaMemory}`);
+    } finally {
+      Object.defineProperty(window, 'localStorage', { configurable: true, value: realLocal });
+      Object.defineProperty(window, 'sessionStorage', { configurable: true, value: realSession });
+      delete window.store._m.probe_key; delete window.store._m.probe_key2;
+    }
+  }
+
+  /* ── Presence: what the visitor counter counts, and how fast it moves ──
+     One number: browsers on the site right now. These run against the real
+     app.js in jsdom, so they fail if the client goes back to sending tab-state
+     flags, or if the badge ever shows anything but the server's count. */
+  {
+    check('the heartbeat carries no tab-state flags — the count is one number',
+      heartbeatUrls.length > 0 && heartbeatUrls.every(u => !/[?&](visible|watching|online)=/.test(u)),
+      heartbeatUrls.slice(-2).join(' '));
+    const badge = $('visitorCount');
+    check('the badge shows the server count',
+      badge && badge.textContent === '9',
+      `badge=${badge && badge.textContent} (heartbeat payload said active=9)`);
+    check('the badge tooltip says the same thing as the badge',
+      /9 on site now/.test($('visitorCounter').getAttribute('title') || ''),
+      $('visitorCounter').getAttribute('title') || '(no title)');
+
+    // Hiding the tab stops the heartbeat: the server drops the browser at its
+    // window, so the count follows the truth instead of a flag.
+    const beforeHide = heartbeatUrls.length;
+    Object.defineProperty(window.document, 'hidden', { configurable: true, get: () => true });
+    Object.defineProperty(window.document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    window.document.dispatchEvent(new window.Event('visibilitychange'));
+    await new Promise(resolve => setTimeout(resolve, 120));
+    check('hiding the tab stops the heartbeat', heartbeatUrls.length === beforeHide,
+      heartbeatUrls.slice(beforeHide).join(' ') || 'no heartbeat was sent after the tab hid');
+
+    // …and coming back beats immediately, so the number recovers at once.
+    const beforeShow = heartbeatUrls.length;
+    Object.defineProperty(window.document, 'hidden', { configurable: true, get: () => false });
+    Object.defineProperty(window.document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    window.document.dispatchEvent(new window.Event('visibilitychange'));
+    await new Promise(resolve => setTimeout(resolve, 120));
+    check('coming back beats immediately', heartbeatUrls.length > beforeShow,
+      heartbeatUrls.slice(beforeShow).join(' ') || 'no heartbeat was sent after the tab returned');
+
+    // The live path: the server pushes the count, the badge follows without
+    // waiting for the next heartbeat.
+    const sse = sseInstances.find(i => i.listeners.has('presence'));
+    check('the client subscribes to the live presence event', Boolean(sse),
+      sseInstances.length ? sseInstances.map(i => `${i.url}:${[...i.listeners.keys()].join(',')}`).join(' | ') : 'no EventSource was opened');
+    if (sse) {
+      sse.emit('presence', { active: 5, at: Date.now() });
+      check('a pushed presence event updates the badge at once', badge.textContent === '5',
+        `badge=${badge.textContent}`);
+      check('the pushed event refreshes the tooltip too',
+        /5 on site now/.test($('visitorCounter').getAttribute('title') || ''),
+        $('visitorCounter').getAttribute('title') || '(no title)');
+    }
+
+    // Leaving: one beacon on pagehide — a closed tab must leave the count now.
+    window.dispatchEvent(new window.Event('pagehide'));
+    window.dispatchEvent(new window.Event('pagehide'));
+    const leaveUrls = beacons.filter(u => u.includes('/api/visitors/leave'));
+    check('closing the tab sends the goodbye beacon exactly once', leaveUrls.length === 1,
+      `${leaveUrls.length} beacons: ${leaveUrls.join(' ')}`);
+    check('the goodbye beacon carries the signed token in the query string',
+      leaveUrls.length === 1 && /uid=/.test(leaveUrls[0]) && /token=tok\.test/.test(leaveUrls[0]),
+      leaveUrls[0] || '(none)');
+
+    // Back/forward cache: the page comes back alive, so the next goodbye counts.
+    window.dispatchEvent(Object.assign(new window.Event('pageshow'), { persisted: true }));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    window.dispatchEvent(new window.Event('pagehide'));
+    check('a page restored from the bfcache can say goodbye again',
+      beacons.filter(u => u.includes('/api/visitors/leave')).length === 2,
+      `${beacons.filter(u => u.includes('/api/visitors/leave')).length} beacons`);
   }
 
   // escapeHtml hardening
