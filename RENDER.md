@@ -17,12 +17,12 @@ Analytics, unique visitors, news and maintenance **reset on every rebuild** unle
 | `TRUST_PROXY_HOPS` | `1` on Render (`2` if Cloudflare sits in front) — see below |
 | `UPSTASH_REDIS_REST_URL` | Upstash REST URL |
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash REST token |
-| `STREAM_TARGETS_JSON` | Where each feed plays — see below. Without it every feed reports itself unavailable |
+| `STREAM_TARGETS_JSON` | **Optional** override for where each feed plays — see below. The repo already ships the addresses in `data/stream-targets.json`, so a fresh deploy plays with no host configuration at all |
 | (nothing else) | The API permission needs no configuration: `/api` is closed by default and the site mints its own ticket |
 
 Create the Redis DB: [Upstash](https://console.upstash.com/) → Redis → Create → copy **REST URL** and **REST TOKEN**.
 
-### `STREAM_TARGETS_JSON` — the feed addresses live here, not in the site
+### The feed addresses — shipped in the repo, not in the site
 
 The site's JavaScript is public: anything in it can be copied in one request.
 So it no longer contains a single feed address. It holds ids and labels, asks
@@ -31,11 +31,16 @@ this server for a short-lived signed alias at play time (`/api/stream/ticket` �
 live — redirects the alias to the current target. Two consequences worth
 knowing:
 
-* rotating a feed is one value in this variable (or one call to
+* rotating a feed is one value in the file (or one call to
   `POST /admin/api/stream/targets`), and **every alias already handed out
   follows the new target** — a list somebody copied last week is worthless;
-* a value that is unset or wrong makes that feed show as unavailable, because
+* a value that is missing or wrong makes that feed show as unavailable, because
   there is no longer a hardcoded fallback in the browser.
+
+The addresses travel with the backend in `data/stream-targets.json`, which is
+committed on purpose (it is the one exception to the `data/*` ignore rule).
+Deploy the repo and it plays — there is nothing to configure on the host. The
+override below is only for rotating an address without touching the repo.
 
 ```jsonc
 STREAM_TARGETS_JSON={
@@ -57,9 +62,11 @@ session on screen, and each one is validated by shape before it is substituted,
 so a client cannot steer a redirect anywhere else. The ids are the eight above;
 a build that renames one simply stops receiving a target for it.
 
-Keep it out of the repo: on Render it is an environment variable, and locally
-`DATA_DIR/stream-targets.json` is git-ignored. `git log -S` a provider hostname
-and check you never committed one.
+The file is read from `DATA_DIR`, which defaults to `data/` inside the repo, so
+a Render deploy picks it up as-is. One caveat comes with committing it: the
+addresses are now in the repo's history, and they are exactly as private as the
+repository is. If the repository is public, keep them in `STREAM_TARGETS_JSON`
+instead — that variable wins over the file, so a real secret stays out of git.
 
 Related tuning: `STREAM_TICKET_TTL_MS` (alias lifetime, default 1h),
 `STREAM_TICKET_RATE_MAX` (aliases per address per hour, default `120`),

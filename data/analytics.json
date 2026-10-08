@@ -1,163 +1,115 @@
 {
   "version": 1,
   "since": 1781450929381,
-  "savedAt": 1791312997823,
+  "savedAt": 1791476589710,
   "live": [
     [
-      1791310200000,
+      1791396780000,
       0
     ],
     [
-      1791310260000,
+      1791396840000,
       0
     ],
     [
-      1791310440000,
-      0
-    ],
-    [
-      1791310500000,
-      0
-    ],
-    [
-      1791310560000,
-      0
-    ],
-    [
-      1791310620000,
-      2
-    ],
-    [
-      1791310680000,
-      3
-    ],
-    [
-      1791310740000,
-      6
-    ],
-    [
-      1791310800000,
-      5
-    ],
-    [
-      1791310860000,
+      1791396900000,
       1
     ],
     [
-      1791310920000,
+      1791396960000,
       0
     ],
     [
-      1791310980000,
+      1791397020000,
       1
     ],
     [
-      1791311040000,
+      1791397680000,
       0
     ],
     [
-      1791311100000,
+      1791397740000,
       0
     ],
     [
-      1791311160000,
+      1791397800000,
       0
     ],
     [
-      1791311220000,
+      1791397860000,
       0
     ],
     [
-      1791311280000,
-      4
-    ],
-    [
-      1791311340000,
-      2
-    ],
-    [
-      1791311400000,
+      1791397920000,
       0
     ],
     [
-      1791311460000,
+      1791397980000,
       0
     ],
     [
-      1791311520000,
-      2
-    ],
-    [
-      1791311580000,
-      5
-    ],
-    [
-      1791311640000,
-      4
-    ],
-    [
-      1791311700000,
-      2
-    ],
-    [
-      1791311760000,
-      3
-    ],
-    [
-      1791312000000,
+      1791398040000,
       0
     ],
     [
-      1791312060000,
+      1791398100000,
+      0
+    ],
+    [
+      1791398160000,
       1
     ],
     [
-      1791312120000,
+      1791398220000,
       1
     ],
     [
-      1791312180000,
+      1791398280000,
       1
     ],
     [
-      1791312240000,
-      1
-    ],
-    [
-      1791312300000,
-      2
-    ],
-    [
-      1791312360000,
-      1
-    ],
-    [
-      1791312420000,
-      1
-    ],
-    [
-      1791312660000,
+      1791399420000,
       0
     ],
     [
-      1791312720000,
-      2
+      1791399480000,
+      22
     ],
     [
-      1791312780000,
-      3
+      1791399540000,
+      22
     ],
     [
-      1791312840000,
-      2
+      1791399600000,
+      19
     ],
     [
-      1791312900000,
-      2
+      1791399660000,
+      0
     ],
     [
-      1791312960000,
-      2
+      1791399720000,
+      0
+    ],
+    [
+      1791467940000,
+      0
+    ],
+    [
+      1791468000000,
+      0
+    ],
+    [
+      1791468060000,
+      1
+    ],
+    [
+      1791476460000,
+      0
+    ],
+    [
+      1791476520000,
+      0
     ]
   ],
   "hourly": {
@@ -198,6 +150,299 @@
         "/247": 11
       },
       "nostream": 76
+    },
+    "497587": {
+      "sessions": 35,
+      "ended": 35,
+      "durationMs": 166813,
+      "durHist": [
+        35,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 35,
+      "pageViews": 46,
+      "peakOnline": 12,
+      "onlineSum": 37,
+      "onlineSamples": 33,
+      "device": {
+        "Desktop": 35
+      },
+      "browser": {
+        "Chrome": 35
+      },
+      "os": {
+        "Linux": 31,
+        "Windows": 4
+      },
+      "pages": {
+        "/": 35,
+        "/performance": 3,
+        "/news": 2,
+        "/info": 2,
+        "/discord": 2,
+        "/247": 2
+      },
+      "nostream": 60
+    },
+    "497596": {
+      "sessions": 23,
+      "ended": 17,
+      "durationMs": 45552,
+      "durHist": [
+        17,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 23,
+      "pageViews": 41,
+      "peakOnline": 8,
+      "onlineSum": 23,
+      "onlineSamples": 30,
+      "device": {
+        "Desktop": 23
+      },
+      "browser": {
+        "Chrome": 23
+      },
+      "os": {
+        "Linux": 17,
+        "Windows": 6
+      },
+      "pages": {
+        "/": 23,
+        "/performance": 6,
+        "/news": 3,
+        "/info": 3,
+        "/discord": 3,
+        "/247": 3
+      },
+      "nostream": 39,
+      "streamReady": 16,
+      "streamReadyMs": 15222
+    },
+    "497597": {
+      "sessions": 2,
+      "newVisitors": 2,
+      "pageViews": 7,
+      "peakOnline": 2,
+      "onlineSum": 2,
+      "onlineSamples": 15,
+      "device": {
+        "Desktop": 2
+      },
+      "browser": {
+        "Chrome": 2
+      },
+      "os": {
+        "Windows": 2
+      },
+      "pages": {
+        "/": 2,
+        "/performance": 1,
+        "/news": 1,
+        "/info": 1,
+        "/discord": 1,
+        "/247": 1
+      },
+      "nostream": 5
+    },
+    "497598": {
+      "sessions": 16,
+      "ended": 16,
+      "durationMs": 472586,
+      "durHist": [
+        16,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 7,
+      "returning": 9,
+      "pageViews": 16,
+      "peakOnline": 5,
+      "onlineSum": 22,
+      "onlineSamples": 10,
+      "device": {
+        "Desktop": 16
+      },
+      "browser": {
+        "Chrome": 16
+      },
+      "os": {
+        "Linux": 16
+      },
+      "pages": {
+        "/": 16
+      },
+      "nostream": 120
+    },
+    "497599": {
+      "sessions": 88,
+      "ended": 88,
+      "durationMs": 864200,
+      "durHist": [
+        88,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 2,
+      "returning": 86,
+      "pageViews": 94,
+      "peakOnline": 17,
+      "onlineSum": 105,
+      "onlineSamples": 57,
+      "device": {
+        "Desktop": 88
+      },
+      "browser": {
+        "Chrome": 88
+      },
+      "os": {
+        "Linux": 86,
+        "Windows": 2
+      },
+      "pages": {
+        "/": 72,
+        "/performance": 6,
+        "/info": 3,
+        "/247": 9,
+        "/audio": 2,
+        "/news": 1,
+        "/discord": 1
+      },
+      "nostream": 342
+    },
+    "497610": {
+      "sessions": 81,
+      "ended": 79,
+      "durationMs": 136923,
+      "durHist": [
+        79,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 71,
+      "returning": 10,
+      "pageViews": 81,
+      "peakOnline": 30,
+      "onlineSum": 49,
+      "onlineSamples": 19,
+      "device": {
+        "Desktop": 81
+      },
+      "browser": {
+        "Chrome": 78,
+        "Unknown": 3
+      },
+      "os": {
+        "Linux": 78,
+        "Unknown": 3
+      },
+      "pages": {
+        "/": 15,
+        "/other": 66
+      },
+      "nostream": 21
+    },
+    "497611": {
+      "sessions": 6,
+      "ended": 6,
+      "durationMs": 4923,
+      "durHist": [
+        6,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "returning": 6,
+      "pageViews": 6,
+      "peakOnline": 19,
+      "onlineSum": 19,
+      "onlineSamples": 3,
+      "device": {
+        "Desktop": 6
+      },
+      "browser": {
+        "Chrome": 6
+      },
+      "os": {
+        "Linux": 6
+      },
+      "pages": {
+        "/other": 5,
+        "/": 1
+      },
+      "nostream": 5
+    },
+    "497629": {
+      "sessions": 2,
+      "ended": 2,
+      "durHist": [
+        2,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 2,
+      "pageViews": 2,
+      "peakOnline": 2,
+      "onlineSamples": 1,
+      "device": {
+        "Desktop": 2
+      },
+      "browser": {
+        "Chrome": 2
+      },
+      "os": {
+        "Linux": 2
+      },
+      "pages": {
+        "/": 2
+      },
+      "nostream": 2
+    },
+    "497630": {
+      "sessions": 1,
+      "newVisitors": 1,
+      "pageViews": 1,
+      "peakOnline": 1,
+      "onlineSum": 1,
+      "onlineSamples": 2,
+      "device": {
+        "Desktop": 1
+      },
+      "browser": {
+        "Chrome": 1
+      },
+      "os": {
+        "Linux": 1
+      },
+      "pages": {
+        "/": 1
+      },
+      "nostream": 1
+    },
+    "497632": {
+      "onlineSamples": 4
     }
   },
   "daily": {
@@ -4491,175 +4736,117 @@
       "streamReadyMs": 22400,
       "streamTimeout": 1
     },
-    "2026-07-09": {
-      "sessions": 240,
-      "ended": 144,
-      "durationMs": 59328000,
-      "durHist": [
-        2,
-        3,
-        2,
-        1,
-        1,
-        0
-      ],
-      "newVisitors": 144,
-      "returning": 120,
-      "pageViews": 552,
-      "peakOnline": 19,
-      "onlineSum": 480,
-      "onlineSamples": 60,
-      "device": {
-        "Desktop": 144,
-        "Mobile": 96
-      },
-      "browser": {
-        "Chrome": 192,
-        "Safari": 2,
-        "Samsung": 1
-      },
-      "os": {
-        "Windows": 120,
-        "macOS": 3,
-        "Android": 2,
-        "iOS": 1
-      },
-      "country": {
-        "ZA": 5,
-        "GB": 3,
-        "US": 2,
-        "DE": 1,
-        "FR": 1,
-        "BR": 1,
-        "IN": 1,
-        "AU": 1
-      },
-      "pages": {
-        "/": 216,
-        "/news": 2,
-        "/info": 1
-      },
-      "source": {
-        "F1TV": 6,
-        "Sky UK": 2,
-        "AppleTV": 1,
-        "DAZN": 1
-      },
-      "team": {
-        "ferrari": 3,
-        "mclaren": 2,
-        "redbull": 2,
-        "mercedes": 1
-      },
-      "fullscreen": 2,
-      "nostream": 1,
-      "streamReady": 168,
-      "streamReadyMs": 22400,
-      "streamTimeout": 1
-    },
-    "2026-07-08": {
-      "sessions": 264,
-      "ended": 168,
-      "durationMs": 69216000,
-      "durHist": [
-        2,
-        3,
-        2,
-        1,
-        1,
-        0
-      ],
-      "newVisitors": 168,
-      "returning": 72,
-      "pageViews": 576,
-      "peakOnline": 9,
-      "onlineSum": 480,
-      "onlineSamples": 60,
-      "device": {
-        "Desktop": 144,
-        "Mobile": 96
-      },
-      "browser": {
-        "Chrome": 192,
-        "Safari": 2,
-        "Samsung": 1
-      },
-      "os": {
-        "Windows": 120,
-        "macOS": 3,
-        "Android": 2,
-        "iOS": 1
-      },
-      "country": {
-        "ZA": 5,
-        "GB": 3,
-        "US": 2,
-        "DE": 1,
-        "FR": 1,
-        "BR": 1,
-        "IN": 1,
-        "AU": 1
-      },
-      "pages": {
-        "/": 216,
-        "/news": 2,
-        "/info": 1
-      },
-      "source": {
-        "F1TV": 6,
-        "Sky UK": 2,
-        "AppleTV": 1,
-        "DAZN": 1
-      },
-      "team": {
-        "ferrari": 3,
-        "mclaren": 2,
-        "redbull": 2,
-        "mercedes": 1
-      },
-      "fullscreen": 2,
-      "nostream": 1,
-      "streamReady": 168,
-      "streamReadyMs": 22400,
-      "streamTimeout": 1
-    },
     "2026-10-06": {
-      "sessions": 44,
-      "ended": 35,
-      "durationMs": 464828,
+      "sessions": 79,
+      "ended": 70,
+      "durationMs": 631641,
       "durHist": [
-        33,
+        68,
         2,
         0,
         0,
         0,
         0
       ],
-      "newVisitors": 43,
+      "newVisitors": 78,
       "returning": 1,
-      "pageViews": 119,
-      "peakOnline": 8,
-      "onlineSum": 59,
-      "onlineSamples": 40,
+      "pageViews": 165,
+      "peakOnline": 12,
+      "onlineSum": 96,
+      "onlineSamples": 73,
       "device": {
-        "Desktop": 44
+        "Desktop": 79
       },
       "browser": {
-        "Chrome": 44
+        "Chrome": 79
       },
       "os": {
-        "Windows": 17,
-        "Linux": 27
+        "Windows": 21,
+        "Linux": 58
       },
       "pages": {
-        "/": 43,
-        "/performance": 21,
-        "/news": 16,
-        "/info": 11,
-        "/discord": 17,
-        "/247": 11
+        "/": 78,
+        "/performance": 24,
+        "/news": 18,
+        "/info": 13,
+        "/discord": 19,
+        "/247": 13
       },
-      "nostream": 76
+      "nostream": 136
+    },
+    "2026-10-07": {
+      "sessions": 216,
+      "ended": 206,
+      "durationMs": 1524184,
+      "durHist": [
+        206,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 105,
+      "returning": 111,
+      "pageViews": 245,
+      "peakOnline": 30,
+      "onlineSum": 220,
+      "onlineSamples": 134,
+      "device": {
+        "Desktop": 216
+      },
+      "browser": {
+        "Chrome": 213,
+        "Unknown": 3
+      },
+      "os": {
+        "Linux": 203,
+        "Windows": 10,
+        "Unknown": 3
+      },
+      "pages": {
+        "/": 129,
+        "/performance": 13,
+        "/news": 5,
+        "/info": 7,
+        "/discord": 5,
+        "/247": 13,
+        "/audio": 2,
+        "/other": 71
+      },
+      "nostream": 532,
+      "streamReady": 16,
+      "streamReadyMs": 15222
+    },
+    "2026-10-08": {
+      "sessions": 3,
+      "ended": 2,
+      "durHist": [
+        2,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 3,
+      "pageViews": 3,
+      "peakOnline": 2,
+      "onlineSum": 1,
+      "onlineSamples": 7,
+      "device": {
+        "Desktop": 3
+      },
+      "browser": {
+        "Chrome": 3
+      },
+      "os": {
+        "Linux": 3
+      },
+      "pages": {
+        "/": 3
+      },
+      "nostream": 3
     }
   }
 }

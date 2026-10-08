@@ -4,6 +4,12 @@ node_modules/
 node_modules
 data/*
 !data/.gitkeep
+# The feed addresses ship WITH the backend, deliberately: the site never holds
+# them, so the server is the only thing that needs them — and this way nobody
+# has to configure anything on the host. This one file is the exception to the
+# rule above; keep the rest of data/ out of the repo. The addresses are as
+# private as this repository is.
+!data/stream-targets.json
 # Runtime state (visitor hashes, analytics, news, overrides) belongs to the
 # deploy, not the repo: it seeds fresh installs and lands in the public commit
 # history. These five files were tracked before this rule existed.

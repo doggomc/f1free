@@ -1,0 +1,26 @@
+{
+  "sky-sports-f1": {
+    "url": "https://flyembed.click/embed/44.php"
+  },
+  "westream": {
+    "url": "https://westreamf1.com/westreamf1.php"
+  },
+  "sky-uk-2": {
+    "url": "https://videocdn-4726.website/shopping2/?channel_id=sky_sport_f1_uk"
+  },
+  "sky-uk": {
+    "url": "https://strmfree.st/embed/racing/skyf1"
+  },
+  "f1tv": {
+    "url": "https://embedindia.st/embed/f1/{season}/{eventSlug}/{sessionSlug}"
+  },
+  "appletv": {
+    "url": "https://embed.st/embed/admin/{eastSlug}/3"
+  },
+  "dazn": {
+    "url": "https://embed.st/embed/admin/{eastSlug}/5"
+  },
+  "wikisport": {
+    "url": "https://wikisport.info/strm/f1.php"
+  }
+}

@@ -1381,10 +1381,12 @@ async function syncStreamTargets() {
       }
     } catch (_) {}
   }
+  /* Last tier: the file that ships in the repo. Nothing to configure on the
+     host — this is what makes a fresh deploy playable out of the box. */
   const stored = readLocalJson(STREAM_TARGETS_FILE);
   const n = applyStreamTargets(stored);
-  if (n) console.log(`[Stream] ${n} playable target(s) loaded`);
-  else console.warn('[Stream] No playable targets configured — the site will show feeds as unavailable. Set STREAM_TARGETS_JSON on the host, or add ' + path.basename(STREAM_TARGETS_FILE) + ' to DATA_DIR.');
+  if (n) console.log(`[Stream] ${n} playable target(s) loaded from ${path.basename(STREAM_TARGETS_FILE)}`);
+  else console.warn('[Stream] No playable targets configured — the site will show feeds as unavailable. Commit ' + path.basename(STREAM_TARGETS_FILE) + ' (DATA_DIR) or set STREAM_TARGETS_JSON.');
   return n;
 }
 
