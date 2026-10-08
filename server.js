@@ -830,6 +830,17 @@ function initializeFileStore() {
   }
 }
 
+/* The shipped copy is read directly, unlike DATA_DIR files: it is an input to
+   boot, not runtime state, and it is exactly what makes a fresh deploy play. */
+function readShippedJson(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    if (error?.code !== 'ENOENT') console.warn(`[Stream] Could not read ${filePath}. ${error?.message || error}`);
+    return null;
+  }
+}
+
 function readLocalJson(filePath) {
   if (!fileStoreReady || !fs.existsSync(filePath)) return null;
   try {
@@ -1329,8 +1340,12 @@ function broadcastSourceConfig() {
    expires, names one source, and is redeemed here — where the real URL is
    resolved server-side and the browser is redirected to it. */
 const STREAM_TARGETS_FILE = path.join(DATA_DIR, 'stream-targets.json');
+/* The same addresses also ship beside server.js, so they reach a deploy whose
+   DATA_DIR has never held them. */
+const SHIPPED_STREAM_TARGETS_FILE = path.resolve(__dirname, 'data', 'stream-targets.json');
 let streamTargets = new Map();
 let streamTargetsReady = false;
+let streamTargetsSource = 'none';
 
 function validStreamTargetUrl(url) {
   if (typeof url !== 'string' || url.length > 500) return false;
@@ -1357,16 +1372,22 @@ function applyStreamTargets(raw) {
   return streamTargets.size;
 }
 
-/* Load order: the env var is the deployment's source of truth (it survives a
-   redeploy on hosts without a disk), then the durable store, then a local file
-   for development. Reads never log URLs. */
+/* Load order: the env var, then the durable store, then files. A tier that
+   exists but yields nothing does not end the search — a leftover empty variable
+   or stored value must not leave every feed dead while the shipped file sits
+   right there. Reads never log URLs. */
 async function syncStreamTargets() {
+  streamTargetsSource = 'none';
   if (process.env.STREAM_TARGETS_JSON) {
     try {
       const parsed = JSON.parse(process.env.STREAM_TARGETS_JSON);
       const n = applyStreamTargets(parsed);
-      console.log(`[Stream] ${n} playable target(s) from STREAM_TARGETS_JSON`);
-      return n;
+      if (n > 0) {
+        streamTargetsSource = 'env';
+        console.log(`[Stream] ${n} playable target(s) from STREAM_TARGETS_JSON`);
+        return n;
+      }
+      console.warn('[Stream] STREAM_TARGETS_JSON holds no usable target — falling through to the file.');
     } catch (error) {
       console.error('[Stream] STREAM_TARGETS_JSON is not valid JSON:', error.message);
     }
@@ -1376,18 +1397,33 @@ async function syncStreamTargets() {
       const { found, value: stored } = await readUpstashJson(STREAM_TARGETS_REDIS_KEY);
       if (found) {
         const n = applyStreamTargets(stored);
-        console.log(`[Stream] ${n} playable target(s) loaded from storage`);
-        return n;
+        if (n > 0) {
+          streamTargetsSource = 'storage';
+          console.log(`[Stream] ${n} playable target(s) loaded from storage`);
+          return n;
+        }
+        console.warn('[Stream] Stored targets hold no usable target — falling through to the file.');
       }
     } catch (_) {}
   }
-  /* Last tier: the file that ships in the repo. Nothing to configure on the
-     host — this is what makes a fresh deploy playable out of the box. */
-  const stored = readLocalJson(STREAM_TARGETS_FILE);
-  const n = applyStreamTargets(stored);
-  if (n) console.log(`[Stream] ${n} playable target(s) loaded from ${path.basename(STREAM_TARGETS_FILE)}`);
-  else console.warn('[Stream] No playable targets configured — the site will show feeds as unavailable. Commit ' + path.basename(STREAM_TARGETS_FILE) + ' (DATA_DIR) or set STREAM_TARGETS_JSON.');
-  return n;
+  /* Files last, so nothing on the host has to be configured for a fresh deploy
+     to play: DATA_DIR first (a rotation written there is the operator's latest
+     word), the copy that ships with the repo second. */
+  const fileTiers = [
+    [STREAM_TARGETS_FILE, 'file', 'DATA_DIR'],
+    [SHIPPED_STREAM_TARGETS_FILE, 'shipped', 'repo']
+  ];
+  for (const [filePath, source, where] of fileTiers) {
+    const stored = readShippedJson(filePath);
+    const n = applyStreamTargets(stored);
+    if (n > 0) {
+      streamTargetsSource = source;
+      console.log(`[Stream] ${n} playable target(s) loaded from ${path.basename(filePath)} (${where})`);
+      return n;
+    }
+  }
+  console.warn(`[Stream] No playable targets — the site will show feeds as unavailable. Expected ${path.basename(SHIPPED_STREAM_TARGETS_FILE)} to ship beside server.js.`);
+  return 0;
 }
 
 async function persistStreamTargets() {
@@ -3109,10 +3145,20 @@ app.get('/api/visitors/active', (req, res) => {
 // PUBLIC — Site/stream status & SSE (no auth needed)
 // ─────────────────────────────────────────────
 
+/* Counts and a tier name only — no address ever leaves the server. */
+function publicStreamTargetsState() {
+  return { targets: streamTargets.size, source: streamTargetsSource };
+}
+
 app.get('/api/site/status', async (req, res, next) => {
   try {
-    await Promise.all([maintenanceInitPromise, streamWindowInitPromise]);
-    res.json({ maintenance: publicMaintenanceState(), streamWindow: publicStreamWindowState() });
+    await Promise.all([maintenanceInitPromise, streamWindowInitPromise, streamTargetsInitPromise]);
+    res.json({
+      maintenance: publicMaintenanceState(),
+      streamWindow: publicStreamWindowState(),
+      // How many feeds can actually play, so an outage is one curl away.
+      stream: publicStreamTargetsState()
+    });
   } catch (error) {
     next(error);
   }
