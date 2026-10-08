@@ -59,6 +59,7 @@ const ANALYTICS_FILE = path.join(DATA_DIR, 'analytics.json');
 const ANALYTICS_REDIS_KEY = process.env.ANALYTICS_REDIS_KEY || 'freef1:analytics:v1';
 const SOURCE_CONFIG_FILE = path.join(DATA_DIR, 'stream-sources.json');
 const SOURCE_REDIS_KEY = process.env.SOURCE_REDIS_KEY || 'freef1:stream-sources:v1';
+const STREAM_TARGETS_REDIS_KEY = process.env.STREAM_TARGETS_REDIS_KEY || 'freef1:stream-targets:v1';
 const OVERRIDE_FILE = path.join(DATA_DIR, 'stream-override.json');
 const OVERRIDE_REDIS_KEY = process.env.OVERRIDE_REDIS_KEY || 'freef1:stream-override:v1';
 const EXPERIMENTAL_FILE = path.join(DATA_DIR, 'experimental.json');
@@ -359,6 +360,7 @@ const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
 const sourceConfig = { disabled: new Set(), updatedAt: null };
 let sourceStoreReady = false;
 let sourceInitPromise = Promise.resolve(false);
+let streamTargetsInitPromise = Promise.resolve(0);
 
 // SSE clients for admin dashboard
 const sseClients = new Set();
@@ -397,6 +399,44 @@ const HEARTBEAT_TIMEOUT = Number(process.env.HEARTBEAT_TIMEOUT_MS || 60_000);
    heartbeat is fresh. The site beats every 15s, so 30s forgives a lost beat
    without letting a closed tab linger in the count. */
 const PRESENCE_TTL_MS = Number(process.env.PRESENCE_TTL_MS || 30_000);
+/* Stream targets are the one thing on this server that must never reach a
+   visitor's browser: the actual playback URLs. They live here, in a
+   git-ignored data file (or the STREAM_TARGETS_JSON env var on Render) — never
+   in the site bundle, never in an API response, never in a log line. The
+   browser only ever receives a short-lived signed alias it cannot reuse
+   anywhere else. */
+const STREAM_TICKETS_ENABLED = process.env.STREAM_TICKETS !== 'false';
+const OVERRIDE_SOURCE_ID = 'override';
+/* One permission per browser session, minted only from the site itself (same
+   gate as a stream ticket) and presented on every API call that costs this
+   server something — upstream quota, the feed list, live data. A script or a
+   clone cannot mint one, so those calls get a 403 instead of the data. */
+const SITE_TICKETS_ENABLED = process.env.SITE_TICKETS !== 'false';
+const SITE_TICKET_TTL_MS = Number(process.env.SITE_TICKET_TTL_MS || 6 * 60 * 60 * 1000);
+const SITE_TICKET_RATE_MAX = Number(process.env.SITE_TICKET_RATE_MAX || 60);
+/* Paths where the site-ticket gate does not apply, in two groups:
+   — bootstrap: the page cannot hold a ticket yet, so gating these would strand
+     it. /api/site/status is how it learns it is in maintenance at all;
+     /api/auth/verify is the boot-time domain check.
+   — already gated by something stronger or equal: /api/stream/ticket and
+     /api/visitors/token are themselves permissions (origin gate + per-address
+     budget), and the presence trio verifies a signed visitor token, which can
+     only be minted the same way a site ticket can. Asking for a second
+     credential of identical strength would be ceremony, not security.
+   /api/events IS gated, but reads the ticket from ?ticket= because an
+   EventSource cannot set headers. */
+const SITE_TICKET_FREE_PATHS = new Set([
+  '/api/site/status',
+  '/api/site/ticket',
+  '/api/auth/verify',
+  '/api/stream/ticket',
+  '/api/visitors/token',
+  '/api/visitors/heartbeat',
+  '/api/visitors/event',
+  '/api/visitors/leave'
+]);
+const STREAM_TICKET_TTL_MS = Number(process.env.STREAM_TICKET_TTL_MS || 60 * 60 * 1000);
+const STREAM_TICKET_RATE_MAX = Number(process.env.STREAM_TICKET_RATE_MAX || 120);
 /* The leave beacon fires per TAB, and a browser can have several. Closing one
    of two tabs must not drop the browser, so a goodbye only ends the count if
    no heartbeat follows it — and the grace is deliberately longer than the
@@ -482,7 +522,9 @@ app.use((req, res, next) => {
     "font-src 'self' data:",
     "img-src 'self' data: https://media.formula1.com",
     "connect-src 'self' https://f1free.onrender.com https://api.jolpi.ca",
-    'frame-src https:',
+    // 'self' matters now the player frames the site's own /stream/<ticket>
+    // alias; any https feed host is still allowed by the scheme source.
+    "frame-src 'self' https:",
     "frame-ancestors 'self'",
     // data: is required by the iOS wake-lock fallback, which loops a 1px
     // silent data:video/mp4 to keep the screen on where Wake Lock is missing.
@@ -501,7 +543,7 @@ app.use((req, res, next) => {
 
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Visitor-Token, X-User-Id');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Visitor-Token, X-User-Id, X-Site-Ticket');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
 
   if (origin && !isAllowedOrigin(req, origin)) {
@@ -519,6 +561,28 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: '64kb' }));
+
+/* Default-deny on the API. Everything under /api needs the browser's site ticket
+   unless it is on the bootstrap allowlist above, so an endpoint added later is
+   gated by default rather than left open by omission. Reads that used to answer
+   an origin-less script now answer it with 403 — the hole the stream work
+   exposed. */
+app.use('/api', (req, res, next) => {
+  if (!SITE_TICKETS_ENABLED) return next();
+  const path = (req.originalUrl || '').split('?')[0];
+  if (SITE_TICKET_FREE_PATHS.has(path)) return next();
+  const supplied = req.headers['x-site-ticket'] || (path === '/api/events' ? req.query.ticket : '');
+  if (!verifySiteTicket(supplied)) {
+    return res.status(403).json({
+      error: 'Forbidden',
+      message: 'This endpoint needs a site ticket. The site asks for one at /api/site/ticket.'
+    });
+  }
+  // The answer depends on the ticket, so a shared cache must key on it rather
+  // than hand a permitted response to the next caller.
+  res.setHeader('Vary', `${res.getHeader('Vary') || 'Origin'}, X-Site-Ticket`);
+  next();
+});
 
 // Stateless, signed admin sessions avoid a server-side session database. The
 // stable ADMIN_SECRET lets one admin session work across Render instances and restarts.
@@ -1255,6 +1319,208 @@ function broadcastSourceConfig() {
 }
 
 // ─────────────────────────────────────────────
+// STREAM TARGETS & PLAY TICKETS
+// ─────────────────────────────────────────────
+/* A target is where a source actually plays. Two shapes:
+     { url }                          a fixed page/stream URL
+     { url, params: ['season', …] }   a template with {season}, {eventSlug},
+                                      {sessionSlug}, {eastSlug}, {streamNum}
+   The client never sees either. It asks for a ticket; the ticket is signed,
+   expires, names one source, and is redeemed here — where the real URL is
+   resolved server-side and the browser is redirected to it. */
+const STREAM_TARGETS_FILE = path.join(DATA_DIR, 'stream-targets.json');
+let streamTargets = new Map();
+let streamTargetsReady = false;
+
+function validStreamTargetUrl(url) {
+  if (typeof url !== 'string' || url.length > 500) return false;
+  // https only, except a loopback http target so local runs and the checks can
+  // point at a stub instead of a real provider.
+  if (/^https:\/\//i.test(url)) return true;
+  if (process.env.NODE_ENV !== 'production' && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(url)) return true;
+  return false;
+}
+
+function applyStreamTargets(raw) {
+  const next = new Map();
+  if (raw && typeof raw === 'object') {
+    for (const [id, entry] of Object.entries(raw)) {
+      const key = String(id || '').trim().slice(0, 40);
+      if (!FEED_SOURCE_IDS.has(key)) continue;
+      const url = entry && typeof entry === 'object' ? entry.url : entry;
+      if (!validStreamTargetUrl(url)) continue;
+      next.set(key, { url: String(url) });
+    }
+  }
+  streamTargets = next;
+  streamTargetsReady = true;
+  return streamTargets.size;
+}
+
+/* Load order: the env var is the deployment's source of truth (it survives a
+   redeploy on hosts without a disk), then the durable store, then a local file
+   for development. Reads never log URLs. */
+async function syncStreamTargets() {
+  if (process.env.STREAM_TARGETS_JSON) {
+    try {
+      const parsed = JSON.parse(process.env.STREAM_TARGETS_JSON);
+      const n = applyStreamTargets(parsed);
+      console.log(`[Stream] ${n} playable target(s) from STREAM_TARGETS_JSON`);
+      return n;
+    } catch (error) {
+      console.error('[Stream] STREAM_TARGETS_JSON is not valid JSON:', error.message);
+    }
+  }
+  if (UNIQUE_VISITOR_REMOTE_ENABLED) {
+    try {
+      const { found, value: stored } = await readUpstashJson(STREAM_TARGETS_REDIS_KEY);
+      if (found) {
+        const n = applyStreamTargets(stored);
+        console.log(`[Stream] ${n} playable target(s) loaded from storage`);
+        return n;
+      }
+    } catch (_) {}
+  }
+  const stored = readLocalJson(STREAM_TARGETS_FILE);
+  const n = applyStreamTargets(stored);
+  if (n) console.log(`[Stream] ${n} playable target(s) loaded`);
+  else console.warn('[Stream] No playable targets configured — the site will show feeds as unavailable. Set STREAM_TARGETS_JSON on the host, or add ' + path.basename(STREAM_TARGETS_FILE) + ' to DATA_DIR.');
+  return n;
+}
+
+async function persistStreamTargets() {
+  const plain = {};
+  for (const [id, entry] of streamTargets) plain[id] = { url: entry.url };
+  if (UNIQUE_VISITOR_REMOTE_ENABLED) {
+    try {
+      const payload = await upstashRequest(['SET', STREAM_TARGETS_REDIS_KEY, JSON.stringify(plain)]);
+      if (payload?.result === 'OK') return true;
+    } catch (_) {}
+  }
+  return writeLocalJson(STREAM_TARGETS_FILE, plain);
+}
+
+/* What the dashboard may see: which feeds are playable, and the target's host
+   so the operator can tell one provider from another — never the full URL. */
+function maskedStreamTargets() {
+  const out = {};
+  for (const source of FEED_SOURCES) {
+    const entry = streamTargets.get(source.id);
+    out[source.id] = {
+      label: source.label,
+      configured: Boolean(entry),
+      host: entry ? (() => { try { return new URL(entry.url.replace(/\{[a-z]+\}/gi, 'x')).hostname; } catch (_) { return null; } })() : null
+    };
+  }
+  return { targets: out, updatedAt: Date.now() };
+}
+
+/* Every ticket is the same shape — base64url payload + HMAC over `kind|body` —
+   kept apart by the kind, so a play ticket can never be presented as a site
+   permission and vice versa. */
+function signTicket(kind, payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto.createHmac('sha256', VISITOR_SECRET).update(`${kind}|${body}`).digest('base64url');
+  return `${body}.${sig}`;
+}
+
+/* Returns { payload, expired } when the signature and shape are sound, or null
+   when the ticket is forged/garbled. Expiry is REPORTED rather than folded in,
+   because the two failures deserve different answers: a forged ticket is a 403,
+   an expired one is a 410 that tells the page to reload. */
+function verifyTicket(kind, ticket) {
+  const parts = String(ticket || '').split('.');
+  if (parts.length !== 2) return null;
+  const [body, sig] = parts;
+  const expected = crypto.createHmac('sha256', VISITOR_SECRET).update(`${kind}|${body}`).digest('base64url');
+  if (!safeEqual(sig, expected)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (!payload || typeof payload !== 'object') return null;
+    return { payload, expired: Boolean(Number(payload.e)) && Date.now() > Number(payload.e) };
+  } catch (_) {
+    return null;
+  }
+}
+
+function createStreamTicket(sourceId, ttlMs = STREAM_TICKET_TTL_MS) {
+  return signTicket('stream-ticket', {
+    i: sourceId,
+    n: crypto.randomBytes(8).toString('hex'),
+    e: Date.now() + ttlMs
+  });
+}
+
+function verifyStreamTicket(ticket) {
+  const verified = verifyTicket('stream-ticket', ticket);
+  if (!verified) return null;
+  const id = String(verified.payload.i);
+  // 'override' is the operator's own feed: same ticket rules, different store.
+  if (!FEED_SOURCE_IDS.has(id) && id !== OVERRIDE_SOURCE_ID) return null;
+  return { sourceId: id, exp: Number(verified.payload.e) || 0, expired: verified.expired };
+}
+
+/* ── Site tickets: one permission per browser session ───────────────────── */
+function createSiteTicket(ttlMs = SITE_TICKET_TTL_MS) {
+  return signTicket('site-ticket', {
+    n: crypto.randomBytes(8).toString('hex'),
+    e: Date.now() + ttlMs
+  });
+}
+
+/* Absent, forged or expired all come back null. Expiry is checked inside
+   verifyTicket, next to the signature, so both failures share one code path. */
+function verifySiteTicket(ticket) {
+  const verified = verifyTicket('site-ticket', ticket);
+  // A gate has nothing useful to say about why: expired and forged are both
+  // "fetch a fresh one and try again".
+  if (!verified || verified.expired) return null;
+  return { exp: Number(verified.payload.e) || 0 };
+}
+
+/* Substitution is the only place client input touches a URL, so it is strict:
+   every placeholder is validated by shape, and anything that could carry a
+   host, a scheme or a path is rejected outright. */
+function renderStreamTarget(sourceId, params = {}) {
+  const entry = streamTargets.get(sourceId);
+  if (!entry) return null;
+  // A supplied season must be a real four-digit year; only a missing one falls
+  // back to the current season.
+  const rawSeason = params.season === undefined || params.season === null ? '' : String(params.season).trim();
+  if (rawSeason !== '' && !/^\d{4}$/.test(rawSeason)) return null;
+  const values = {
+    season: rawSeason || String(new Date().getFullYear()),
+    eventSlug: String(params.eventSlug || ''),
+    sessionSlug: String(params.sessionSlug || ''),
+    eastSlug: String(params.eastSlug || ''),
+    streamNum: String(Number(params.streamNum) || '')
+  };
+  if (!/^\d{4}$/.test(values.season)) return null;
+  for (const key of ['eventSlug', 'sessionSlug', 'eastSlug']) {
+    if (values[key] && !/^[a-z0-9-]{1,60}$/i.test(values[key])) return null;
+  }
+  if (values.streamNum && !/^\d{1,2}$/.test(values.streamNum)) return null;
+  const url = entry.url.replace(/\{([a-zA-Z]+)\}/g, (match, name) => {
+    const value = values[name];
+    return value === undefined || value === '' ? match : value;
+  });
+  // An unsubstituted placeholder means the client did not supply what the
+  // template needs: refuse rather than send the browser to a literal "{slug}".
+  if (/\{[a-zA-Z]+\}/.test(url) || !validStreamTargetUrl(url)) return null;
+  return url;
+}
+
+/* A ticket is minted only for a request that came from the site itself in a
+   browser: an authorized Origin or Referer must be present. This is the gate
+   that makes a scripted harvest of the source list cost a real browser. */
+function isBrowserSiteRequest(req) {
+  const origin = normalizeOrigin(req.headers.origin || '');
+  const referer = normalizeOrigin(req.headers.referer || req.headers.referrer || '');
+  if (!origin && !referer) return false;
+  return isAuthorizedSiteRequest(req);
+}
+
+// ─────────────────────────────────────────────
 // STREAM OVERRIDE PERSISTENCE
 // ─────────────────────────────────────────────
 
@@ -1271,13 +1537,14 @@ function storedOverrideState() {
 
 /* Viewers only ever see a live playback URL. A stopped override keeps its
    URL in the admin panel, but the public payload must not keep playing it. */
+/* Visitors get the badge and the element type. The address is the operator's
+   own feed target and stays here — the browser asks for an alias instead. */
 function publicOverrideState() {
-  return streamOverride.active && streamOverride.url ? {
-    active: true,
-    url: streamOverride.url,
-    type: streamOverride.type,
-    startedAt: streamOverride.startedAt || null
-  } : { active: false, url: null, type: null, startedAt: null };
+  return {
+    active: Boolean(streamOverride.active && streamOverride.url),
+    type: streamOverride.active && streamOverride.url ? streamOverride.type : null,
+    startedAt: streamOverride.active && streamOverride.url ? (streamOverride.startedAt || null) : null
+  };
 }
 
 function adminOverrideState() {
@@ -1513,6 +1780,7 @@ if (UNIQUE_VISITOR_REMOTE_ENABLED) {
   maintenanceInitPromise = syncMaintenanceState();
   newsInitPromise = syncNewsStore();
   sourceInitPromise = syncSourceConfig();
+  streamTargetsInitPromise = syncStreamTargets();
   overrideInitPromise = syncOverrideState();
   experimentalInitPromise = syncExperimentalState();
   streamWindowInitPromise = syncStreamWindowState();
@@ -1521,6 +1789,7 @@ if (UNIQUE_VISITOR_REMOTE_ENABLED) {
   maintenanceInitPromise = syncMaintenanceState();
   newsInitPromise = syncNewsStore();
   sourceInitPromise = syncSourceConfig();
+  streamTargetsInitPromise = syncStreamTargets();
   overrideInitPromise = syncOverrideState();
   experimentalInitPromise = syncExperimentalState();
   streamWindowInitPromise = syncStreamWindowState();
@@ -1837,6 +2106,7 @@ function visitorTracking(req, res, next) {
   if (
     req.path.startsWith('/admin') ||
     req.path.startsWith('/api/') ||
+    req.path.startsWith('/stream/') ||
     req.path === '/healthz' ||
     req.path === '/favicon.ico' ||
     isStaticAssetPath(req.path)
@@ -2883,7 +3153,97 @@ app.get('/api/stream/sources', async (req, res, next) => {
   try {
     await sourceInitPromise;
     res.setHeader('Cache-Control', 'no-store');
+    // ids, labels and which ones are switched off. Never a URL: see the stream
+    // targets section for why.
     res.json(publicSourceConfig());
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* The browser's only way to reach a stream. It has to come from the site, in a
+   browser (Origin or Referer present and authorized), and it has to name a
+   source that has a target configured. What it gets back is an alias on this
+   origin that expires — not the destination. */
+app.post('/api/stream/ticket', async (req, res, next) => {
+  try {
+    await Promise.all([sourceInitPromise, streamTargetsInitPromise]);
+    if (!STREAM_TICKETS_ENABLED) return res.status(503).json({ error: 'Stream tickets are disabled.' });
+    if (!isBrowserSiteRequest(req)) {
+      return res.status(403).json({ error: 'Stream tickets are only issued to the site itself.' });
+    }
+    const ip = getClientIp(req);
+    if (!consumeVisitorRateLimit(`stream-ticket:${ip}`, STREAM_TICKET_RATE_MAX)) {
+      res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
+      return res.status(429).json({ error: 'Too many stream tickets. Try again later.' });
+    }
+    const body = req.body || {};
+    const sourceId = String(body.sourceId || '').trim().slice(0, 40);
+    if (!FEED_SOURCE_IDS.has(sourceId) && sourceId !== OVERRIDE_SOURCE_ID) {
+      return res.status(400).json({ error: 'Unknown source id.' });
+    }
+    if (sourceId === OVERRIDE_SOURCE_ID) {
+      await overrideInitPromise;
+      if (!streamOverride.active || !streamOverride.url) {
+        return res.status(503).json({ error: 'No stream override is active.' });
+      }
+    } else {
+      if (!streamTargets.has(sourceId)) return res.status(503).json({ error: 'That source has no configured target.' });
+      // The template params are validated in renderStreamTarget; rendering here
+      // too means a client that sends nonsense gets a clear refusal instead of an
+      // alias that fails at play time.
+      if (!renderStreamTarget(sourceId, body.params || {})) {
+        return res.status(400).json({ error: 'Missing or invalid parameters for that source.' });
+      }
+    }
+    const ticket = createStreamTicket(sourceId);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ href: `/stream/${ticket}`, expiresAt: Date.now() + STREAM_TICKET_TTL_MS });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* The permission itself. Minted only for a request that came from the site in a
+   browser (authorized Origin/Referer), budgeted per address, worthless anywhere
+   else — the stream ticket's shape, applied to the rest of the API. */
+app.post('/api/site/ticket', async (req, res, next) => {
+  try {
+    if (!SITE_TICKETS_ENABLED) return res.status(503).json({ error: 'Site tickets are disabled.' });
+    if (!isBrowserSiteRequest(req)) {
+      return res.status(403).json({ error: 'Site tickets are only issued to the site itself.' });
+    }
+    const ip = getClientIp(req);
+    if (!consumeVisitorRateLimit(`site-ticket:${ip}`, SITE_TICKET_RATE_MAX)) {
+      res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
+      return res.status(429).json({ error: 'Too many site tickets. Try again later.' });
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ ticket: createSiteTicket(), expiresAt: Date.now() + SITE_TICKET_TTL_MS });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* Redeem an alias. The destination is resolved from the SERVER-side map at this
+   moment, which is what makes rotation instant: change or remove a target and
+   every alias already in the wild points at the new place (or stops working). */
+app.get('/stream/:ticket', async (req, res, next) => {
+  try {
+    if (!STREAM_TICKETS_ENABLED) return res.status(503).send('Stream tickets are disabled.');
+    const decoded = verifyStreamTicket(req.params.ticket);
+    if (!decoded) return res.status(403).send('Invalid stream ticket.');
+    if (decoded.exp && Date.now() > decoded.exp) return res.status(410).send('This stream ticket has expired — reload the page.');
+    await Promise.all([sourceInitPromise, streamTargetsInitPromise, overrideInitPromise]);
+    const url = decoded.sourceId === OVERRIDE_SOURCE_ID
+      ? (streamOverride.active && streamOverride.url ? streamOverride.url : null)
+      : renderStreamTarget(decoded.sourceId, req.query || {});
+    if (!url) return res.status(503).send('That source is not available right now.');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    // 302: the browser then loads the feed from the provider; our origin is
+    // never the stream host, and the alias itself is worth nothing elsewhere.
+    res.redirect(302, url);
   } catch (error) {
     next(error);
   }
@@ -3826,6 +4186,51 @@ app.post('/admin/api/stream/window', async (req, res, next) => {
     const durable = await persistStreamWindowState();
     const state = broadcastStreamWindowState();
     res.json({ success: true, streamWindow: state, durable });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* Playable targets, masked. The dashboard can see which feeds are playable and
+   which provider host each points at — never the full URL, so a screenshot or a
+   copied panel cannot leak the list. */
+app.get('/admin/api/stream/targets', async (req, res, next) => {
+  try {
+    await streamTargetsInitPromise;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(maskedStreamTargets());
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* Rotation. Body: { targets: { "<sourceId>": "<url>" | null } }. Setting a URL
+   replaces it for every future play AND every alias already handed out (the
+   destination is resolved at redemption, not stored in the ticket), so a list
+   that leaked can be killed by changing the target once. null removes it. */
+app.post('/admin/api/stream/targets', async (req, res, next) => {
+  try {
+    await streamTargetsInitPromise;
+    const body = req.body || {};
+    const updates = body.targets;
+    if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+      return res.status(400).json({ error: 'Body must be { targets: { sourceId: url | null } }.' });
+    }
+    const next = {};
+    for (const [id, entry] of streamTargets) next[id] = { url: entry.url };
+    for (const [rawId, rawUrl] of Object.entries(updates)) {
+      const id = String(rawId || '').trim().slice(0, 40);
+      if (!FEED_SOURCE_IDS.has(id)) return res.status(400).json({ error: `Unknown source id: ${id}` });
+      if (rawUrl === null) { delete next[id]; continue; }
+      const url = String(rawUrl || '').trim();
+      if (!validStreamTargetUrl(url)) {
+        return res.status(400).json({ error: `Target for ${id} must be an https URL (http is allowed for loopback in development).` });
+      }
+      next[id] = { url };
+    }
+    applyStreamTargets(next);
+    const durable = await persistStreamTargets();
+    res.json({ success: true, ...maskedStreamTargets(), durable });
   } catch (error) {
     next(error);
   }

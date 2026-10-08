@@ -17,8 +17,79 @@ Analytics, unique visitors, news and maintenance **reset on every rebuild** unle
 | `TRUST_PROXY_HOPS` | `1` on Render (`2` if Cloudflare sits in front) — see below |
 | `UPSTASH_REDIS_REST_URL` | Upstash REST URL |
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash REST token |
+| `STREAM_TARGETS_JSON` | Where each feed plays — see below. Without it every feed reports itself unavailable |
+| (nothing else) | The API permission needs no configuration: `/api` is closed by default and the site mints its own ticket |
 
 Create the Redis DB: [Upstash](https://console.upstash.com/) → Redis → Create → copy **REST URL** and **REST TOKEN**.
+
+### `STREAM_TARGETS_JSON` — the feed addresses live here, not in the site
+
+The site's JavaScript is public: anything in it can be copied in one request.
+So it no longer contains a single feed address. It holds ids and labels, asks
+this server for a short-lived signed alias at play time (`/api/stream/ticket` →
+`/stream/<ticket>`), and this server — which is where the addresses actually
+live — redirects the alias to the current target. Two consequences worth
+knowing:
+
+* rotating a feed is one value in this variable (or one call to
+  `POST /admin/api/stream/targets`), and **every alias already handed out
+  follows the new target** — a list somebody copied last week is worthless;
+* a value that is unset or wrong makes that feed show as unavailable, because
+  there is no longer a hardcoded fallback in the browser.
+
+```jsonc
+STREAM_TARGETS_JSON={
+  "sky-sports-f1": "https://…/embed/44.php",
+  "westream":     "https://…/westreamf1.php",
+  "sky-uk-2":     "https://…/shopping2/?channel_id=sky_sport_f1_uk",
+  "sky-uk":       "https://…/embed/racing/skyf1",
+  "f1tv":         "https://…/embed/f1/{season}/{eventSlug}/{sessionSlug}",
+  "appletv":      "https://…/embed/admin/{eastSlug}/3",
+  "dazn":         "https://…/embed/admin/{eastSlug}/5",
+  "wikisport":    "https://…/strm/f1.php"
+}
+```
+
+Values must be `https` (production refuses plain `http`; `http://127.0.0.1/…` is
+accepted off production so tests can point at a stub). The placeholders —
+`{season}`, `{eventSlug}`, `{sessionSlug}`, `{eastSlug}` — are filled from the
+session on screen, and each one is validated by shape before it is substituted,
+so a client cannot steer a redirect anywhere else. The ids are the eight above;
+a build that renames one simply stops receiving a target for it.
+
+Keep it out of the repo: on Render it is an environment variable, and locally
+`DATA_DIR/stream-targets.json` is git-ignored. `git log -S` a provider hostname
+and check you never committed one.
+
+Related tuning: `STREAM_TICKET_TTL_MS` (alias lifetime, default 1h),
+`STREAM_TICKET_RATE_MAX` (aliases per address per hour, default `120`),
+`STREAM_TICKETS=false` (refuse every alias while swapping providers).
+
+### The API is closed by default
+
+Everything under `/api` now needs a **site ticket**: `POST /api/site/ticket` →
+`{ ticket, expiresAt }`, minted only for a request carrying the site's own
+authorized `Origin`/`Referer` (a browser on the site), budgeted per address
+(60/hour). The page asks once per session, keeps it, and presents it as
+`X-Site-Ticket` — in `?ticket=` for `/api/events`, since an EventSource cannot
+set headers. A clone or a script has no ticket, so it gets `403` instead of your
+news, standings, schedule timing or feed list.
+
+Free of the gate, on purpose:
+
+| path | why |
+| --- | --- |
+| `/api/site/status` · `/api/auth/verify` | the page must be able to learn it is in maintenance *before* it can hold a ticket |
+| `/api/stream/ticket` · `/api/visitors/token` | they *are* permissions (own origin gate + budget) |
+| `/api/visitors/heartbeat` · `/event` · `/leave` | carry a signed visitor token, minted the same way |
+
+**Two knobs, and one escape hatch:**
+
+* `SITE_TICKET_TTL_MS` — how long a permission lasts (default 6h; the page
+  refreshes before it expires).
+* `SITE_TICKET_RATE_MAX` — mints per address per hour (default `60`).
+* `SITE_TICKETS=false` — switch the whole gate off instantly, without touching
+  the site. Use it if a deploy ever goes out in the wrong order (below).
 
 ### `TRUST_PROXY_HOPS` — do not skip this
 
