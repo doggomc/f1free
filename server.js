@@ -7,6 +7,13 @@ const cookieSession = require('cookie-session');
 const fs = require('fs');
 const path = require('path');
 
+/* The cdnlivetv relay: resolves a channel to a playable HLS playlist and serves
+   the player page the cockpit frames. See lib/cdnlivetv-relay.js for the why —
+   the upstream playlist is signed and expires in ~4h, so it is re-minted per
+   request rather than stored anywhere. */
+const cdnlivetvRelay = require('./lib/cdnlivetv-relay.js');
+const cdnlivetvPlayer = require('./lib/cdnlivetv-player.js');
+
 const app = express();
 
 app.disable('x-powered-by');
@@ -354,9 +361,21 @@ const FEED_SOURCES = [
   { id: 'f1tv', label: 'F1TV' },
   { id: 'appletv', label: 'AppleTV' },
   { id: 'dazn', label: 'DAZN' },
-  { id: 'wikisport', label: 'WikiSport' }
+  { id: 'wikisport', label: 'WikiSport' },
+  { id: 'cdnlivetv-f1', label: 'Sky F1 (CDN)' }
 ];
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
+
+/* Sources this server plays ITSELF instead of redirecting to a provider.
+   Everything above is a plain https target the browser is sent to; these need
+   a relay because the upstream hands out a signed playlist that dies in ~4h
+   and cannot be rendered by an <iframe>. Adding one is: an id here, an entry
+   in this table, and nothing else — the cockpit lists whatever the API serves.
+   `title` is what the player page shows; it never leaves the server as a URL. */
+const RELAY_CHANNELS = {
+  'cdnlivetv-f1': { name: 'sky sports f1', code: 'gb', title: 'Sky Sports F1' }
+};
+const RELAY_SOURCE_IDS = new Set(Object.keys(RELAY_CHANNELS));
 const sourceConfig = { disabled: new Set(), updatedAt: null };
 let sourceStoreReady = false;
 let sourceInitPromise = Promise.resolve(false);
@@ -505,32 +524,46 @@ app.use(compression({
   }
 }));
 
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
-  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
-  res.setHeader('Content-Security-Policy', [
+/* One policy, two callers. The default must stay byte-identical to the one in
+   netlifyf1/_headers — scripts/csp-check.js diffs them and fails on drift — so
+   anything that needs a different policy passes an override instead of editing
+   this list. The relay player page is the only such caller today: the cockpit
+   frames it (frame-ancestors), and hls.js fetches the segments itself
+   (connect-src) and feeds them to MSE (media-src blob:). */
+function buildCsp(overrides = {}) {
+  const frameAncestors = overrides.frameAncestors || "'self'";
+  const extraConnect = overrides.extraConnect || [];
+  const extraMedia = overrides.extraMedia || [];
+  const extraScript = overrides.extraScript || [];
+  return [
     "default-src 'self'",
     "base-uri 'self'",
     "object-src 'none'",
     // Mirrors netlifyf1/_headers: typefaces are served from this origin, so no
     // external font host is allowed. Keep the two policies in step — this one
     // governs local/preview serving of the site, that one governs Netlify.
-    "script-src 'self' 'unsafe-inline'",
+    ["script-src 'self' 'unsafe-inline'", ...extraScript].join(' '),
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' data: https://media.formula1.com",
-    "connect-src 'self' https://f1free.onrender.com https://api.jolpi.ca",
+    ["connect-src 'self' https://f1free.onrender.com https://api.jolpi.ca", ...extraConnect].join(' '),
     // 'self' matters now the player frames the site's own /stream/<ticket>
     // alias; any https feed host is still allowed by the scheme source.
     "frame-src 'self' https:",
-    "frame-ancestors 'self'",
+    `frame-ancestors ${frameAncestors}`,
     // data: is required by the iOS wake-lock fallback, which loops a 1px
     // silent data:video/mp4 to keep the screen on where Wake Lock is missing.
-    "media-src 'self' data: https:",
+    ["media-src 'self' data: https:", ...extraMedia].join(' '),
     "form-action 'self'"
-  ].join('; '));
+  ].join('; ');
+}
+
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+  res.setHeader('Content-Security-Policy', buildCsp());
   if (PRODUCTION_MODE) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   if (req.path.startsWith('/api/') || req.path.startsWith('/admin/api/') || req.path === '/healthz') {
     res.setHeader('Cache-Control', 'no-store');
@@ -1444,6 +1477,11 @@ function maskedStreamTargets() {
   const out = {};
   for (const source of FEED_SOURCES) {
     const entry = streamTargets.get(source.id);
+    // A relay source has no provider URL to show: this server is the host.
+    if (RELAY_SOURCE_IDS.has(source.id)) {
+      out[source.id] = { label: source.label, configured: true, host: 'this server (relay)', relay: true };
+      continue;
+    }
     out[source.id] = {
       label: source.label,
       configured: Boolean(entry),
@@ -3230,7 +3268,12 @@ app.post('/api/stream/ticket', async (req, res, next) => {
     if (!FEED_SOURCE_IDS.has(sourceId) && sourceId !== OVERRIDE_SOURCE_ID) {
       return res.status(400).json({ error: 'Unknown source id.' });
     }
-    if (sourceId === OVERRIDE_SOURCE_ID) {
+    if (RELAY_SOURCE_IDS.has(sourceId)) {
+      /* Played by this server, so there is no provider target to check: the
+         playlist is minted on demand at /relay/cdnlivetv/m3u8. Everything else
+         about the ticket — where it comes from, how long it lives — is the
+         same, so a relay source is no easier to harvest than any other. */
+    } else if (sourceId === OVERRIDE_SOURCE_ID) {
       await overrideInitPromise;
       if (!streamOverride.active || !streamOverride.url) {
         return res.status(503).json({ error: 'No stream override is active.' });
@@ -3283,6 +3326,13 @@ app.get('/stream/:ticket', async (req, res, next) => {
     if (!decoded) return res.status(403).send('Invalid stream ticket.');
     if (decoded.exp && Date.now() > decoded.exp) return res.status(410).send('This stream ticket has expired — reload the page.');
     await Promise.all([sourceInitPromise, streamTargetsInitPromise, overrideInitPromise]);
+    /* A relay source is played here rather than redirected: an <iframe> cannot
+       render an .m3u8, so it gets a document with hls.js inlined that pulls the
+       playlist from /relay/cdnlivetv/m3u8. Same ticket, same expiry — only the
+       thing handed to the browser changes. */
+    if (RELAY_SOURCE_IDS.has(decoded.sourceId)) {
+      return sendRelayPlayer(res, decoded.sourceId);
+    }
     const url = decoded.sourceId === OVERRIDE_SOURCE_ID
       ? (streamOverride.active && streamOverride.url ? streamOverride.url : null)
       : renderStreamTarget(decoded.sourceId, req.query || {});
@@ -3292,6 +3342,105 @@ app.get('/stream/:ticket', async (req, res, next) => {
     // 302: the browser then loads the feed from the provider; our origin is
     // never the stream host, and the alias itself is worth nothing elsewhere.
     res.redirect(302, url);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ─────────────────────────────────────────────
+// RELAY — cdnlivetv (played by this server, not redirected)
+// ─────────────────────────────────────────────
+
+/* Two routes and a token cache.
+
+   /stream/<ticket>      → the player page the cockpit frames (HTML)
+   /relay/cdnlivetv/m3u8 → the live playlist, segments rewritten to absolute urls
+
+   Only the ~2KB playlist crosses this server: the segments are absolute
+   https://cdnlivetv.tv/… urls the viewer's browser fetches directly, so a full
+   race weekend costs the Render instance a few megabytes, not the stream.
+
+   The playlist route is the one relay thing that is reachable without a ticket,
+   so it carries the same gate as ticket minting (an authorized browser origin)
+   plus a single addition: our own player page. That page is served from this
+   origin and fetches same-origin, so the browser sends no Origin — only a
+   Referer whose origin is us. Anything else is refused. */
+
+const RELAY_RATE_MAX = Number(process.env.RELAY_RATE_MAX || 180);
+/* How long the page's own playback permission lasts. A race with a red-flag
+   delay runs past the 1h stream ticket, so this is deliberately longer — it is
+   scoped to one source and worthless off this origin either way. */
+const RELAY_PLAYBACK_TTL_MS = Number(process.env.RELAY_PLAYBACK_TTL_MS || 12 * 60 * 60 * 1000);
+
+/* The player page is served from this origin and the frame is mounted with
+   referrerpolicy="no-referrer", so its playlist fetch is a same-origin GET with
+   neither Origin nor Referer — there is nothing for the origin gate to read.
+   So the page carries its own permission instead: minted here when the page is
+   handed out (which only happens after a real stream ticket is redeemed),
+   scoped to one source, and expiring. Same shape as every other ticket in this
+   file, kept apart by its kind. */
+function createRelayTicket(sourceId, ttlMs = RELAY_PLAYBACK_TTL_MS) {
+  return signTicket('relay-ticket', {
+    i: sourceId,
+    n: crypto.randomBytes(8).toString('hex'),
+    e: Date.now() + ttlMs
+  });
+}
+
+function verifyRelayTicket(ticket, sourceId) {
+  const verified = verifyTicket('relay-ticket', ticket);
+  if (!verified || verified.expired) return false;
+  return String(verified.payload.i) === sourceId;
+}
+
+function siteOriginForCsp() {
+  const fromEnv = String(process.env.ALLOWED_ORIGIN || '').split(',')[0].trim();
+  if (fromEnv) return normalizeOrigin(fromEnv) || fromEnv;
+  return `https://${AUTHORIZED_DOMAIN}`;
+}
+
+/* The iframe target for a relay source. Deliberately not a redirect: the frame
+   has to stay on this origin for its playlist fetch to be same-origin. */
+function sendRelayPlayer(res, sourceId) {
+  const channel = RELAY_CHANNELS[sourceId];
+  if (!channel) return res.status(503).send('That source is not available right now.');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Content-Security-Policy', buildCsp({
+    // The cockpit frames this page from the site's origin.
+    frameAncestors: `'self' ${siteOriginForCsp()}`,
+    // hls.js fetches the manifest from us and the segments from the CDN.
+    extraConnect: [cdnlivetvRelay.CDN_ORIGIN],
+    // MediaSource Extensions attach via a blob: url, and hls.js runs its
+    // demuxer in a Worker created from one. Without blob: in script-src the
+    // worker is refused and hls.js quietly falls back to the main thread.
+    extraMedia: ['blob:'],
+    extraScript: ['blob:']
+  }));
+  res.type('html').send(cdnlivetvPlayer.buildPlayerPage({
+    title: channel.title || 'Live stream',
+    src: `/relay/cdnlivetv/m3u8?t=${encodeURIComponent(createRelayTicket(sourceId))}`
+  }));
+}
+
+app.get('/relay/cdnlivetv/m3u8', async (req, res, next) => {
+  try {
+    /* Accepted callers: the site itself (authorized browser origin), or the
+       player page this server handed out, presenting its playback ticket. */
+    const playbackTicket = String(req.query.t || '').slice(0, 400);
+    if (!isBrowserSiteRequest(req) && !verifyRelayTicket(playbackTicket, 'cdnlivetv-f1')) {
+      return res.status(403).type('text/plain')
+        .send('Relay playlists are only served to the site or to the player it frames.');
+    }
+    const ip = getClientIp(req);
+    if (!consumeVisitorRateLimit(`relay-m3u8:${ip}`, RELAY_RATE_MAX)) {
+      res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
+      return res.status(429).type('text/plain').send('Too many relay requests. Try again later.');
+    }
+    const channel = RELAY_CHANNELS['cdnlivetv-f1'];
+    const { playlist } = await cdnlivetvRelay.getPlaylist(channel.name, channel.code);
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('application/vnd.apple.mpegurl').send(playlist);
   } catch (error) {
     next(error);
   }

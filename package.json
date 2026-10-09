@@ -18,6 +18,8 @@
     "check:admin": "node scripts/admin-dom-check.js",
     "check:security": "node scripts/security-check.js",
     "check:relay": "node scripts/relay-audio-check.js",
+    "check:cdnlivetv": "node scripts/cdnlivetv-check.js",
+    "cdnlivetv": "node scripts/cdnlivetv-check.js",
     "smoke": "node scripts/smoke-test.js",
     "dom": "node scripts/admin-dom-check.js",
     "site": "node scripts/site-dom-check.js",

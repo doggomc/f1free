@@ -161,3 +161,83 @@ npm run check:security   # abuse-resistance only (rate limits, lockout, origin g
 `npm run check:site` reads `../netlifyf1` by default — set `SITE_DIR` if the
 site lives elsewhere. The relay check prints `skip` when the optional voice
 packages are absent, so a skip is never mistaken for a pass.
+
+---
+
+## The cdnlivetv relay (source `cdnlivetv-f1`)
+
+Eight of the feeds are ordinary provider pages: the server holds an address and
+`/stream/<ticket>` redirects the browser to it. `cdnlivetv-f1` is different —
+it is played by **this server** rather than redirected to.
+
+### Why it cannot be a target like the others
+
+Two reasons, both forced by the browser:
+
+1. **The upstream playlist is signed and short-lived.** It expires ~4 hours
+   after it is minted. Tampering is pointless — pushing the expiry out, blanking
+   the signature or swapping the domain all come back `403 Invalid token
+   signature`. A stored address would be dead within the hour.
+2. **An `<iframe>` cannot render an `.m3u8`.** The cockpit frames every source,
+   and a browser handed a playlist offers it as a download. So the frame has to
+   receive a *document* that plays HLS inside it.
+
+So the relay mints a token on demand (cheap, unlimited, ~4h each), caches it per
+channel and refreshes it 5 minutes before it expires, then serves that document.
+
+### What it adds
+
+| Route | Purpose |
+|---|---|
+| `/stream/<ticket>` | for a relay source: the player page (HTML, hls.js inlined) instead of a redirect |
+| `/relay/cdnlivetv/m3u8?t=…` | the live playlist, segments rewritten to absolute urls |
+| `node scripts/cdnlivetv-check.js` | four-hop diagnostic: player page → token → playlist → segment |
+
+**It does not proxy the video.** Only the ~2 KB playlist crosses this server;
+segment urls are rewritten to absolute `https://cdnlivetv.tv/…` so the viewer's
+browser fetches the video directly. A full race weekend costs the instance a few
+megabytes, not a stream.
+
+### Permission model
+
+The playlist route is the one relay path reachable without a stream ticket, so
+it accepts exactly two callers:
+
+* the site itself — an authorized browser origin (`ALLOWED_ORIGIN`);
+* the player page this server handed out, presenting the playback ticket that
+  was minted into it when the page was served.
+
+The playback ticket is scoped to one source and lasts `RELAY_PLAYBACK_TTL_MS`
+(default 12h — longer than the 1h stream ticket, because a race with a red-flag
+delay runs past it). It is only obtainable by redeeming a real stream ticket, so
+the relay is no easier to harvest than any other source.
+
+The player page also needs a CSP the rest of the site does not: the cockpit
+frames it (`frame-ancestors` names the site), hls.js fetches the segments itself
+(`connect-src`), and MSE plus the demuxer worker need `blob:`. That is why
+`buildCsp()` takes overrides — the default policy stays byte-identical to
+`netlifyf1/_headers`, which `scripts/csp-check.js` diffs.
+
+### Tuning
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RELAY_RATE_MAX` | `180` | playlist requests per address per minute (a viewer uses ~6) |
+| `RELAY_PLAYBACK_TTL_MS` | `43200000` | how long a player page's playback permission lasts |
+
+### Adding another relay channel
+
+1. add an id to `FEED_SOURCES` (the cockpit lists whatever the API serves, so
+   that alone makes it appear — no front-end change);
+2. add `{ name, code, title }` for it to `RELAY_CHANNELS`;
+3. check it: `node scripts/cdnlivetv-check.js "BBC One" gb`.
+
+### Failure modes
+
+Run the check first. Its four hops fail differently:
+
+* **hop 1 (player page)** — this host is blocked or geo-fenced. Nothing to fix
+  in code; try another country code to tell the two apart.
+* **hop 2 (token)** — cdnlivetv changed their obfuscation. Update
+  `extractStreamUrl()` in `lib/cdnlivetv-relay.js`.
+* **hops 3–4** — transient, or the channel is offline.
