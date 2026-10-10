@@ -50,7 +50,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  Client, GatewayIntentBits, IntentsBitField, Partials, ActionRowBuilder,
+  Client, GatewayIntentBits, Partials, ActionRowBuilder,
   ButtonBuilder, ButtonStyle, REST, Routes, Events, ActivityType,
 } = require('discord.js');
 /* Optional voice relay. Loaded lazily so the bot still boots (and the site
@@ -432,19 +432,37 @@ function start(deps) {
     if (humans === 0) relay.setPaused(guild.id, true);
   }
 
+  /* PRIVILEGED and OFF BY DEFAULT.
+
+     Asking for GuildMembers while the switch is off in the Developer Portal
+     makes the gateway refuse the whole connection (close 4014), which takes
+     the ENTIRE bot down over one optional feature. It is also not something
+     we can recover from by mutating options after the fact: discord.js
+     captures the intent bitfield when the client is built, so a retry on the
+     same client re-sends the same intents and fails identically.
+
+     So it is opt-in. Everything works without it; only the automatic revoke
+     when a member leaves the server is missing, and /unlink still covers
+     that by hand. To turn it on:
+       1. Developer Portal > your app > Bot > Privileged Gateway Intents
+          > enable "Server Members Intent"
+       2. set DISCORD_GUILD_MEMBERS_INTENT=1 on the service
+       3. restart */
+  const WANT_GUILD_MEMBERS = String(process.env.DISCORD_GUILD_MEMBERS_INTENT || '0').trim() === '1';
+  const clientIntents = [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.GuildVoiceStates, // audio relay + empty-room pause
+  ];
+  if (WANT_GUILD_MEMBERS) clientIntents.push(GatewayIntentBits.GuildMembers);
+  if (!WANT_GUILD_MEMBERS) {
+    log('auto-revoke on member leave is OFF (set DISCORD_GUILD_MEMBERS_INTENT=1 '
+      + 'and enable the Server Members Intent in the portal to switch it on)');
+  }
+
   const client = new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.GuildMessageReactions,
-      GatewayIntentBits.GuildVoiceStates, // audio relay + empty-room pause
-      /* PRIVILEGED: must also be switched on in the Developer Portal, or the
-         client will refuse to connect. Needed only so a member leaving the
-         server can have their stream access revoked automatically. If it is
-         not enabled, everything else still works — see the note at the
-         GuildMemberRemove handler. */
-      GatewayIntentBits.GuildMembers,
-    ],
+    intents: clientIntents,
     partials: [Partials.Message, Partials.Reaction],
   });
 
@@ -1128,19 +1146,14 @@ function start(deps) {
     const msg = String((error && error.message) || error);
     log('login failed:', msg);
     if (!isDisallowedIntentError(error)) return;
-    log('GuildMembers is not enabled in the Developer Portal (Applications > Bot > '
-      + 'Privileged Gateway Intents). Reconnecting without it. Everything works except '
-      + 'auto-revoke when a member leaves — flip the switch and restart to enable that.');
-    try {
-      const bit = client.options.intents.bitfield & ~GatewayIntentBits.GuildMembers;
-      client.options.intents = new IntentsBitField(bit);
-    } catch (e) {
-      log('could not drop the GuildMembers intent:', e && e.message);
-      return;
-    }
-    setTimeout(() => {
-      client.login(deps.token).catch(e2 => log('login retry failed:', e2 && e2.message));
-    }, 1500);
+    /* Deliberately NOT retried: the intents were fixed when the client was
+       constructed, so a second attempt sends the same payload and fails the
+       same way — that just spams the log. Explain the two switches instead. */
+    log('the gateway refused our intents. Two things must both be true to use '
+      + 'GuildMembers: the "Server Members Intent" toggle in the Developer Portal '
+      + '(Applications > Bot > Privileged Gateway Intents) AND '
+      + 'DISCORD_GUILD_MEMBERS_INTENT=1 here. Until then the bot runs without it; '
+      + 'everything works except auto-revoke when a member leaves.');
   });
 
   /* Handle for server.js: flush the store during graceful shutdown. */
