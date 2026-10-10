@@ -900,10 +900,10 @@ function warnUniqueStore(error) {
   console.warn(`[Visitors] Durable store unavailable; keeping the last confirmed total. ${error?.message || error}`);
 }
 
-async function upstashRequest(commands) {
+async function upstashRequest(commands, timeoutMs = 3500) {
   if (!UNIQUE_VISITOR_REMOTE_ENABLED) throw new Error('Upstash is not configured');
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3500);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   timeout.unref?.();
 
   try {
@@ -932,10 +932,25 @@ async function upstashRequest(commands) {
   }
 }
 
+// Boot-time reads only. A cold Upstash connection (DNS + TLS) can take longer than
+// the runtime budget once, so retry with a longer timeout instead of starting empty.
+async function upstashStartupRequest(commands, attempts = 3, timeoutMs = 10_000) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await upstashRequest(commands, timeoutMs);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+    }
+  }
+  throw lastError;
+}
+
 async function syncUniqueVisitorCount() {
   if (!UNIQUE_VISITOR_REMOTE_ENABLED) return false;
   try {
-    const payload = await upstashRequest(['SCARD', UNIQUE_VISITOR_REDIS_KEY]);
+    const payload = await upstashStartupRequest(['SCARD', UNIQUE_VISITOR_REDIS_KEY]);
     const count = Number(payload?.result);
     if (!Number.isFinite(count) || count < 0) throw new Error('Upstash returned an invalid visitor count');
     persistentUniqueCount = count;
@@ -2405,7 +2420,8 @@ async function syncAnalyticsStore() {
       }
       analyticsStoreReady = fileStoreReady;
     } else {
-      const payload = await upstashRequest(['HGETALL', ANALYTICS_REDIS_KEY]);
+      // Startup read gets a longer budget: a cold Upstash connection can exceed the 3.5s runtime limit.
+      const payload = await upstashStartupRequest(['HGETALL', ANALYTICS_REDIS_KEY]);
       const result = payload?.result;
       // Upstash HGETALL can return {field:value} object or [field,value,…] flat array depending on REST version
       if (Array.isArray(result)) {
@@ -2425,13 +2441,28 @@ async function syncAnalyticsStore() {
     analyticsStoreReady = false;
   } finally {
     pruneAnalytics();
-    analyticsHydrated = true;
+    // Writes stay paused until a read succeeds. Otherwise a flush would HSET partial
+    // buckets over the stored totals for the same hours and days.
+    if (!UNIQUE_VISITOR_REMOTE_ENABLED || analyticsStoreReady) analyticsHydrated = true;
+    else scheduleAnalyticsRehydrate();
     // Diagnostic — helps confirm Redis hydration after a rebuild (Render wipes disk)
     if (UNIQUE_VISITOR_REMOTE_ENABLED) {
       console.log(`[Analytics] hydrated daily=${analytics.daily.size} hourly=${analytics.hourly.size} live=${analytics.live.length} since=${analytics.since ? new Date(analytics.since).toISOString() : '—'} store=${analyticsStoreReady ? 'redis' : 'memory'}`);
     }
   }
   return analyticsStoreReady;
+}
+
+let analyticsRehydrateTimer = null;
+function scheduleAnalyticsRehydrate() {
+  if (analyticsRehydrateTimer) return;
+  console.warn('[Analytics] Hydration failed; writes are paused and the read is retried every 15s.');
+  analyticsRehydrateTimer = setInterval(() => {
+    syncAnalyticsStore().then(ok => {
+      if (ok && analyticsRehydrateTimer) { clearInterval(analyticsRehydrateTimer); analyticsRehydrateTimer = null; }
+    }).catch(() => {});
+  }, 15_000);
+  analyticsRehydrateTimer.unref?.();
 }
 
 function analyticsIsDirty() {
