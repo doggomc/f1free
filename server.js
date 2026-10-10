@@ -3229,15 +3229,50 @@ if (SITE_STATIC_SAFE) {
    browser downloads it one time and keeps it. The filename is fixed, so the
    cache is only broken by a deploy that changes the library — content hashing
    is not worth the plumbing here. */
+/* hls.js is read and compressed ONCE, at boot, and every request is handed the
+   same ready-made bytes.
+
+   It used to be read from disk and compressed per request. That is harmless one
+   viewer at a time, but every restart sends the whole audience back at once,
+   and 300 simultaneous viewers meant 300 copies of a 414 KB file plus 300 live
+   compressors: memory peaked at ~590 MB against Render's 512 MB, the instance
+   was killed, everyone reconnected at once again — a restart loop (502s).
+   Precompressed, a request allocates nothing. Brotli quality 9, not 11: 11 is
+   ~0.8 s of CPU here, which on Render's fractional CPU would hold up boot for
+   several seconds before the port opens; 9 is ~40 ms and only ~9 KB larger. */
+const HLS_VENDOR = (() => {
+  try {
+    const zlib = require('zlib');
+    const raw = fs.readFileSync(path.join(__dirname, 'vendor', 'hls.min.js'));
+    const br = zlib.brotliCompressSync(raw, { params: {
+      [zlib.constants.BROTLI_PARAM_QUALITY]: 9,
+      [zlib.constants.BROTLI_PARAM_SIZE_HINT]: raw.length,
+    } });
+    const gz = zlib.gzipSync(raw, { level: 9 });
+    const etag = '"hls-' + crypto.createHash('sha1').update(raw).digest('hex').slice(0, 16) + '"';
+    return { raw, br, gz, etag };
+  } catch (error) {
+    console.warn('[Vendor] hls.min.js unavailable:', error.message);
+    return null;
+  }
+})();
+
 app.get('/vendor/hls.min.js', (req, res) => {
-  const file = path.join(__dirname, 'vendor', 'hls.min.js');
-  fs.readFile(file, (err, buf) => {
-    if (err) return res.status(404).type('text/plain').send('hls.js is not bundled.');
-    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    res.setHeader('Timing-Allow-Origin', '*');
-    res.send(buf);
-  });
+  if (!HLS_VENDOR) return res.status(404).type('text/plain').send('hls.js is not bundled.');
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  res.setHeader('Timing-Allow-Origin', '*');
+  res.setHeader('Vary', 'Accept-Encoding');
+  res.setHeader('ETag', HLS_VENDOR.etag);
+  if (req.headers['if-none-match'] === HLS_VENDOR.etag) return res.status(304).end();
+  const accept = String(req.headers['accept-encoding'] || '');
+  let body = HLS_VENDOR.raw;
+  // Setting Content-Encoding here also tells the compression middleware to
+  // leave the body alone ("already encoded").
+  if (/\bbr\b/.test(accept)) { res.setHeader('Content-Encoding', 'br'); body = HLS_VENDOR.br; }
+  else if (/\bgzip\b/.test(accept)) { res.setHeader('Content-Encoding', 'gzip'); body = HLS_VENDOR.gz; }
+  res.setHeader('Content-Length', String(body.length));
+  res.end(body);
 });
 
 /* ── self-check ────────────────────────────────────────────────────────────
