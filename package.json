@@ -1,7 +1,7 @@
 {
   "name": "freef1-server",
   "version": "2.0.0",
-  "description": "FreeF1 — live site, visitor tracking, admin dashboard, stream override",
+  "description": "FreeF1 \u2014 live site, visitor tracking, admin dashboard, stream override",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -30,7 +30,8 @@
     "check:rounds": "node scripts/round-meeting-check.js",
     "rounds": "node scripts/round-meeting-check.js",
     "check:motion": "node scripts/motion-check.js",
-    "motion": "node scripts/motion-check.js"
+    "motion": "node scripts/motion-check.js",
+    "check:discord": "node scripts/discord-link-check.js"
   },
   "engines": {
     "node": ">=18.11"

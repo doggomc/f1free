@@ -456,6 +456,7 @@ const SITE_TICKET_FREE_PATHS = new Set([
 ]);
 const STREAM_TICKET_TTL_MS = Number(process.env.STREAM_TICKET_TTL_MS || 60 * 60 * 1000);
 const STREAM_TICKET_RATE_MAX = Number(process.env.STREAM_TICKET_RATE_MAX || 120);
+const DISCORD_CODE_RATE_MAX = Number(process.env.DISCORD_CODE_RATE_MAX || 20);
 /* The leave beacon fires per TAB, and a browser can have several. Closing one
    of two tabs must not drop the browser, so a goodbye only ends the count if
    no heartbeat follows it — and the grace is deliberately longer than the
@@ -896,6 +897,39 @@ function writeLocalJson(filePath, value) {
     console.warn(`[Storage] Could not write ${filePath}. ${error?.message || error}`);
     return false;
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Discord account linking for the gated relay source — see lib/discord-link.js.
+   One predicate (hasDiscordAccess) is used by the ticket route, the player page
+   and the playlist, so they cannot drift: if one ever forgets the check, the
+   other two still hold. DISCORD_LINK_REQUIRED=0 reopens the source without a
+   code change, which is also how the rest of the suite tests unlocked paths.
+   ───────────────────────────────────────────────────────────────────────────── */
+const DISCORD_LINK_REQUIRED = process.env.DISCORD_LINK_REQUIRED !== '0';
+const discordLink = require('./lib/discord-link.js').createStore({
+  readLocalJson,
+  writeLocalJson,
+  upstash: UNIQUE_VISITOR_REMOTE_ENABLED ? upstashRequest : null,
+  redisKey: 'freef1:discordlink:v1',
+  fileKey: path.join(DATA_DIR, 'discord-link.json'),
+  secret: process.env.DISCORD_LINK_SECRET || ADMIN_SECRET,
+  log: (...a) => console.log('[DiscordLink]', ...a),
+});
+
+/* SameSite=None is only sent over https, and a browser drops it otherwise, so
+   the flag follows the real protocol rather than NODE_ENV: behind Render's TLS
+   proxy the socket is plain http even though the visitor is on https, and
+   getting this wrong silently locks every player page out. */
+function isSecureRequest(req) {
+  if (req.secure) return true;
+  const forwarded = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  return forwarded === 'https';
+}
+
+async function hasDiscordAccess(req) {
+  if (!DISCORD_LINK_REQUIRED) return { linked: true, bypass: true };
+  return discordLink.checkRequest(req);
 }
 
 function dataStoreStatus(remoteEnabled, remoteReady) {
@@ -3251,6 +3285,66 @@ app.get('/api/stream/sources', async (req, res, next) => {
    browser (Origin or Referer present and authorized), and it has to name a
    source that has a target configured. What it gets back is an alias on this
    origin that expires — not the destination. */
+/* ─────────────────────────────────────────────────────────────────────────────
+   Discord link API. These ride the ordinary site ticket, so a script cannot
+   mint codes without first loading the page like a browser.
+   ───────────────────────────────────────────────────────────────────────────── */
+app.post('/api/discord/link-code', async (req, res, next) => {
+  try {
+    const ip = getClientIp(req);
+    if (!consumeVisitorRateLimit(`discord-code:${ip}`, DISCORD_CODE_RATE_MAX)) {
+      res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
+      return res.status(429).json({ error: 'Too many codes requested. Try again in a little while.' });
+    }
+    const result = await discordLink.createCode();
+    if (result.error) return res.status(503).json({ error: result.error });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ code: result.code, expiresAt: result.expiresAt, ttlMs: discordLink.CODE_TTL_MS });
+  } catch (error) { next(error); }
+});
+
+app.get('/api/discord/link-status', async (req, res, next) => {
+  try {
+    const code = String(req.query.code || '').slice(0, 16);
+    if (!code) return res.status(400).json({ error: 'Missing code.' });
+    const status = await discordLink.status(code);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(status);
+  } catch (error) { next(error); }
+});
+
+app.post('/api/discord/link-confirm', async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const result = await discordLink.confirm(String(body.code || '').slice(0, 16), body.yes === true);
+    res.setHeader('Cache-Control', 'no-store');
+    if (result.error) return res.status(400).json({ error: result.error });
+    if (!result.ok) return res.json({ ok: false, reason: result.reason });
+    /* SameSite=None so the cookie also rides the cross-site /stream/<ticket>
+       iframe request — 'strict' would leave the player page locked out. */
+    res.setHeader('Set-Cookie', discordLink.cookieValue(result.token, { secure: isSecureRequest(req) }));
+    res.json({ ok: true, profile: result.profile });
+  } catch (error) { next(error); }
+});
+
+app.get('/api/discord/me', async (req, res, next) => {
+  try {
+    const access = await hasDiscordAccess(req);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ linked: access.linked, profile: access.profile || null, reason: access.reason || null });
+  } catch (error) { next(error); }
+});
+
+/* Only forgets this browser's cookie. Real revocation is /unlink in Discord,
+   which drops the account itself so every browser loses access at once. */
+app.post('/api/discord/unlink', async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Set-Cookie', discordLink.clearedCookie({ secure: isSecureRequest(req) }));
+    res.json({ ok: true });
+  } catch (error) { next(error); }
+});
+
 app.post('/api/stream/ticket', async (req, res, next) => {
   try {
     await Promise.all([sourceInitPromise, streamTargetsInitPromise]);
@@ -3273,6 +3367,13 @@ app.post('/api/stream/ticket', async (req, res, next) => {
          playlist is minted on demand at /relay/cdnlivetv/m3u8. Everything else
          about the ticket — where it comes from, how long it lives — is the
          same, so a relay source is no easier to harvest than any other. */
+      const access = await hasDiscordAccess(req);
+      if (!access.linked) {
+        return res.status(403).json({
+          error: 'discord-required',
+          message: 'This source is limited to linked Discord accounts.'
+        });
+      }
     } else if (sourceId === OVERRIDE_SOURCE_ID) {
       await overrideInitPromise;
       if (!streamOverride.active || !streamOverride.url) {
@@ -3331,6 +3432,11 @@ app.get('/stream/:ticket', async (req, res, next) => {
        playlist from /relay/cdnlivetv/m3u8. Same ticket, same expiry — only the
        thing handed to the browser changes. */
     if (RELAY_SOURCE_IDS.has(decoded.sourceId)) {
+      const access = await hasDiscordAccess(req);
+      if (!access.linked) {
+        return res.status(403).type('text/plain')
+          .send('This source is limited to linked Discord accounts. Open it from the site to link yours.');
+      }
       return sendRelayPlayer(res, decoded.sourceId);
     }
     const url = decoded.sourceId === OVERRIDE_SOURCE_ID
@@ -3431,6 +3537,14 @@ app.get('/relay/cdnlivetv/m3u8', async (req, res, next) => {
     if (!isBrowserSiteRequest(req) && !verifyRelayTicket(playbackTicket, 'cdnlivetv-f1')) {
       return res.status(403).type('text/plain')
         .send('Relay playlists are only served to the site or to the player it frames.');
+    }
+    /* The player page only exists for a browser that already passed the check
+       at /stream/<ticket>, but the playlist is its own route and can be called
+       directly with a ticket, so it is checked here too. */
+    const access = await hasDiscordAccess(req);
+    if (!access.linked) {
+      return res.status(403).type('text/plain')
+        .send('This source is limited to linked Discord accounts.');
     }
     const ip = getClientIp(req);
     if (!consumeVisitorRateLimit(`relay-m3u8:${ip}`, RELAY_RATE_MAX)) {
@@ -4559,6 +4673,8 @@ if (process.env.DISCORD_BOT_TOKEN) {
       // Default audio source for /watchparty start. Discord bots can relay
       // audio into a voice channel, never video — see bot/STREAMING.md.
       audioUrl: String(process.env.FREEF1_AUDIO_URL || process.env.APEX_AUDIO_URL || '').trim(),
+      // Lets /link and /unlink act on the same link table the API reads.
+      discordLink,
       log: (...a) => console.log('[Bot]', ...a),
     });
   } catch (error) {

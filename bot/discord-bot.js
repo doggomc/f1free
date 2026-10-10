@@ -693,7 +693,25 @@ function start(deps) {
       ]
     },
     { name: 'website', description: 'The FreeF1 stream hub — link embed.' },
+    /* Not owner-only: the entire point is that any member can unlock the
+       gated stream by proving they are in the server. */
+    {
+      name: 'link', description: 'Link your Discord account to FreeF1 to unlock the Sky F1 (CDN) source.', dm_permission: false,
+      options: [
+        { name: 'code', type: 3, description: 'The 5-character code shown on the site', required: true, min_length: 4, max_length: 16 },
+      ],
+    },
+    { name: 'unlink', description: 'Unlink your Discord account from FreeF1 and revoke its stream access.', dm_permission: false },
   ];
+
+  /* The bridge to the site's link table. Absent only if the server was not
+     wired up, in which case the commands say so instead of throwing. */
+  const links = deps.discordLink || null;
+
+  function isLinkChannel(interaction) {
+    const name = interaction.channel && interaction.channel.name ? String(interaction.channel.name) : '';
+    return name.toLowerCase() === 'link';
+  }
 
   /* ── interactions ── */
   async function onInteraction(interaction) {
@@ -705,6 +723,51 @@ function start(deps) {
     if (!interaction.isChatInputCommand()) return;
     try {
       const cmd = interaction.commandName;
+
+      /* Everyone, not just the owner — and deliberately before the owner gate
+         below. Kept to a channel named #link so the server's other channels
+         are not cluttered with codes and the command has an obvious home. */
+      if (cmd === 'link' || cmd === 'unlink') {
+        if (!links) {
+          return interaction.reply({ content: 'Linking is not configured on the site right now.', ephemeral: true });
+        }
+        if (!isLinkChannel(interaction)) {
+          return interaction.reply({ content: 'Run this in the #link channel.', ephemeral: true });
+        }
+        const user = interaction.user;
+        const profile = {
+          id: user.id,
+          username: user.username,
+          globalName: user.globalName || user.username,
+          avatar: user.displayAvatarURL ? user.displayAvatarURL({ size: 64, extension: 'png' }) : '',
+          guildId: interaction.guildId || '',
+        };
+
+        if (cmd === 'unlink') {
+          const result = await links.revoke(user.id);
+          log(`unlink ${user.tag || user.id}: ${result.wasLinked ? 'revoked' : 'was not linked'}`);
+          return interaction.reply({
+            content: result.wasLinked
+              ? 'Your Discord account is unlinked. Every browser using it has lost access to the Sky F1 (CDN) source.'
+              : 'That account was not linked to begin with.',
+            ephemeral: true,
+          });
+        }
+
+        const code = String(interaction.options.getString('code') || '').trim().toUpperCase();
+        const result = await links.claimCode(code, profile);
+        if (result.error) {
+          return interaction.reply({ content: `Could not link: ${result.error}`, ephemeral: true });
+        }
+        log(`link code ${code} claimed by ${user.tag || user.id}`);
+        /* Ephemeral: the code is a credential until the site confirms it, and
+           the site shows the profile back for the member to approve. */
+        return interaction.reply({
+          content: `Code ${code} accepted for **${profile.globalName || profile.username}**. Confirm on the site — it should be asking "is this you?" now.`,
+          ephemeral: true,
+        });
+      }
+
       if (cmd !== 'website' && interaction.user.id !== OWNER_ID) {
         return interaction.reply({ content: 'Owner-only command.', ephemeral: true });
       }

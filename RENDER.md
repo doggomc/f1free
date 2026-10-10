@@ -227,10 +227,37 @@ frames it (`frame-ancestors` names the site), hls.js fetches the segments itself
 
 ### Adding another relay channel
 
-1. add an id to `FEED_SOURCES` (the cockpit lists whatever the API serves, so
-   that alone makes it appear — no front-end change);
-2. add `{ name, code, title }` for it to `RELAY_CHANNELS`;
-3. check it: `node scripts/cdnlivetv-check.js "BBC One" gb`.
+1. add an id to `FEED_SOURCES` in `server.js`;
+2. **and** add the same id to the hardcoded `sources` array in
+   `netlifyf1/app.js` — the cockpit renders that list, not the API response.
+   `/api/stream/sources` only ever toggles `disabled`; it cannot add an entry,
+   so a back-end-only change leaves the source invisible;
+3. add `{ name, code, title }` for it to `RELAY_CHANNELS`;
+4. check it: `node scripts/cdnlivetv-check.js "BBC One" gb`.
+
+### Discord gate (Sky F1 (CDN))
+
+The relay source is limited to visitors who have linked a Discord account.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DISCORD_LINK_REQUIRED` | `1` | set `0` to reopen the source without a code change |
+| `DISCORD_LINK_SECRET` | falls back to `ADMIN_SECRET` | signs the link cookie; set it so rotating `ADMIN_SECRET` does not log everyone out |
+| `DISCORD_BOT_TOKEN` | — | already required for the bot; `/link` and `/unlink` run inside it |
+| `DISCORD_GUILD_ID` | — | scopes slash-command registration; leave empty for global |
+
+Visitor flow: the site shows a 5-character code (30-minute expiry), the member
+runs `/link <code>` in a channel named **#link**, the site shows the profile
+back for confirmation, and a signed cookie is set. `/unlink` in #link deletes
+the account so every browser holding it loses access at once.
+
+The bot needs no privileged intents for this — `/link` and `/unlink` are slash
+commands, so Message Content stays off.
+
+Needs **two** front-end files on deploy: `app.js` and `app.css`.
+
+Verify with `npm run check:discord` (state machine, offline) and
+`node scripts/cdnlivetv-check.js` (upstream chain).
 
 ### Failure modes
 
