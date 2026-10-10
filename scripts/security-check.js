@@ -334,14 +334,20 @@ async function main() {
     ADMIN_PASS: 'Un-guessable-Passphrase-9',
     ADMIN_SECRET: 'a'.repeat(64),
     VISITOR_SECRET: 'b'.repeat(32),
-    UPSTASH_REDIS_REST_URL: 'https://example.invalid',
-    UPSTASH_REDIS_REST_TOKEN: 'token'
+    UNIQUE_VISITOR_HASH_SECRET: 'c'.repeat(32),
+    SELFCHECK_TOKEN: 'd'.repeat(32),
+    REDIS_URL: 'redis://127.0.0.1:1',
+    UPSTASH_REDIS_REST_URL: '',
+    UPSTASH_REDIS_REST_TOKEN: ''
   });
   await waitForServer(prod);
   try {
     // A direct call to the API host (the shape of every scraping/farming
     // script) — the request must not look like a same-origin site call.
     const directBase = `http://${externalIp || '127.0.0.1'}:${prod.port}`;
+    const hiddenSelfcheck = await prod.get('/selfcheck');
+    check('production self-check is hidden without its token', hiddenSelfcheck.status === 404,
+      `status=${hiddenSelfcheck.status}`);
     const noOrigin = externalIp
       ? await fetch(`${directBase}/api/visitors/token?userId=noorigin`)
       : null;

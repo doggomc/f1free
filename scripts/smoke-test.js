@@ -120,6 +120,18 @@ async function waitForServer() {
     // rendered as pages); it must still forbid framing.
     assert.match(health.response.headers.get('content-security-policy') || '', /frame-ancestors '(?:none|self)'/);
 
+    const ready = await request(`http://127.0.0.1:${port}/readyz`);
+    assert.equal(ready.response.status, 200, JSON.stringify(ready.body));
+    assert.equal(ready.body.ok, true);
+    assert.equal(ready.body.targetsReady, true);
+
+    const selfcheck = await request(`http://127.0.0.1:${port}/selfcheck`);
+    assert.equal(selfcheck.response.status, 200, JSON.stringify(selfcheck.body));
+    assert.equal(selfcheck.body.ok, true);
+    assert.ok(selfcheck.body.checks.some(check => check.name === 'streamTargets' && check.ok));
+    assert.ok(selfcheck.body.checks.some(check => check.name === 'discordBot' && check.ok),
+      'an intentionally disabled optional bot must not fail deployment self-check');
+
     const leakedSource = await request(`http://127.0.0.1:${port}/server.js`);
     assert.equal(leakedSource.response.status, 404);
     const leakedData = await request(`http://127.0.0.1:${port}/data/analytics.json`);

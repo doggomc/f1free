@@ -193,9 +193,9 @@ function fakeClient(guild, { ready = true, noGuild = false } = {}) {
     return text === '<@42> has unlinked their account.' ? true : text;
   });
 
-  await check('leaving reads "<@id> has left and access was revoked."', () => {
+  await check('leaving reads "<@id> has left and was unlinked."', () => {
     const text = linkAnnouncementText({ type: 'unlinked', userId: '42', reason: 'left' });
-    return text === '<@42> has left and access was revoked.' ? true : text;
+    return text === '<@42> has left and was unlinked.' ? true : text;
   });
 
   await check('a mention works with no profile at all', () => {
@@ -346,7 +346,7 @@ function fakeClient(guild, { ready = true, noGuild = false } = {}) {
     return links.sent[0] === `<@${USER.id}> has linked their account.` ? true : links.sent[0];
   });
 
-  await check('end to end: leave -> "<@42> has left and access was revoked."', async () => {
+  await check('end to end: leave -> "<@42> has left and was unlinked."', async () => {
     const links = fakeChannel('links');
     const guild = fakeGuild(['general', links]);
     const client = fakeClient(guild);
@@ -360,7 +360,7 @@ function fakeClient(guild, { ready = true, noGuild = false } = {}) {
     await store.revoke(USER.id, 'left');
     await new Promise((r) => setImmediate(r));
     if (links.sent.length !== 1) return `#links got ${links.sent.length} messages`;
-    return links.sent[0] === `<@${USER.id}> has left and access was revoked.` ? true : links.sent[0];
+    return links.sent[0] === `<@${USER.id}> has left and was unlinked.` ? true : links.sent[0];
   });
 
   await check('end to end: /unlink -> "<@42> has unlinked their account."', async () => {

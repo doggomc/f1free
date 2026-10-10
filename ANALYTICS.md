@@ -25,10 +25,10 @@ streamReadyMs, streamTimeout`. Breakdown maps are capped (e.g. 24 browsers,
 
 Same rule as news and maintenance state:
 
-* Upstash configured → Redis hash `freef1:analytics:v1`
+* `REDIS_URL` configured → Redis hash `freef1:analytics:v1`
   (`ANALYTICS_REDIS_KEY` to change). Fields: `h:<hourIndex>`, `d:<YYYY-MM-DD>`,
-  `live`, `meta`. Roughly 40 KB at full retention.
-* Otherwise → `data/analytics.json` (lost on Render redeploys without a disk).
+  `live`, `meta`. Legacy Upstash REST variables remain migration-compatible.
+* Otherwise → `data/analytics.json` (local development only; lost on a Render redeploy).
 
 Writes are batched: every minute while sessions/events are changing, every
 5 minutes when only the minute sampler is running, and once more on `SIGTERM`.
@@ -37,8 +37,9 @@ Writes are batched: every minute while sessions/events are changing, every
 
 * A session **starts** on the first `/api/visitors/heartbeat` from a browser
   (plain page hits from crawlers never count).
-* It **ends** when no heartbeat arrives for `HEARTBEAT_TIMEOUT_MS` (60 s);
-  duration = last heartbeat − first heartbeat. Open sessions are shown
+* It **ends** when no heartbeat arrives inside `PRESENCE_TTL_MS` (270 s by
+  default for the two-minute client); duration = last heartbeat − first
+  heartbeat. Open sessions are shown
   separately as "open now" and are not in the averages until they close.
 * "New" vs "returning" uses the existing unique-visitor set (first time the
   hashed visitor key is seen anywhere → new).
