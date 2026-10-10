@@ -85,11 +85,23 @@ function startServer(env = {}) {
     }
   });
   const base = `http://127.0.0.1:${port}`;
+  // A site ticket minted the way the site mints one (from its own origin). Only
+  // the checks that test *authorised* site behaviour attach it; the gate checks
+  // keep calling without one on purpose.
+  let ticketPromise = null;
+  const ticket = () => {
+    if (!ticketPromise) {
+      ticketPromise = fetch(`${base}/api/site/ticket`, { method: 'POST', headers: { Origin: TRUSTED_ORIGIN } })
+        .then(r => r.json()).then(b => { if (!b.ticket) throw new Error('site ticket mint failed'); return b.ticket; });
+    }
+    return ticketPromise;
+  };
   const serverHandle = {
     child,
     port,
     dataDir,
     base,
+    ticket,
     log: () => log,
     get: (p, headers) => fetch(base + p, { headers }),
     post: (p, body, headers) => fetch(base + p, {
@@ -113,7 +125,7 @@ async function waitForServer(server) {
 }
 
 async function readCount(server) {
-  const res = await server.get('/api/visitors/active');
+  const res = await server.get('/api/visitors/active', { 'X-Site-Ticket': await server.ticket() });
   const payload = await res.json();
   return payload.active;
 }
@@ -231,7 +243,7 @@ async function main() {
     const controller = new AbortController();
     const statuses = [];
     for (let i = 0; i < 3; i++) {
-      const res = await fetch(`${sse.base}/api/events`, { signal: controller.signal });
+      const res = await fetch(`${sse.base}/api/events?ticket=${encodeURIComponent(await sse.ticket())}`, { signal: controller.signal });
       statuses.push(res.status);
       await new Promise(resolve => setTimeout(resolve, 150));
     }

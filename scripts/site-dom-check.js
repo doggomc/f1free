@@ -57,7 +57,7 @@ const requested = [];
    That is how the direct api.openf1.org calls (blocked in production, and
    never reachable anyway — OpenF1 sends no CORS headers) were found; a stub
    that answers any URL containing "openf1" cannot see that class of bug. */
-const CSP_HOSTS = new Set(['self', 'f1free.onrender.com', 'api.jolpi.ca']);
+const CSP_HOSTS = new Set(['self', 'freef1.onrender.com', 'api.jolpi.ca']);
 const blockedByCsp = [];
 
 const emptyJson = body => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
@@ -84,7 +84,6 @@ window.fetch = async (url, options) => {
   if (u.includes('/api/visitors/leave')) { leaveCalls.push(u); return { ok: true, status: 204, json: async () => ({}), text: async () => '' }; }
   if (u.includes('/api/site/status')) return emptyJson({ maintenance: { active: false } });
   if (u.includes('/api/stream/status')) return emptyJson({ active: false });
-  if (u.includes('/api/experimental')) return emptyJson({ enabled: true, updatedAt: Date.now() });
   if (u.includes('/api/live/timing')) return emptyJson({ status: 'Live', currentLap: 14, totalLaps: 51, competitors: [] });
   // Admin dashboard has switched off the first-choice feed (sky-uk-2) and DAZN.
   if (u.includes('/api/stream/sources')) return emptyJson({
@@ -101,6 +100,8 @@ window.fetch = async (url, options) => {
     updatedAt: Date.now()
   });
   if (u.includes('/api/news')) return emptyJson({ news: [] });
+  // The API mints a playable alias for the player at play time.
+  if (u.includes('/api/stream/ticket')) return emptyJson({ href: '/stream/test-alias' });
   if (u.includes('driverstandings')) return emptyJson({ MRData: { StandingsTable: { StandingsLists: [{ DriverStandings: [
     { position: '1', points: '100', wins: '3', Driver: { driverId: 'norris', givenName: 'Lando', familyName: 'Norris', permanentNumber: '1' }, Constructors: [{ name: 'McLaren' }] }
   ] }] } } });
@@ -171,9 +172,6 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   try {
     // Top-level `const` in eval'd code stays in that eval's own scope, so
     // append the probe to the same source string to reach sources/disabledSources.
-    // index.html loads round-meeting.js before app.js; mirror that order so the
-    // harness exercises the same code path as a browser.
-    window.eval(fs.readFileSync(path.join(siteDir, 'round-meeting.js'), 'utf8'));
     window.eval(fs.readFileSync(path.join(siteDir, 'app.js'), 'utf8') + `
 ;window.__feedState = () => JSON.stringify({
   order: sources.map(s => s.label),
@@ -259,7 +257,7 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   // ended the home view prematurely and left the championship grid and the
   // stage buttons outside it — so they stayed on screen when routing to
   // News/Info/Discord. Assert the containment the router depends on.
-  const viewIds = ['viewHome', 'viewNews', 'viewInfo', 'viewDiscord', 'viewPerformance', 'view247'];
+  const viewIds = ['viewHome', 'viewNews', 'viewInfo', 'viewDiscord'];
   check('all main views exist', viewIds.every(id => $(id)), viewIds.filter(id => !$(id)).join(', '));
   check('all four views are siblings',
     new Set(viewIds.map(id => $(id).parentElement)).size === 1,
@@ -296,9 +294,12 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
     window.updateStreamStartAffordance(true); const onWhenFeedIsUp = !el.hidden;
     return offWhenNoFeed && onWhenFeedIsUp;
   })());
+  // The reload drops the old frame at once and mounts the new one once the
+  // API has minted its alias, so give that remount a beat before judging it.
+  const framesBefore = $('player').querySelectorAll('iframe').length;
+  $('streamStartBtn').click();
+  await new Promise(resolve => setTimeout(resolve, 80));
   check('start button reloads the feed under a user gesture', (() => {
-    const framesBefore = $('player').querySelectorAll('iframe').length;
-    $('streamStartBtn').click();
     return $('player').querySelectorAll('iframe').length >= framesBefore &&
       $('loaderText').textContent === 'Establishing feed…' && $('streamStart').hidden;
   })(), `${$('loaderText').textContent} / hidden=${$('streamStart').hidden}`);
@@ -352,42 +353,6 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   click(window.document.querySelector('.nav-links a[data-route="discord"]'));
   await new Promise(resolve => setTimeout(resolve, 400));
   check('router opens the discord view', !$('viewDiscord').hidden && $('viewInfo').hidden);
-
-  const perfLink = window.document.querySelector('a[data-route="performance"]') || window.document.querySelector('a[data-route="track"]');
-  if (perfLink) {
-    click(perfLink);
-    await new Promise(resolve => setTimeout(resolve, 400));
-    check('router opens the performance view', !$('viewPerformance').hidden && $('viewDiscord').hidden);
-    check('performance timing tower exists', Boolean($('perfTimingTower')), 'perfTimingTower missing');
-    check('performance race control feed exists', Boolean($('perfRcFeed')), 'perfRcFeed missing');
-    // Wait for the race-control fetch to settle, then assert it rendered rows
-    // through the proxy rather than being silently blocked by the CSP.
-    for (let i = 0; i < 20 && !$('perfRcFeed').querySelector('li, .rc-item, article'); i++) {
-      await new Promise(resolve => setTimeout(resolve, 150));
-    }
-    check('the round-meeting resolver is loaded and exported',
-      typeof window.FreeF1RoundMeeting?.resolveMeetingKeyByDate === 'function', 'window.FreeF1RoundMeeting missing');
-    check('race control is requested with the meeting matched to the round',
-      requested.some(u => u.includes('race_control') && u.includes('meeting_key=1295')),
-      `race_control requests: ${requested.filter(u => u.includes('race_control')).join(', ') || 'none'}`);
-    check('all openf1 traffic stays inside the CSP allowlist',
-      requested.filter(u => u.includes('openf1')).every(u => !u.includes('api.openf1.org')),
-      requested.filter(u => u.includes('api.openf1.org')).join(', '));
-    check('race control wire renders rows from the OpenF1 proxy',
-      $('perfRcFeed').textContent.includes('SAFETY CAR DEPLOYED') || Boolean($('perfRcFeed').querySelector('li, .rc-item, article')),
-      `content: ${$('perfRcFeed').textContent.trim().slice(0, 80)}`);
-    check('no request leaves the CSP allowlist', blockedByCsp.length === 0,
-      [...new Set(blockedByCsp)].join(' '));
-  }
-
-  const live247Link = window.document.querySelector('a[data-route="247"]');
-  if (live247Link) {
-    click(live247Link);
-    await new Promise(resolve => setTimeout(resolve, 400));
-    check('router opens the 24/7 view', !$('view247').hidden && $('viewPerformance').hidden);
-    check('24/7 player wrap exists', Boolean($('live247FrameWrap')), 'live247FrameWrap missing');
-    check('24/7 controls exist', Boolean($('live247PlayBtn') && $('live247StopBtn') && $('live247FsBtn')));
-  }
 
   /* ── Force Live ────────────────────────────────────────────────────────
      Reported bug: the dashboard said FORCED LIVE while the player showed its

@@ -7,13 +7,6 @@ const cookieSession = require('cookie-session');
 const fs = require('fs');
 const path = require('path');
 
-/* The cdnlivetv relay: resolves a channel to a playable HLS playlist and serves
-   the player page the cockpit frames. See lib/cdnlivetv-relay.js for the why —
-   the upstream playlist is signed and expires in ~4h, so it is re-minted per
-   request rather than stored anywhere. */
-const cdnlivetvRelay = require('./lib/cdnlivetv-relay.js');
-const cdnlivetvPlayer = require('./lib/cdnlivetv-player.js');
-
 const app = express();
 
 app.disable('x-powered-by');
@@ -55,8 +48,20 @@ const NEWS_MAX_ITEMS = Math.max(1, Math.min(100, Number.parseInt(process.env.NEW
 // Keep visitor hashes independent from the admin cookie key so rotating
 // ADMIN_SECRET does not reset the unique-visitor identity space.
 const UNIQUE_VISITOR_HASH_SECRET = process.env.UNIQUE_VISITOR_HASH_SECRET || VISITOR_SECRET;
-const UPSTASH_REDIS_REST_URL = String(process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/+$/, '');
-const UPSTASH_REDIS_REST_TOKEN = String(process.env.UPSTASH_REDIS_REST_TOKEN || '');
+/* Upstash credentials. Copy-pasted values often carry a trailing space, a
+   newline or wrapping quotes, and a missing value silently drops every
+   durable store back to the instance disk, which Render wipes on each build.
+   So the values are cleaned up, and the Vercel/Upstash integration names
+   (KV_REST_API_*) are accepted as aliases. */
+function readSecretEnv(...names) {
+  for (const name of names) {
+    const value = String(process.env[name] || '').trim().replace(/^(["'])(.*)\1$/, '$2').trim();
+    if (value) return value;
+  }
+  return '';
+}
+const UPSTASH_REDIS_REST_URL = readSecretEnv('UPSTASH_REDIS_REST_URL', 'KV_REST_API_URL').replace(/\/+$/, '');
+const UPSTASH_REDIS_REST_TOKEN = readSecretEnv('UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_TOKEN');
 const UNIQUE_VISITOR_REMOTE_ENABLED = Boolean(UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN);
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const NEWS_FILE = path.join(DATA_DIR, 'news.json');
@@ -69,8 +74,6 @@ const SOURCE_REDIS_KEY = process.env.SOURCE_REDIS_KEY || 'freef1:stream-sources:
 const STREAM_TARGETS_REDIS_KEY = process.env.STREAM_TARGETS_REDIS_KEY || 'freef1:stream-targets:v1';
 const OVERRIDE_FILE = path.join(DATA_DIR, 'stream-override.json');
 const OVERRIDE_REDIS_KEY = process.env.OVERRIDE_REDIS_KEY || 'freef1:stream-override:v1';
-const EXPERIMENTAL_FILE = path.join(DATA_DIR, 'experimental.json');
-const EXPERIMENTAL_REDIS_KEY = process.env.EXPERIMENTAL_REDIS_KEY || 'freef1:experimental:v1';
 const STREAM_WINDOW_FILE = path.join(DATA_DIR, 'stream-window.json');
 const STREAM_WINDOW_REDIS_KEY = process.env.STREAM_WINDOW_REDIS_KEY || 'freef1:stream-window:v1';
 
@@ -132,7 +135,7 @@ const insecureProductionConfig = [
   !process.env.VISITOR_SECRET || process.env.VISITOR_SECRET === 'doggomc' ? 'VISITOR_SECRET' : null,
   // Analytics, news, unique visitors and maintenance live on the instance disk
   // without Upstash — Render wipes that disk on every rebuild.
-  !process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN ? 'UPSTASH_REDIS_REST_URL/TOKEN' : null
+  !UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN ? 'UPSTASH_REDIS_REST_URL/TOKEN' : null
 ].filter(Boolean);
 if (PRODUCTION_MODE && insecureProductionConfig.length) {
   throw new Error(`Refusing to start with insecure production configuration: ${insecureProductionConfig.join(', ')}.`);
@@ -361,21 +364,9 @@ const FEED_SOURCES = [
   { id: 'f1tv', label: 'F1TV' },
   { id: 'appletv', label: 'AppleTV' },
   { id: 'dazn', label: 'DAZN' },
-  { id: 'wikisport', label: 'WikiSport' },
-  { id: 'cdnlivetv-f1', label: 'Sky F1 (CDN)' }
+  { id: 'wikisport', label: 'WikiSport' }
 ];
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
-
-/* Sources this server plays ITSELF instead of redirecting to a provider.
-   Everything above is a plain https target the browser is sent to; these need
-   a relay because the upstream hands out a signed playlist that dies in ~4h
-   and cannot be rendered by an <iframe>. Adding one is: an id here, an entry
-   in this table, and nothing else — the cockpit lists whatever the API serves.
-   `title` is what the player page shows; it never leaves the server as a URL. */
-const RELAY_CHANNELS = {
-  'cdnlivetv-f1': { name: 'sky sports f1', code: 'gb', title: 'Sky Sports F1' }
-};
-const RELAY_SOURCE_IDS = new Set(Object.keys(RELAY_CHANNELS));
 const sourceConfig = { disabled: new Set(), updatedAt: null };
 let sourceStoreReady = false;
 let sourceInitPromise = Promise.resolve(false);
@@ -524,46 +515,32 @@ app.use(compression({
   }
 }));
 
-/* One policy, two callers. The default must stay byte-identical to the one in
-   netlifyf1/_headers — scripts/csp-check.js diffs them and fails on drift — so
-   anything that needs a different policy passes an override instead of editing
-   this list. The relay player page is the only such caller today: the cockpit
-   frames it (frame-ancestors), and hls.js fetches the segments itself
-   (connect-src) and feeds them to MSE (media-src blob:). */
-function buildCsp(overrides = {}) {
-  const frameAncestors = overrides.frameAncestors || "'self'";
-  const extraConnect = overrides.extraConnect || [];
-  const extraMedia = overrides.extraMedia || [];
-  const extraScript = overrides.extraScript || [];
-  return [
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+  res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
     "base-uri 'self'",
     "object-src 'none'",
     // Mirrors netlifyf1/_headers: typefaces are served from this origin, so no
     // external font host is allowed. Keep the two policies in step — this one
     // governs local/preview serving of the site, that one governs Netlify.
-    ["script-src 'self' 'unsafe-inline'", ...extraScript].join(' '),
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' data: https://media.formula1.com",
-    ["connect-src 'self' https://f1free.onrender.com https://api.jolpi.ca", ...extraConnect].join(' '),
+    "connect-src 'self' https://freef1.onrender.com https://api.jolpi.ca",
     // 'self' matters now the player frames the site's own /stream/<ticket>
     // alias; any https feed host is still allowed by the scheme source.
     "frame-src 'self' https:",
-    `frame-ancestors ${frameAncestors}`,
+    "frame-ancestors 'self'",
     // data: is required by the iOS wake-lock fallback, which loops a 1px
     // silent data:video/mp4 to keep the screen on where Wake Lock is missing.
-    ["media-src 'self' data: https:", ...extraMedia].join(' '),
+    "media-src 'self' data: https:",
     "form-action 'self'"
-  ].join('; ');
-}
-
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
-  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
-  res.setHeader('Content-Security-Policy', buildCsp());
+  ].join('; '));
   if (PRODUCTION_MODE) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   if (req.path.startsWith('/api/') || req.path.startsWith('/admin/api/') || req.path === '/healthz') {
     res.setHeader('Cache-Control', 'no-store');
@@ -1477,11 +1454,6 @@ function maskedStreamTargets() {
   const out = {};
   for (const source of FEED_SOURCES) {
     const entry = streamTargets.get(source.id);
-    // A relay source has no provider URL to show: this server is the host.
-    if (RELAY_SOURCE_IDS.has(source.id)) {
-      out[source.id] = { label: source.label, configured: true, host: 'this server (relay)', relay: true };
-      continue;
-    }
     out[source.id] = {
       label: source.label,
       configured: Boolean(entry),
@@ -1707,70 +1679,6 @@ async function persistOverrideState() {
 }
 
 // ─────────────────────────────────────────────
-// EXPERIMENTAL FEATURES (TRACK MAP, ETC.)
-// ─────────────────────────────────────────────
-const experimentalState = {
-  enabled: false,
-  updatedAt: Date.now()
-};
-let experimentalStoreReady = false;
-let experimentalInitPromise = Promise.resolve(false);
-
-function publicExperimentalState() {
-  return {
-    enabled: Boolean(experimentalState.enabled),
-    updatedAt: experimentalState.updatedAt
-  };
-}
-
-function applyExperimentalState(state) {
-  experimentalState.enabled = state?.enabled !== undefined ? Boolean(state.enabled) : false;
-  experimentalState.updatedAt = Number(state?.updatedAt) || Date.now();
-  return publicExperimentalState();
-}
-
-async function syncExperimentalState() {
-  if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
-    const stored = readLocalJson(EXPERIMENTAL_FILE);
-    if (stored) applyExperimentalState(stored);
-    experimentalStoreReady = fileStoreReady;
-    return fileStoreReady;
-  }
-  try {
-    const { found, value: stored } = await readUpstashJson(EXPERIMENTAL_REDIS_KEY);
-    if (found) applyExperimentalState(stored);
-    experimentalStoreReady = true;
-    return true;
-  } catch (error) {
-    warnUniqueStore(error);
-    experimentalStoreReady = false;
-    return false;
-  }
-}
-
-async function persistExperimentalState() {
-  if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
-    const saved = writeLocalJson(EXPERIMENTAL_FILE, publicExperimentalState());
-    experimentalStoreReady = saved;
-    return saved;
-  }
-  try {
-    const payload = await upstashRequest([
-      'SET',
-      EXPERIMENTAL_REDIS_KEY,
-      JSON.stringify(publicExperimentalState())
-    ]);
-    if (payload?.result !== 'OK') throw new Error('Upstash did not confirm experimental update');
-    experimentalStoreReady = true;
-    return true;
-  } catch (error) {
-    warnUniqueStore(error);
-    experimentalStoreReady = false;
-    return false;
-  }
-}
-
-// ─────────────────────────────────────────────
 // STREAM WINDOW OVERRIDE (force streams live)
 // ─────────────────────────────────────────────
 const streamWindowState = {
@@ -1858,7 +1766,6 @@ if (UNIQUE_VISITOR_REMOTE_ENABLED) {
   sourceInitPromise = syncSourceConfig();
   streamTargetsInitPromise = syncStreamTargets();
   overrideInitPromise = syncOverrideState();
-  experimentalInitPromise = syncExperimentalState();
   streamWindowInitPromise = syncStreamWindowState();
 } else {
   loadLocalUniqueVisitors();
@@ -1867,7 +1774,6 @@ if (UNIQUE_VISITOR_REMOTE_ENABLED) {
   sourceInitPromise = syncSourceConfig();
   streamTargetsInitPromise = syncStreamTargets();
   overrideInitPromise = syncOverrideState();
-  experimentalInitPromise = syncExperimentalState();
   streamWindowInitPromise = syncStreamWindowState();
   if (UPSTASH_REDIS_REST_URL || UPSTASH_REDIS_REST_TOKEN) {
     console.warn('[Visitors] Both Upstash variables are required for remote persistence; using local JSON storage instead.');
@@ -1891,7 +1797,6 @@ function pendingStoreSyncs() {
     { name: 'news', isReady: () => newsStoreReady, sync: syncNewsStore },
     { name: 'sources', isReady: () => sourceStoreReady, sync: syncSourceConfig },
     { name: 'override', isReady: () => overrideStoreReady, sync: syncOverrideState },
-    { name: 'experimental', isReady: () => experimentalStoreReady, sync: syncExperimentalState },
     { name: 'stream-window', isReady: () => streamWindowStoreReady, sync: syncStreamWindowState }
   ];
 }
@@ -2220,7 +2125,7 @@ const ANALYTICS_LIVE_POINTS = 24 * 60;
 const ANALYTICS_FLUSH_MS = Number(process.env.ANALYTICS_FLUSH_MS || 60_000);
 const ANALYTICS_SAMPLE_MS = 60_000;
 const ANALYTICS_MAP_CAP = { device: 8, browser: 24, os: 16, country: 250, pages: 8, source: 16, team: 16 };
-const SITE_PAGES = new Set(['/', '/news', '/info', '/discord', '/performance', '/track', '/audio', '/247']);
+const SITE_PAGES = new Set(['/', '/news', '/info', '/discord']);
 const DURATION_BINS_MS = [60_000, 5 * 60_000, 15 * 60_000, 45 * 60_000, 120 * 60_000]; // <1m, 1–5m, 5–15m, 15–45m, 45m–2h, 2h+
 
 const analytics = { hourly: new Map(), daily: new Map(), live: [], since: null };
@@ -2939,8 +2844,7 @@ function getStats() {
       newsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, newsStoreReady),
       sourceStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, sourceStoreReady),
       overrideStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, overrideStoreReady),
-      analyticsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, analyticsStoreReady),
-      experimentalStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, experimentalStoreReady)
+      analyticsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, analyticsStoreReady)
     }
   };
 }
@@ -3268,12 +3172,7 @@ app.post('/api/stream/ticket', async (req, res, next) => {
     if (!FEED_SOURCE_IDS.has(sourceId) && sourceId !== OVERRIDE_SOURCE_ID) {
       return res.status(400).json({ error: 'Unknown source id.' });
     }
-    if (RELAY_SOURCE_IDS.has(sourceId)) {
-      /* Played by this server, so there is no provider target to check: the
-         playlist is minted on demand at /relay/cdnlivetv/m3u8. Everything else
-         about the ticket — where it comes from, how long it lives — is the
-         same, so a relay source is no easier to harvest than any other. */
-    } else if (sourceId === OVERRIDE_SOURCE_ID) {
+    if (sourceId === OVERRIDE_SOURCE_ID) {
       await overrideInitPromise;
       if (!streamOverride.active || !streamOverride.url) {
         return res.status(503).json({ error: 'No stream override is active.' });
@@ -3326,13 +3225,6 @@ app.get('/stream/:ticket', async (req, res, next) => {
     if (!decoded) return res.status(403).send('Invalid stream ticket.');
     if (decoded.exp && Date.now() > decoded.exp) return res.status(410).send('This stream ticket has expired — reload the page.');
     await Promise.all([sourceInitPromise, streamTargetsInitPromise, overrideInitPromise]);
-    /* A relay source is played here rather than redirected: an <iframe> cannot
-       render an .m3u8, so it gets a document with hls.js inlined that pulls the
-       playlist from /relay/cdnlivetv/m3u8. Same ticket, same expiry — only the
-       thing handed to the browser changes. */
-    if (RELAY_SOURCE_IDS.has(decoded.sourceId)) {
-      return sendRelayPlayer(res, decoded.sourceId);
-    }
     const url = decoded.sourceId === OVERRIDE_SOURCE_ID
       ? (streamOverride.active && streamOverride.url ? streamOverride.url : null)
       : renderStreamTarget(decoded.sourceId, req.query || {});
@@ -3342,105 +3234,6 @@ app.get('/stream/:ticket', async (req, res, next) => {
     // 302: the browser then loads the feed from the provider; our origin is
     // never the stream host, and the alias itself is worth nothing elsewhere.
     res.redirect(302, url);
-  } catch (error) {
-    next(error);
-  }
-});
-
-// ─────────────────────────────────────────────
-// RELAY — cdnlivetv (played by this server, not redirected)
-// ─────────────────────────────────────────────
-
-/* Two routes and a token cache.
-
-   /stream/<ticket>      → the player page the cockpit frames (HTML)
-   /relay/cdnlivetv/m3u8 → the live playlist, segments rewritten to absolute urls
-
-   Only the ~2KB playlist crosses this server: the segments are absolute
-   https://cdnlivetv.tv/… urls the viewer's browser fetches directly, so a full
-   race weekend costs the Render instance a few megabytes, not the stream.
-
-   The playlist route is the one relay thing that is reachable without a ticket,
-   so it carries the same gate as ticket minting (an authorized browser origin)
-   plus a single addition: our own player page. That page is served from this
-   origin and fetches same-origin, so the browser sends no Origin — only a
-   Referer whose origin is us. Anything else is refused. */
-
-const RELAY_RATE_MAX = Number(process.env.RELAY_RATE_MAX || 180);
-/* How long the page's own playback permission lasts. A race with a red-flag
-   delay runs past the 1h stream ticket, so this is deliberately longer — it is
-   scoped to one source and worthless off this origin either way. */
-const RELAY_PLAYBACK_TTL_MS = Number(process.env.RELAY_PLAYBACK_TTL_MS || 12 * 60 * 60 * 1000);
-
-/* The player page is served from this origin and the frame is mounted with
-   referrerpolicy="no-referrer", so its playlist fetch is a same-origin GET with
-   neither Origin nor Referer — there is nothing for the origin gate to read.
-   So the page carries its own permission instead: minted here when the page is
-   handed out (which only happens after a real stream ticket is redeemed),
-   scoped to one source, and expiring. Same shape as every other ticket in this
-   file, kept apart by its kind. */
-function createRelayTicket(sourceId, ttlMs = RELAY_PLAYBACK_TTL_MS) {
-  return signTicket('relay-ticket', {
-    i: sourceId,
-    n: crypto.randomBytes(8).toString('hex'),
-    e: Date.now() + ttlMs
-  });
-}
-
-function verifyRelayTicket(ticket, sourceId) {
-  const verified = verifyTicket('relay-ticket', ticket);
-  if (!verified || verified.expired) return false;
-  return String(verified.payload.i) === sourceId;
-}
-
-function siteOriginForCsp() {
-  const fromEnv = String(process.env.ALLOWED_ORIGIN || '').split(',')[0].trim();
-  if (fromEnv) return normalizeOrigin(fromEnv) || fromEnv;
-  return `https://${AUTHORIZED_DOMAIN}`;
-}
-
-/* The iframe target for a relay source. Deliberately not a redirect: the frame
-   has to stay on this origin for its playlist fetch to be same-origin. */
-function sendRelayPlayer(res, sourceId) {
-  const channel = RELAY_CHANNELS[sourceId];
-  if (!channel) return res.status(503).send('That source is not available right now.');
-  res.setHeader('Cache-Control', 'no-store');
-  res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Content-Security-Policy', buildCsp({
-    // The cockpit frames this page from the site's origin.
-    frameAncestors: `'self' ${siteOriginForCsp()}`,
-    // hls.js fetches the manifest from us and the segments from the CDN.
-    extraConnect: [cdnlivetvRelay.CDN_ORIGIN],
-    // MediaSource Extensions attach via a blob: url, and hls.js runs its
-    // demuxer in a Worker created from one. Without blob: in script-src the
-    // worker is refused and hls.js quietly falls back to the main thread.
-    extraMedia: ['blob:'],
-    extraScript: ['blob:']
-  }));
-  res.type('html').send(cdnlivetvPlayer.buildPlayerPage({
-    title: channel.title || 'Live stream',
-    src: `/relay/cdnlivetv/m3u8?t=${encodeURIComponent(createRelayTicket(sourceId))}`
-  }));
-}
-
-app.get('/relay/cdnlivetv/m3u8', async (req, res, next) => {
-  try {
-    /* Accepted callers: the site itself (authorized browser origin), or the
-       player page this server handed out, presenting its playback ticket. */
-    const playbackTicket = String(req.query.t || '').slice(0, 400);
-    if (!isBrowserSiteRequest(req) && !verifyRelayTicket(playbackTicket, 'cdnlivetv-f1')) {
-      return res.status(403).type('text/plain')
-        .send('Relay playlists are only served to the site or to the player it frames.');
-    }
-    const ip = getClientIp(req);
-    if (!consumeVisitorRateLimit(`relay-m3u8:${ip}`, RELAY_RATE_MAX)) {
-      res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
-      return res.status(429).type('text/plain').send('Too many relay requests. Try again later.');
-    }
-    const channel = RELAY_CHANNELS['cdnlivetv-f1'];
-    const { playlist } = await cdnlivetvRelay.getPlaylist(channel.name, channel.code);
-    res.setHeader('Cache-Control', 'no-store');
-    res.type('application/vnd.apple.mpegurl').send(playlist);
   } catch (error) {
     next(error);
   }
@@ -3796,25 +3589,6 @@ app.get('/api/career/:driverId', async (req, res) => {
   }finally{ careerInflight.delete(driverId); }
 });
 
-// Public audio-only feed for the experimental Audio page.
-// Direct m3u8 / AAC / MP3 URL — never a video embed page.
-app.get('/api/audio-feed', (req, res) => {
-  const url = String(process.env.FREEF1_AUDIO_URL || process.env.APEX_AUDIO_URL || '').trim();
-  res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=45');
-  return res.json({ url, available: Boolean(url) });
-});
-
-// Public endpoint for experimental features toggle state
-app.get('/api/experimental', async (req, res, next) => {
-  try {
-    await experimentalInitPromise;
-    res.setHeader('Cache-Control', 'public, max-age=5, stale-while-revalidate=15');
-    return res.json(publicExperimentalState());
-  } catch (error) {
-    next(error);
-  }
-});
-
 // Public SSE endpoint — sends public stream, maintenance and news updates (no visitor data)
 
 /* Per-IP accounting for the long-lived public sockets, so one host cannot hold
@@ -3863,7 +3637,7 @@ app.get('/api/events', async (req, res, next) => {
       res.setHeader('Retry-After', '15');
       return res.status(429).json({ error: 'Too many live connections from this address' });
     }
-    await Promise.all([maintenanceInitPromise, newsInitPromise, overrideInitPromise, experimentalInitPromise, streamWindowInitPromise]);
+    await Promise.all([maintenanceInitPromise, newsInitPromise, overrideInitPromise, streamWindowInitPromise]);
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
@@ -3882,7 +3656,6 @@ app.get('/api/events', async (req, res, next) => {
     res.write(`event: presence\ndata: ${JSON.stringify(presencePayload())}\n\n`);
     res.write(`event: maintenance_update\ndata: ${JSON.stringify(publicMaintenanceState())}\n\n`);
     res.write(`event: news_update\ndata: ${JSON.stringify({ news: getPublicNewsItems() })}\n\n`);
-    res.write(`event: experimental_update\ndata: ${JSON.stringify(publicExperimentalState())}\n\n`);
 
     req.on('close', () => {
       publicSseClients.delete(res);
@@ -4212,36 +3985,6 @@ app.post('/admin/api/maintenance', async (req, res, next) => {
   }
 });
 
-app.get('/admin/api/experimental', async (req, res, next) => {
-  try {
-    await experimentalInitPromise;
-    res.json({ success: true, experimental: publicExperimentalState(), durable: experimentalStoreReady });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post('/admin/api/experimental', async (req, res, next) => {
-  try {
-    await experimentalInitPromise;
-    const { enabled } = req.body || {};
-    if (typeof enabled !== 'boolean') {
-      return res.status(400).json({ error: 'The enabled field must be true or false.' });
-    }
-
-    applyExperimentalState({ enabled, updatedAt: Date.now() });
-    const durable = await persistExperimentalState();
-    const state = publicExperimentalState();
-    broadcastSSE('experimental_update', state);
-    broadcastPublicSSE('experimental_update', state);
-    scheduleStatsBroadcast(0);
-
-    res.json({ success: true, experimental: state, durable });
-  } catch (error) {
-    next(error);
-  }
-});
-
 app.get('/admin/api/news', async (req, res, next) => {
   try {
     await newsInitPromise;
@@ -4468,7 +4211,7 @@ app.get('/admin/api/events', async (req, res, next) => {
   }
 
   try {
-    await Promise.all([overrideInitPromise, newsInitPromise, sourceInitPromise, maintenanceInitPromise, experimentalInitPromise, streamWindowInitPromise]);
+    await Promise.all([overrideInitPromise, newsInitPromise, sourceInitPromise, maintenanceInitPromise, streamWindowInitPromise]);
   } catch (error) {
     return next(error);
   }
@@ -4487,7 +4230,6 @@ app.get('/admin/api/events', async (req, res, next) => {
   res.write(`event: stream_window_update\ndata: ${JSON.stringify(publicStreamWindowState())}\n\n`);
   res.write(`event: news_update\ndata: ${JSON.stringify({ news: getAdminNewsItems(), durable: newsStoreIsDurable() })}\n\n`);
   res.write(`event: sources_update\ndata: ${JSON.stringify(publicSourceConfig())}\n\n`);
-  res.write(`event: experimental_update\ndata: ${JSON.stringify(publicExperimentalState())}\n\n`);
 
   req.on('close', () => {
     sseClients.delete(res);
@@ -4578,6 +4320,9 @@ const server = app.listen(PORT, () => {
   console.log(`[Main]  Site:  http://localhost:${PORT}/  (${DEV_DIR})`);
   console.log(`[Admin] Panel: http://localhost:${PORT}/admin  (${ADMIN_DIR})`);
   console.log(`[Visitors] Unique store: ${UNIQUE_VISITOR_REMOTE_ENABLED ? 'Upstash Redis (durable)' : 'memory (resets on restart)'}`);
+  // Names and lengths only, never values: enough to see which variable is missing.
+  console.log(`[Storage] Upstash URL: ${UPSTASH_REDIS_REST_URL ? `set (${UPSTASH_REDIS_REST_URL.length} chars)` : 'MISSING (UPSTASH_REDIS_REST_URL / KV_REST_API_URL)'}, token: ${UPSTASH_REDIS_REST_TOKEN ? `set (${UPSTASH_REDIS_REST_TOKEN.length} chars)` : 'MISSING (UPSTASH_REDIS_REST_TOKEN / KV_REST_API_TOKEN)'}`);
+  if (!UNIQUE_VISITOR_REMOTE_ENABLED) console.warn('[Storage] Analytics, news and visitor counts will NOT survive a Render rebuild until both Upstash variables are set.');
   if (UNIQUE_VISITOR_BASELINE) console.log(`[Visitors] Restored baseline: ${UNIQUE_VISITOR_BASELINE}`);
 
   if (ADMIN_USER === 'admin' && ADMIN_PASS === 'admin') {

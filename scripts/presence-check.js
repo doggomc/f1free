@@ -99,11 +99,24 @@ const CHROME_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/5
 
 const get = (p, headers = {}) => fetch(base + p, { headers });
 
+/* /api/events is gated by the site ticket (it rides in ?ticket=, since an
+   EventSource cannot set headers). Mint one the way the site does. */
+let siteTicket = '';
+async function mintSiteTicket() {
+  const res = await fetch(`${base}/api/site/ticket`, {
+    method: 'POST',
+    headers: { Origin: 'https://freef1.netlify.app' }
+  });
+  const body = await res.json();
+  if (!body.ticket) throw new Error(`site ticket mint failed: ${res.status}`);
+  siteTicket = body.ticket;
+}
+
 async function waitReady() {
   for (let i = 0; i < 100; i++) {
     try {
       const r = await get('/api/visitors/token?userId=probe', { 'X-User-Id': 'user_probe' });
-      if (r.status < 500) return;
+      if (r.status < 500) { await mintSiteTicket(); return; }
     } catch (_) {}
     await new Promise(res => setTimeout(res, 100));
   }
@@ -136,7 +149,7 @@ async function beatAs(userId, extraHeaders = {}) {
   return hb.json();
 }
 
-const liveCount = async () => (await (await get('/api/visitors/active')).json()).active;
+const liveCount = async () => (await (await get('/api/visitors/active', { 'X-Site-Ticket': siteTicket })).json()).active;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -147,7 +160,7 @@ function openPresenceStream() {
   const controller = new AbortController();
   const events = [];
   const ready = (async () => {
-    const res = await fetch(`${base}/api/events`, {
+    const res = await fetch(`${base}/api/events?ticket=${encodeURIComponent(siteTicket)}`, {
       headers: { Accept: 'text/event-stream', 'User-Agent': CHROME_UA },
       signal: controller.signal
     });
@@ -295,7 +308,7 @@ function openPresenceStream() {
     check('beating again after the goodbye restores the browser', rejoin.active === beforeLeave, JSON.stringify(rejoin));
 
     // ── the payloads carry no address, and say so by shape ───────────────
-    const activePayload = await (await get('/api/visitors/active')).json();
+    const activePayload = await (await get('/api/visitors/active', { 'X-Site-Ticket': siteTicket })).json();
     check('/api/visitors/active is exactly { active, at }',
       Object.keys(activePayload).sort().join(',') === 'active,at', JSON.stringify(activePayload));
     check('no address text anywhere in the public payloads',

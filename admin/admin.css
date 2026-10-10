@@ -2745,16 +2745,26 @@ from {
 .dp-tiles.skel .dp-tile {
   height: 64px;
   border-color: transparent;
-  background: linear-gradient(100deg,rgba(255,255,255,.045) 30%,rgba(255,255,255,.1) 50%,rgba(255,255,255,.045) 70%);
-  background-size: 200% 100%;
+  background: rgba(255,255,255,.045);
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.dp-tiles.skel .dp-tile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg,transparent 30%,rgba(255,255,255,.055) 50%,transparent 70%);
+  transform: translateX(-100%);
   animation: dpShimmer 1.1s linear infinite;
+  pointer-events: none;
 }
 
 @keyframes dpShimmer {
-to {
-    background-position: -200% 0;
+  to {
+    transform: translateX(100%);
   }
-
 }
 
 .dp-note {
@@ -3045,10 +3055,6 @@ footer {
   grid-template-columns: 1.4fr 1fr 1fr 1fr;
   gap: 34px;
   padding: 52px 0 34px;
-}
-
-.foot-grid.no-experimental {
-  grid-template-columns: 1.4fr 1fr 1fr;
 }
 
 @media(max-width:960px) {
@@ -4605,39 +4611,7 @@ body.view-swapping {
 
 }
 
-/* ═══════════════ 14. PERFORMANCE & TIMING TOWER ═══════════════ */
-.view-performance {
-  padding-bottom: 80px;
-}
-
-.perf-grid {
-  display: grid;
-  grid-template-columns: 1fr 360px;
-  gap: 20px;
-  margin-top: 24px;
-  align-items: start;
-}
-
 @media(max-width: 1040px) {
-  .perf-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.perf-tower-card {
-  overflow: hidden;
-  padding: 0;
-}
-
-.perf-tower-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
 }
 
 .pth-left h4 {
@@ -4656,112 +4630,12 @@ body.view-swapping {
   color: #fff;
 }
 
-.perf-table-wrap {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  padding-bottom: 6px;
-}
-
-.perf-table {
-  width: 100%;
-  min-width: 660px;
-  border-collapse: collapse;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: .75rem;
-  text-align: left;
-}
-
-.perf-table thead {
-  background: rgba(0, 0, 0, 0.4);
-  border-bottom: 1px solid var(--line);
-}
-
-.perf-table th {
-  padding: 10px 12px;
-  font-size: .58rem;
-  font-weight: 700;
-  letter-spacing: .16em;
-  text-transform: uppercase;
-  color: var(--dim);
-  white-space: nowrap;
-}
-
-.perf-table td {
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  vertical-align: middle;
-  white-space: nowrap;
-}
-
-.perf-table tbody tr {
-  transition: background .15s var(--ease);
-}
-
-.perf-table tbody tr:hover {
-  background: var(--surface-2);
-}
-
-.perf-table tr.fastest-lap-row td {
-  background: rgba(168, 85, 247, 0.04);
-}
-
 .th-pos, .td-pos {
   width: 44px;
   text-align: center;
   font-weight: 800;
   font-size: .88rem;
   color: var(--muted);
-}
-
-.perf-pos-p1 {
-  color: var(--team, #e10600) !important;
-  font-weight: 900;
-}
-
-.perf-driver-cell {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.perf-team-stripe {
-  width: 4px;
-  height: 20px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-
-.perf-driver-code {
-  font-weight: 800;
-  font-size: .82rem;
-  color: #fff;
-  letter-spacing: .04em;
-}
-
-.perf-driver-name {
-  color: var(--muted);
-  font-size: .74rem;
-  margin-left: 4px;
-}
-
-.perf-delta-gain {
-  font-size: .62rem;
-  font-weight: 700;
-  color: var(--green);
-  margin-left: auto;
-}
-
-.perf-delta-loss {
-  font-size: .62rem;
-  font-weight: 700;
-  color: var(--red);
-  margin-left: auto;
-}
-
-.perf-delta-flat {
-  font-size: .62rem;
-  color: var(--dim);
-  margin-left: auto;
 }
 
 .td-team {
@@ -4823,17 +4697,6 @@ body.view-swapping {
   font-size: .68rem;
 }
 
-/* Sidebar */
-.perf-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.perf-summary-card {
-  padding: 18px 20px;
-}
-
 .psc-head {
   display: flex;
   align-items: center;
@@ -4881,18 +4744,6 @@ body.view-swapping {
   font-weight: 700;
   color: #fff;
   margin-top: 4px;
-}
-
-.perf-incident-card {
-  padding: 18px 20px;
-}
-
-.perf-empty-state {
-  padding: 32px 20px;
-  text-align: center;
-  color: var(--muted);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: .8rem;
 }
 
 .ti-head {
@@ -4958,57 +4809,6 @@ body.view-swapping {
 /* ═══════════════ 15. AUDIO & LIVE COMMENTARY ═══════════════ */
 .view-audio {
   padding-bottom: 80px;
-}
-
-.audio-station-chips {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.audio-station-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  color: var(--muted);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: .75rem;
-  cursor: pointer;
-  transition:background-color .15s ease,border-color .15s ease,color .15s ease,box-shadow .15s ease,transform .15s ease,opacity .15s ease,filter .15s ease;
-}
-
-.audio-station-btn:hover {
-  background: var(--surface);
-  border-color: rgba(255, 255, 255, 0.2);
-  color: #fff;
-}
-
-.audio-station-btn.active {
-  background: rgba(225, 6, 0, 0.15);
-  border-color: var(--team, #e10600);
-  color: #fff;
-  font-weight: 700;
-}
-
-.audio-station-btn .station-badge-live {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #00d57e;
-  box-shadow: 0 0 6px #00d57e;
-}
-
-.audio-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 20px;
-  margin-top: 24px;
-  align-items: start;
-  max-width: 1100px;
 }
 
 .audio-player-card {
@@ -5116,143 +4916,7 @@ body.view-swapping {
   height: 6px;
 }
 
-.live247-frame-wrap {
-  width: 100%;
-  position: relative;
-  background: #000;
-  aspect-ratio: 16 / 9;
-  overflow: hidden;
-}
-
-.live247-frame-wrap iframe {
-  width: 100%;
-  height: 100%;
-  border: none;
-  display: block;
-}
-
-.live247-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px 20px;
-  border-top: 1px solid var(--line);
-  background: var(--surface);
-}
-
-/* .btn sets its own display, which would defeat the hidden attribute. */
-.live247-controls [hidden] {
-  display: none;
-}
-
-/* ── 24/7 click-shield (Bouncer gate) — scoped to the 24/7 player ── */
-.live247-gate {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 16px;
-  text-align: center;
-  background: radial-gradient(120% 90% at 50% 50%, rgba(10, 10, 11, .35) 0%, rgba(10, 10, 11, .82) 100%);
-  backdrop-filter: blur(2px);
-}
-
-.live247-gate[hidden] {
-  display: none;
-}
-
-.live247-gate-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 22px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: .85rem;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: #fff;
-  background: rgba(225, 6, 0, .92);
-  border: 1px solid rgba(225, 6, 0, 1);
-  border-radius: 999px;
-  cursor: pointer;
-  transition: transform .15s ease, background .15s ease;
-}
-
-.live247-gate-btn:hover {
-  background: #ff1a12;
-  transform: translateY(-1px);
-}
-
-.live247-gate-btn:focus-visible {
-  outline: 2px solid #fff;
-  outline-offset: 3px;
-}
-
-.live247-gate-note {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: .68rem;
-  line-height: 1.6;
-  color: rgba(255, 255, 255, .82);
-  max-width: 420px;
-}
-
-#live247ShieldBtn[aria-pressed="true"] {
-  border-color: rgba(225, 6, 0, .8);
-  background: rgba(225, 6, 0, .16);
-}
-
-.audio-station-btn.noisy {
-  border-color: rgba(255, 176, 32, .55);
-}
-
-.audio-station-btn.noisy .station-badge-live {
-  background: #ffb020;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .live247-gate-btn {
-    transition: none;
-    transform: none;
-  }
-}
-
-/* ── Fullscreen control bar: our Exit / Shield buttons float over the video
-   so phones (no Escape key) always have a real, labeled way out. ── */
-.live247-fsbar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: linear-gradient(180deg, rgba(0, 0, 0, .72) 0%, rgba(0, 0, 0, 0) 100%);
-}
-
-.live247-fsbar[hidden] {
-  display: none;
-}
-
-.live247-fsbar-label {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: .68rem;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, .9);
-  margin-right: auto;
-}
-
-.live247-frame-wrap:fullscreen,
-.live247-frame-wrap:-webkit-full-screen {
-  aspect-ratio: auto;
-  width: 100%;
-  height: 100%;
 }
 
 .audio-deck audio {
@@ -5720,7 +5384,7 @@ body.view-swapping {
 #forceLiveDot.online{background:var(--green);box-shadow:0 0 10px var(--green)}
 #forceLiveDot.forced{background:var(--red);box-shadow:0 0 10px var(--red);animation:beat 1.4s ease-in-out infinite}
 
-/* tables — reuse site perf-table look but keep admin table markup */
+/* tables — admin table markup */
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 table{width:100%;border-collapse:collapse}
 thead th{

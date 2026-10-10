@@ -115,7 +115,7 @@ const Analytics = (() => {
 
   function delta(current, previous) {
     if (!previous && !current) return { text: '—', cls: '' };
-    if (!previous) return { text: 'new', cls: 'up' };
+    if (!previous) return { text: '', cls: '' };
     const pct = ((current - previous) / previous) * 100;
     if (Math.abs(pct) < 0.5) return { text: '± 0%', cls: '' };
     return { text: `${pct > 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(Math.abs(pct) >= 10 ? 0 : 1)}%`, cls: pct > 0 ? 'up' : 'down' };

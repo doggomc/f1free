@@ -61,7 +61,31 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/* The API is default-deny: every /api call except the bootstrap allowlist needs
+   the browser's site ticket. Mint one the way the site does (from its own
+   origin) and attach it, so these happy-path checks exercise the real routes. */
+const siteTicketCache = new Map();
+async function siteTicketFor(origin) {
+  if (!siteTicketCache.has(origin)) {
+    const res = await fetch(`${origin}/api/site/ticket`, {
+      method: 'POST',
+      headers: { Origin: 'https://freef1.netlify.app' }
+    });
+    const body = await res.json();
+    assert.ok(body.ticket, `site ticket mint failed: ${res.status}`);
+    siteTicketCache.set(origin, body.ticket);
+  }
+  return siteTicketCache.get(origin);
+}
+
 async function request(url, options = {}) {
+  const parsed = new URL(url);
+  const headers = { ...(options.headers || {}) };
+  const hasTicket = Object.keys(headers).some(key => key.toLowerCase() === 'x-site-ticket');
+  if (parsed.pathname.startsWith('/api/') && parsed.pathname !== '/api/site/ticket' && !hasTicket) {
+    headers['X-Site-Ticket'] = await siteTicketFor(parsed.origin);
+  }
+  options = { ...options, headers };
   const response = await fetch(url, options);
   const text = await response.text();
   let body = text;
