@@ -61,7 +61,31 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/* The public API is default-deny behind a site ticket. Present one on every
+   gated /api call exactly as the site does, so this smoke test exercises the
+   real routes instead of stopping at a 403. Bootstrap paths stay bare. */
+const SITE_ORIGIN = 'https://freef1.netlify.app';
+const TICKET_FREE = new Set(['/api/site/status', '/api/site/ticket', '/api/auth/verify', '/api/stream/ticket',
+  '/api/visitors/token', '/api/visitors/heartbeat', '/api/visitors/event', '/api/visitors/leave']);
+let siteTicketCache = '';
+async function siteTicket() {
+  if (siteTicketCache) return siteTicketCache;
+  const r = await fetch(`http://127.0.0.1:${port}/api/site/ticket`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: SITE_ORIGIN, Referer: SITE_ORIGIN + '/' },
+    body: '{}'
+  });
+  siteTicketCache = (await r.json()).ticket || '';
+  return siteTicketCache;
+}
+
 async function request(url, options = {}) {
+  const pathname = new URL(url).pathname;
+  if (pathname.startsWith('/api/') && !TICKET_FREE.has(pathname)) {
+    const headers = new Headers(options.headers || {});
+    if (!headers.has('X-Site-Ticket')) headers.set('X-Site-Ticket', await siteTicket());
+    options = { ...options, headers };
+  }
   const response = await fetch(url, options);
   const text = await response.text();
   let body = text;
@@ -92,7 +116,9 @@ async function waitForServer() {
     assert.equal(health.response.headers.get('cache-control'), 'no-store');
     assert.equal(health.response.headers.get('x-powered-by'), null);
     assert.equal(health.response.headers.get('x-content-type-options'), 'nosniff');
-    assert.match(health.response.headers.get('content-security-policy') || '', /frame-ancestors 'self'/);
+    // Machine responses carry a short deny-everything CSP (they are never
+    // rendered as pages); it must still forbid framing.
+    assert.match(health.response.headers.get('content-security-policy') || '', /frame-ancestors '(?:none|self)'/);
 
     const leakedSource = await request(`http://127.0.0.1:${port}/server.js`);
     assert.equal(leakedSource.response.status, 404);

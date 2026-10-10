@@ -82,6 +82,9 @@ window.fetch = async (url, options) => {
     return emptyJson({ active: 9, at: Date.now() });
   }
   if (u.includes('/api/visitors/leave')) { leaveCalls.push(u); return { ok: true, status: 204, json: async () => ({}), text: async () => '' }; }
+  // Every feed is reached through an alias the API mints; the page never holds
+  // a stream URL itself. Without this the forced player had nothing to mount.
+  if (u.includes('/api/stream/ticket')) return emptyJson({ href: '/stream/test-alias', expiresAt: Date.now() + 3_600_000 });
   if (u.includes('/api/site/status')) return emptyJson({ maintenance: { active: false } });
   if (u.includes('/api/stream/status')) return emptyJson({ active: false });
   if (u.includes('/api/experimental')) return emptyJson({ enabled: true, updatedAt: Date.now() });
@@ -245,8 +248,11 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
   check('disabled set applied from the server',
     feedState.disabled.length === 2 && feedState.disabled.includes('sky-uk-2') && feedState.disabled.includes('dazn'),
     feedState.disabled.join(', '));
-  check('two chips hidden for the two disabled feeds', $('links').children.length === 6,
-    `${$('links').children.length} chips`);
+  // Derived, not hard-coded: the feed list grows (the two relay feeds took it
+  // from 8 to 10) and a literal count went stale the moment it did.
+  const expectedChips = feedState.order.length - feedState.disabled.length;
+  check('two chips hidden for the two disabled feeds', $('links').children.length === expectedChips,
+    `${$('links').children.length} chips, expected ${expectedChips} (${feedState.order.length} feeds - ${feedState.disabled.length} disabled)`);
   check('disabled feed labels are absent from the chips', (() => {
     const labels = [...$('links').children].map(c => c.textContent);
     return !labels.includes('Sky UK 2') && !labels.includes('DAZN');
@@ -296,12 +302,22 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
     window.updateStreamStartAffordance(true); const onWhenFeedIsUp = !el.hidden;
     return offWhenNoFeed && onWhenFeedIsUp;
   })());
-  check('start button reloads the feed under a user gesture', (() => {
+  {
+    // load() drops the old frame synchronously and mounts the new one after an
+    // async alias request, so count frames once the remount has had time to
+    // land. (Counting in the same tick only passed while no frame ever mounted.)
     const framesBefore = $('player').querySelectorAll('iframe').length;
     $('streamStartBtn').click();
-    return $('player').querySelectorAll('iframe').length >= framesBefore &&
-      $('loaderText').textContent === 'Establishing feed…' && $('streamStart').hidden;
-  })(), `${$('loaderText').textContent} / hidden=${$('streamStart').hidden}`);
+    const loaderAtClick = $('loaderText').textContent;
+    const hiddenAtClick = $('streamStart').hidden;
+    for (let i = 0; i < 20 && $('player').querySelectorAll('iframe').length < framesBefore; i++) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    const framesAfter = $('player').querySelectorAll('iframe').length;
+    check('start button reloads the feed under a user gesture',
+      framesAfter >= framesBefore && loaderAtClick === 'Establishing feed…' && hiddenAtClick,
+      `${loaderAtClick} / hidden=${hiddenAtClick} / frames ${framesBefore}->${framesAfter}`);
+  }
   check('video override sets inline playback attributes', (() => {
     const v = window.document.createElement('video');
     v.controls = true; v.autoplay = true; v.playsInline = true;
@@ -421,7 +437,10 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
       window.__FORCE_LIVE__ = true;
       window.applyStreamWindow({ active: true, reason: 'test', startedAt: Date.now() });
       window.load();
-      await new Promise(resolve => setTimeout(resolve, 80));
+      // The player mounts after an async alias request, not synchronously.
+      for (let i = 0; i < 20 && !window.document.querySelector('#player iframe, #player video'); i++) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
       const withForce = Boolean(window.document.querySelector('#player iframe, #player video'));
       const liveNow = window.getCurrentLiveSession();
 

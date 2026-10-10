@@ -136,7 +136,24 @@ async function beatAs(userId, extraHeaders = {}) {
   return hb.json();
 }
 
-const liveCount = async () => (await (await get('/api/visitors/active')).json()).active;
+/* /api/visitors/active and /api/events are behind the default-deny site-ticket
+   gate; mint one the way the site does (allowed Origin) and reuse it. */
+const SITE_ORIGIN = 'https://freef1.netlify.app';
+let siteTicketCache = '';
+async function siteTicket() {
+  if (siteTicketCache) return siteTicketCache;
+  const r = await fetch(`${base}/api/site/ticket`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: SITE_ORIGIN, Referer: SITE_ORIGIN + '/', 'User-Agent': CHROME_UA },
+    body: '{}'
+  });
+  const { ticket } = await r.json();
+  assert.ok(ticket, `site ticket refused: ${r.status}`);
+  siteTicketCache = ticket;
+  return ticket;
+}
+
+const liveCount = async () => (await (await get('/api/visitors/active', { 'X-Site-Ticket': await siteTicket() })).json()).active;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -147,7 +164,7 @@ function openPresenceStream() {
   const controller = new AbortController();
   const events = [];
   const ready = (async () => {
-    const res = await fetch(`${base}/api/events`, {
+    const res = await fetch(`${base}/api/events?ticket=${encodeURIComponent(await siteTicket())}`, {
       headers: { Accept: 'text/event-stream', 'User-Agent': CHROME_UA },
       signal: controller.signal
     });
@@ -295,7 +312,7 @@ function openPresenceStream() {
     check('beating again after the goodbye restores the browser', rejoin.active === beforeLeave, JSON.stringify(rejoin));
 
     // ── the payloads carry no address, and say so by shape ───────────────
-    const activePayload = await (await get('/api/visitors/active')).json();
+    const activePayload = await (await get('/api/visitors/active', { 'X-Site-Ticket': await siteTicket() })).json();
     check('/api/visitors/active is exactly { active, at }',
       Object.keys(activePayload).sort().join(',') === 'active,at', JSON.stringify(activePayload));
     check('no address text anywhere in the public payloads',

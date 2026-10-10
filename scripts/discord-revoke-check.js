@@ -62,6 +62,11 @@ try {
     env: {
       ...process.env,
       PORT: String(PORT), DATA_DIR, ADMIN_DIR: path.join(ROOT, 'admin'),
+      /* This suite proves that revoking a Discord link stops ticket issuance,
+         and it does that against a relay source. Relays are opt-in now, so the
+         suite has to opt in too or every ticket comes back 503 and the whole
+         run looks like a regression when it is the switch doing its job. */
+      RELAYS_ENABLED: '1',
       GEO_ENABLED: 'false', GEO_API: 'http://127.0.0.1:9',
       DEV_DIR: path.join(ROOT, '..', 'netlifyf1'),
       ALLOWED_ORIGIN: ORIGIN, AUTHORIZED_DOMAIN: '127.0.0.1',

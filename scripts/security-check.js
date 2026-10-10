@@ -112,8 +112,23 @@ async function waitForServer(server) {
   throw new Error(`server never came up:\n${server.log()}`);
 }
 
+/* Everything under /api that is not on the bootstrap allowlist needs the
+   browser's site ticket (default-deny), so these reads present one exactly as
+   the site does. Before the gate existed they were made bare, and every one
+   came back 403 with no `active` field. */
+async function siteTicket(server) {
+  const res = await fetch(`${server.base}/api/site/ticket`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', Origin: TRUSTED_ORIGIN, Referer: TRUSTED_ORIGIN + '/' },
+    body: '{}'
+  });
+  const { ticket } = await res.json();
+  assert.ok(ticket, `site ticket refused: ${res.status}`);
+  return ticket;
+}
+
 async function readCount(server) {
-  const res = await server.get('/api/visitors/active');
+  const res = await server.get('/api/visitors/active', { 'X-Site-Ticket': await siteTicket(server) });
   const payload = await res.json();
   return payload.active;
 }
@@ -230,8 +245,9 @@ async function main() {
     // and the next connection would legitimately be admitted.
     const controller = new AbortController();
     const statuses = [];
+    const ticket = await siteTicket(sse);
     for (let i = 0; i < 3; i++) {
-      const res = await fetch(`${sse.base}/api/events`, { signal: controller.signal });
+      const res = await fetch(`${sse.base}/api/events?ticket=${encodeURIComponent(ticket)}`, { signal: controller.signal });
       statuses.push(res.status);
       await new Promise(resolve => setTimeout(resolve, 150));
     }

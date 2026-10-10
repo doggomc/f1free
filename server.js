@@ -399,6 +399,19 @@ const RELAY_CHANNELS = {
   }
 };
 const RELAY_SOURCE_IDS = new Set(Object.keys(RELAY_CHANNELS));
+
+/* Bandwidth kill switch — OFF BY DEFAULT.
+
+   The relay sources only run when you explicitly opt in with RELAYS_ENABLED=1.
+   Off means: no playlist is minted, no upstream is contacted, and no bytes
+   leave this server for a relay.
+
+   Opt-in rather than opt-out on purpose: the failure mode we care about is
+   spending bandwidth nobody budgeted for, and that should require you to ask
+   for it, not require you to remember to stop it. Checked at every point a
+   relay can be reached, so it can never leave a half-open path still spending. */
+const RELAYS_ENABLED = process.env.RELAYS_ENABLED === '1';
+const relayDisabledMessage = 'Relay sources are switched off (RELAYS_ENABLED=0).';
 /* Look a channel up by its /relay/<path> segment. */
 const relayChannelByPath = (p) =>
   Object.values(RELAY_CHANNELS).find((c) => c.path === String(p || '')) || null;
@@ -563,6 +576,16 @@ app.use(compression({
   filter(req, res) {
     // Streaming responses must never be buffered by a compressor.
     if (req.path.endsWith('/events') || String(req.headers.accept || '').includes('text/event-stream')) return false;
+    /* HLS playlists are about 1.5 KB and refetched every ~6s by every viewer,
+       which makes them the single biggest recurring egress cost here. They are
+       also almost entirely repeated URL prefixes, so they compress ~83%.
+
+       compression.filter() will not do it on its own: the `compressible`
+       database has no entry for application/vnd.apple.mpegurl (or any of the
+       mpegurl spellings), so it returns undefined and the playlist goes out
+       raw. Opt the mpegurl types in explicitly. */
+    const type = String(res.getHeader('Content-Type') || '');
+    if (/mpegurl/i.test(type)) return true;
     return compression.filter(req, res);
   }
 }));
@@ -604,9 +627,21 @@ function buildCsp(overrides = {}) {
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
-  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
-  res.setHeader('Content-Security-Policy', buildCsp());
+  /* CSP, Permissions-Policy and the Flash-era cross-domain header only mean
+     anything on a document. API replies, the live-update stream and relay
+     playlists are never rendered as pages, yet they carried ~540 bytes of these
+     headers around bodies of 50–700 bytes — most of every heartbeat and poll.
+     They get a short deny-everything CSP instead, which is stricter for a
+     non-document, not looser. */
+  const isMachineResponse = req.path.startsWith('/api/') || req.path.startsWith('/admin/api/')
+    || req.path.startsWith('/relay/') || req.path === '/healthz' || req.path === '/selfcheck';
+  if (isMachineResponse) {
+    res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  } else {
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+    res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+    res.setHeader('Content-Security-Policy', buildCsp());
+  }
   if (PRODUCTION_MODE) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   if (req.path.startsWith('/api/') || req.path.startsWith('/admin/api/') || req.path === '/healthz') {
     res.setHeader('Cache-Control', 'no-store');
@@ -1409,10 +1444,27 @@ function newsStoreIsDurable() {
 // FEED SOURCE AVAILABILITY
 // ─────────────────────────────────────────────
 
-function publicSourceConfig() {
+/* Exactly what the admin set. This is what is persisted and what the admin
+   panel reads and writes back, so the kill switch below can never leak into
+   saved state. */
+function storedSourceConfig() {
   return {
     sources: FEED_SOURCES.map(source => ({ id: source.id, label: source.label })),
     disabled: [...sourceConfig.disabled],
+    updatedAt: sourceConfig.updatedAt
+  };
+}
+
+function publicSourceConfig() {
+  /* With the relay kill switch off, the relay feeds are reported as disabled
+     too, so the site hides their buttons instead of showing a button that can
+     only answer 503. Merged here, not written into sourceConfig, so the admin's
+     own toggles are untouched and come straight back with RELAYS_ENABLED=1. */
+  const disabled = new Set(sourceConfig.disabled);
+  if (!RELAYS_ENABLED) for (const id of RELAY_SOURCE_IDS) disabled.add(id);
+  return {
+    sources: FEED_SOURCES.map(source => ({ id: source.id, label: source.label })),
+    disabled: [...disabled],
     updatedAt: sourceConfig.updatedAt
   };
 }
@@ -1451,12 +1503,12 @@ async function syncSourceConfig() {
 
 async function persistSourceConfig() {
   if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
-    const saved = writeLocalJson(SOURCE_CONFIG_FILE, publicSourceConfig());
+    const saved = writeLocalJson(SOURCE_CONFIG_FILE, storedSourceConfig());
     sourceStoreReady = saved;
     return saved;
   }
   try {
-    const payload = await upstashRequest(['SET', SOURCE_REDIS_KEY, JSON.stringify(publicSourceConfig())]);
+    const payload = await upstashRequest(['SET', SOURCE_REDIS_KEY, JSON.stringify(storedSourceConfig())]);
     if (payload?.result !== 'OK') throw new Error('Upstash did not confirm the source update');
     sourceStoreReady = true;
     return true;
@@ -1468,11 +1520,12 @@ async function persistSourceConfig() {
 }
 
 function broadcastSourceConfig() {
-  const payload = publicSourceConfig();
-  broadcastSSE('sources_update', payload);
-  broadcastPublicSSE('sources_update', payload);
+  // Admin sees (and writes back) what it set; visitors see the effective list.
+  const stored = storedSourceConfig();
+  broadcastSSE('sources_update', stored);
+  broadcastPublicSSE('sources_update', publicSourceConfig());
   scheduleStatsBroadcast(0);
-  return payload;
+  return stored;
 }
 
 // ─────────────────────────────────────────────
@@ -1592,7 +1645,9 @@ function maskedStreamTargets() {
     const entry = streamTargets.get(source.id);
     // A relay source has no provider URL to show: this server is the host.
     if (RELAY_SOURCE_IDS.has(source.id)) {
-      out[source.id] = { label: source.label, configured: true, host: 'this server (relay)', relay: true };
+      out[source.id] = RELAYS_ENABLED
+        ? { label: source.label, configured: true, host: 'this server (relay)', relay: true }
+        : { label: source.label, configured: false, host: 'disabled', relay: true, disabledBy: 'RELAYS_ENABLED=0' };
       continue;
     }
     out[source.id] = {
@@ -2077,16 +2132,47 @@ function normalizeIpValue(value) {
   return ip;
 }
 
-/* The client IP, derived ONLY from the socket and the trusted-proxy chain
-   configured above. Client-supplied identity headers are never consulted:
+/* The client IP, derived from the socket, then CLIENT_IP_HEADER (see above:
+   only believed from a private socket, i.e. via Render's router, and set by
+   Cloudflare which overwrites any client value), then the trusted-proxy chain.
+   Other client-supplied identity headers are never consulted:
    they are trivially forgeable whenever the origin is reachable directly,
    and a forged IP made every per-IP limit in this file — including the admin
    login guard — bypassable. */
+/* Render puts Cloudflare in front of every service and its router APPENDS to
+   X-Forwarded-For, so a request arrives as `XFF: <client>, <cloudflare edge>`
+   from a private 10.x socket. With TRUST_PROXY_HOPS=1, req.ip is the
+   Cloudflare edge — shared by every viewer routed through it. Every per-IP
+   limit then treated a whole region as one client: the 4-per-IP live-update
+   cap refused nearly everyone, which pushed them onto 30-second polling of six
+   endpoints, multiplying background bandwidth.
+
+   Cloudflare sets CF-Connecting-IP to the address that connected to it and
+   OVERWRITES any value a client sent, so it is not forgeable through
+   Cloudflare. It is only believed when the socket is private — i.e. the
+   request came through Render's router, never from the open internet.
+
+   On by default ONLY on Render (Render sets RENDER=true on every service),
+   because that is where Cloudflare is guaranteed to sit in front and overwrite
+   the header. On any other host the header could be client-written, so it
+   stays off unless CLIENT_IP_HEADER is set deliberately.
+   CLIENT_IP_HEADER=off restores the old behaviour without a code change. */
+const CLIENT_IP_HEADER = (() => {
+  const raw = String(process.env.CLIENT_IP_HEADER ?? (process.env.RENDER === 'true' ? 'cf-connecting-ip' : 'off'))
+    .trim().toLowerCase();
+  return ['', 'off', 'none', '0', 'false'].includes(raw) ? '' : raw;
+})();
+
 function getClientIp(req) {
   const socketIp = normalizeIpValue(req.socket?.remoteAddress);
   // A public socket address means nothing is proxying us: the socket is the
   // client, and no header can override it.
   if (socketIp && !isPrivateIp(socketIp)) return socketIp;
+
+  if (CLIENT_IP_HEADER) {
+    const edgeIp = normalizeIpValue(String(req.headers[CLIENT_IP_HEADER] || '').split(',')[0]);
+    if (edgeIp && require('net').isIP(edgeIp) && !isPrivateIp(edgeIp)) return edgeIp;
+  }
 
   const proxyIp = normalizeIpValue(req.ip);
   if (proxyIp && !isPrivateIp(proxyIp)) return proxyIp;
@@ -3057,7 +3143,7 @@ function getStats() {
     visitors,
     override: adminOverrideState(),
     maintenance: publicMaintenanceState(),
-    sources: publicSourceConfig(),
+    sources: storedSourceConfig(),
     server: {
       startedAt: SERVER_STARTED_AT,
       uptimeMs: now - SERVER_STARTED_AT,
@@ -3152,6 +3238,121 @@ app.get('/vendor/hls.min.js', (req, res) => {
     res.setHeader('Timing-Allow-Origin', '*');
     res.send(buf);
   });
+});
+
+/* ── self-check ────────────────────────────────────────────────────────────
+   /healthz only proves the process is up, which is useless when the streams
+   are down but the server is fine — the situation that actually happens. This
+   checks the things that break, and for each failing one says what to do.
+
+   Kept off /healthz so Render's own probe stays fast: this one reaches out to
+   the upstream providers, which is exactly what you want on demand and exactly
+   what you do not want on a 30-second readiness poll. */
+const withTimeout = (promise, ms, fallback) => Promise.race([
+  Promise.resolve(promise).catch((e) => ({ __error: e && e.message })),
+  new Promise((r) => setTimeout(() => r({ __timeout: true }), ms)),
+]).then((v) => (v === undefined ? fallback : v));
+
+/* Deliberately NOT under /api: that prefix is default-deny and needs a site
+   ticket, which is precisely what you cannot get when the site is the thing
+   that is broken. Protected by its own shared secret instead.
+
+   Set SELFCHECK_TOKEN on the service and bookmark
+   https://<host>/selfcheck?token=<that value>. If the variable is unset the
+   endpoint stays open, which is fine locally and worth avoiding in production. */
+const SELFCHECK_TOKEN = String(process.env.SELFCHECK_TOKEN || '').trim();
+
+app.get('/selfcheck', async (req, res) => {
+  if (SELFCHECK_TOKEN && req.query.token !== SELFCHECK_TOKEN) {
+    return res.status(404).send('Not found');
+  }
+  const checks = [];
+  /* `warn` marks a deliberate, operator-chosen state that is not a fault. It
+     still shows on the page but does not fail the run — otherwise flipping a
+     switch on purpose would leave this page permanently red and the real
+     outages would stop standing out. */
+  const add = (name, ok, detail, fix, warn) => {
+    const c = { name, ok: !!ok, detail: String(detail || ''), fix: fix || '' };
+    if (warn) c.warn = true;
+    checks.push(c);
+  };
+
+  // 1. Discord bot: connected?
+  let botOk = false;
+  let botDetail = 'bot not started';
+  try {
+    if (discordBot && discordBot.client) {
+      const ready = typeof discordBot.client.isReady === 'function' && discordBot.client.isReady();
+      botOk = ready;
+      botDetail = ready ? 'connected' : 'client created but not connected';
+    }
+  } catch (e) { botDetail = 'error: ' + (e && e.message); }
+  add('discordBot', botOk, botDetail, botOk ? '' :
+    'Check DISCORD_BOT_TOKEN, DISCORD_OWNER_ID and DISCORD_GUILD_ID are all set. '
+    + 'If the log says "Used disallowed intents", leave DISCORD_GUILD_MEMBERS_INTENT unset '
+    + 'and enable Server Members Intent in the portal before setting it to 1.');
+
+  // 2. link announcements wired?
+  add('linkAnnouncements', Boolean(linkEventSink),
+    linkEventSink ? 'wired to the bot' : 'no announcer — #links stays silent',
+    linkEventSink ? '' : 'The bot did not expose announceLink; it is probably not running.');
+
+  // 3. link store readable? A lookup for an id that cannot exist still proves
+  //    the store loads and answers, which is the thing that breaks.
+  try {
+    const probe = await withTimeout(discordLink.isUserLinked('selfcheck-probe'), 3000, null);
+    add('linkStore', probe !== null && probe !== undefined,
+      'store answers (upstash: ' + (UNIQUE_VISITOR_REMOTE_ENABLED ? 'yes' : 'no') + ')',
+      (probe === null || probe === undefined)
+        ? 'Link store did not answer within 3s. Check Upstash env vars and network.' : '');
+  } catch (e) {
+    add('linkStore', false, 'unreadable: ' + (e && e.message), 'Check Upstash env vars.');
+  }
+
+  // 4. each relay source: can we still mint a playlist?
+  /* When the switch is off the relays are MEANT to be silent, so reporting
+     them as failures would make this page cry wolf every time it is read.
+     Report the switch, and skip probing the upstreams entirely — probing is
+     itself an upstream request, which is the thing you just turned off. */
+  add('relaysEnabled', true,
+    RELAYS_ENABLED ? 'on — relay sources are live'
+      : 'OFF — relay sources disabled, serving no playlists and making no upstream requests',
+    RELAYS_ENABLED ? '' : 'Default. Set RELAYS_ENABLED=1 and restart to bring the relay sources back.',
+    !RELAYS_ENABLED);
+
+  for (const [id, ch] of Object.entries(RELAY_CHANNELS)) {
+    if (!RELAYS_ENABLED) {
+      add(`relay:${id}`, true, 'skipped — relays switched off', '');
+      continue;
+    }
+    let ok = false, detail = '';
+    try {
+      /* Same arguments the real playlist route passes. Called bare, cdnlivetv
+         asked for no channel at all and reported "no segments" while the feed
+         was playing fine — a false alarm in the one tool meant for outages. */
+      // withTimeout resolves to { __timeout } or { __error } instead of throwing.
+      const out = await withTimeout(ch.relay.getPlaylist(ch.name, ch.code), 12000, null);
+      const body = out && (out.playlist || out.body) || '';
+      const segs = body ? body.split('\n').filter((l) => l && !l.startsWith('#')).length : 0;
+      ok = segs > 0;
+      detail = ok ? `${segs} segments`
+        : out && out.__timeout ? 'timed out after 12s'
+        : out && out.__error ? `upstream error: ${out.__error}`
+        : 'no segments';
+    } catch (e) { detail = 'error: ' + (e && e.message); }
+    add(`relay:${id}`, ok, detail, ok ? '' :
+      'Upstream provider is down or changed. Disable this source in the admin panel '
+      + 'so viewers fall through to a working one instead of cycling.');
+  }
+
+  // 5. is the gate on? (explains "everything is locked")
+  add('discordGate', DISCORD_LINK_REQUIRED, DISCORD_LINK_REQUIRED ? 'on' : 'OFF — gated sources open to everyone',
+    DISCORD_LINK_REQUIRED ? '' : 'Set DISCORD_LINK_REQUIRED=1 to re-enable the gate.');
+
+  const ok = checks.every((c) => c.ok);
+  const warnings = checks.filter((c) => c.warn).length;
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(ok ? 200 : 503).json({ ok, warnings, checkedAt: Date.now(), checks });
 });
 
 app.get('/healthz', (req, res) => {
@@ -3480,6 +3681,9 @@ app.post('/api/stream/ticket', async (req, res, next) => {
       return res.status(400).json({ error: 'Unknown source id.' });
     }
     let relayAccess = null;
+    if (RELAY_SOURCE_IDS.has(sourceId) && !RELAYS_ENABLED) {
+      return res.status(503).json({ error: relayDisabledMessage });
+    }
     if (RELAY_SOURCE_IDS.has(sourceId)) {
       /* Played by this server, so there is no provider target to check: the
          playlist is minted on demand at /relay/cdnlivetv/m3u8. Everything else
@@ -3641,7 +3845,7 @@ function siteOriginForCsp() {
    has to stay on this origin for its playlist fetch to be same-origin. */
 function sendRelayPlayer(res, sourceId, linkedUid) {
   const channel = RELAY_CHANNELS[sourceId];
-  if (!channel) return res.status(503).send('That source is not available right now.');
+  if (!channel || !RELAYS_ENABLED) return res.status(503).send('That source is not available right now.');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Content-Security-Policy', buildCsp({
@@ -3669,6 +3873,11 @@ function sendRelayPlayer(res, sourceId, linkedUid) {
    adding a source needs no new route and no new gating logic. */
 app.get('/relay/:channel/m3u8', async (req, res, next) => {
   try {
+    if (!RELAYS_ENABLED) {
+      // Before touching the cache or the upstream: this is the request that
+      // costs money, so it must not be able to leak through.
+      return res.status(503).type('text/plain').send(relayDisabledMessage);
+    }
     const channel = relayChannelByPath(req.params.channel);
     if (!channel) return res.status(404).type('text/plain').send('Unknown relay channel.');
     const sourceId = Object.keys(RELAY_CHANNELS).find((id) => RELAY_CHANNELS[id] === channel);
@@ -3693,13 +3902,34 @@ app.get('/relay/:channel/m3u8', async (req, res, next) => {
       res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
       return res.status(429).type('text/plain').send('Too many relay requests. Try again later.');
     }
-    const { playlist } = await channel.relay.getPlaylist(channel.name, channel.code);
+    let playlist;
+    try {
+      ({ playlist } = await channel.relay.getPlaylist(channel.name, channel.code));
+    } catch (error) {
+      /* The provider failed, not this server: answer 502 (the player retries
+         on its own) and log ONE line per channel per minute. A flaky provider
+         otherwise printed a full stack trace on every viewer's every poll. */
+      logRelayUpstreamFailure(req.params.channel, error);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Retry-After', '2');
+      return res.status(502).type('text/plain').send('The upstream provider for this feed is not answering right now.');
+    }
     res.setHeader('Cache-Control', 'no-store');
     res.type('application/vnd.apple.mpegurl').send(playlist);
   } catch (error) {
     next(error);
   }
 });
+
+const relayFailureLog = new Map(); // channel -> { at, suppressed }
+function logRelayUpstreamFailure(channel, error) {
+  const now = Date.now();
+  const entry = relayFailureLog.get(channel) || { at: 0, suppressed: 0 };
+  if (now - entry.at < 60_000) { entry.suppressed++; relayFailureLog.set(channel, entry); return; }
+  const extra = entry.suppressed ? ` (${entry.suppressed} more in the last minute)` : '';
+  console.warn(`[Relay] ${channel} upstream failed: ${error && error.message ? error.message : error}${extra}`);
+  relayFailureLog.set(channel, { at: now, suppressed: 0 });
+}
 
 // ─────────────────────────────────────────────
 // PUBLIC — OpenF1 proxy (CORS-safe, cached, snapshot-protected)
@@ -4605,7 +4835,7 @@ app.post('/admin/api/stream/normal', async (req, res, next) => {
 app.get('/admin/api/stream/sources', async (req, res, next) => {
   try {
     await sourceInitPromise;
-    res.json({ ...publicSourceConfig(), durable: sourceStoreReady });
+    res.json({ ...storedSourceConfig(), durable: sourceStoreReady });
   } catch (error) {
     next(error);
   }
@@ -4741,7 +4971,7 @@ app.get('/admin/api/events', async (req, res, next) => {
   res.write(payload);
   res.write(`event: stream_window_update\ndata: ${JSON.stringify(publicStreamWindowState())}\n\n`);
   res.write(`event: news_update\ndata: ${JSON.stringify({ news: getAdminNewsItems(), durable: newsStoreIsDurable() })}\n\n`);
-  res.write(`event: sources_update\ndata: ${JSON.stringify(publicSourceConfig())}\n\n`);
+  res.write(`event: sources_update\ndata: ${JSON.stringify(storedSourceConfig())}\n\n`);
   res.write(`event: experimental_update\ndata: ${JSON.stringify(publicExperimentalState())}\n\n`);
 
   req.on('close', () => {
@@ -4819,9 +5049,14 @@ if (process.env.DISCORD_BOT_TOKEN) {
       log: (...a) => console.log('[Bot]', ...a),
     });
     /* Now there is a client, hand the store its announcer so link and unlink
-       events reach #links. */
+       events reach #links. Logged because it is the one piece of the chain
+       with no other symptom when it is missing: links still work, the channel
+       just stays silent. */
     if (discordBot && typeof discordBot.announceLink === 'function') {
       linkEventSink = discordBot.announceLink;
+      console.log('[DiscordLink] announcement channel wired to the bot');
+    } else {
+      console.log('[DiscordLink] bot has no announceLink — #links will stay silent');
     }
   } catch (error) {
     console.error('[Bot] failed to start:', error.message);
@@ -4837,6 +5072,7 @@ loadLoginGuard().catch(() => {});
 const server = app.listen(PORT, () => {
   console.log(`[Server] Running on http://localhost:${PORT}`);
   console.log(`[Server] Trusted proxy hops: ${TRUST_PROXY_HOPS}${TRUST_PROXY_HOPS === 0 ? ' (no proxy: socket address is the client)' : ''}`);
+  console.log(`[Server] Client IP header: ${CLIENT_IP_HEADER || 'off (X-Forwarded-For only)'}`);
   console.log(`[Main]  Site:  http://localhost:${PORT}/  (${DEV_DIR})`);
   console.log(`[Admin] Panel: http://localhost:${PORT}/admin  (${ADMIN_DIR})`);
   console.log(`[Visitors] Unique store: ${UNIQUE_VISITOR_REMOTE_ENABLED ? 'Upstash Redis (durable)' : 'memory (resets on restart)'}`);
