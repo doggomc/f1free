@@ -1,0 +1,4852 @@
+{
+  "version": 1,
+  "since": 1781450929381,
+  "savedAt": 1791476589710,
+  "live": [
+    [
+      1791396780000,
+      0
+    ],
+    [
+      1791396840000,
+      0
+    ],
+    [
+      1791396900000,
+      1
+    ],
+    [
+      1791396960000,
+      0
+    ],
+    [
+      1791397020000,
+      1
+    ],
+    [
+      1791397680000,
+      0
+    ],
+    [
+      1791397740000,
+      0
+    ],
+    [
+      1791397800000,
+      0
+    ],
+    [
+      1791397860000,
+      0
+    ],
+    [
+      1791397920000,
+      0
+    ],
+    [
+      1791397980000,
+      0
+    ],
+    [
+      1791398040000,
+      0
+    ],
+    [
+      1791398100000,
+      0
+    ],
+    [
+      1791398160000,
+      1
+    ],
+    [
+      1791398220000,
+      1
+    ],
+    [
+      1791398280000,
+      1
+    ],
+    [
+      1791399420000,
+      0
+    ],
+    [
+      1791399480000,
+      22
+    ],
+    [
+      1791399540000,
+      22
+    ],
+    [
+      1791399600000,
+      19
+    ],
+    [
+      1791399660000,
+      0
+    ],
+    [
+      1791399720000,
+      0
+    ],
+    [
+      1791467940000,
+      0
+    ],
+    [
+      1791468000000,
+      0
+    ],
+    [
+      1791468060000,
+      1
+    ],
+    [
+      1791476460000,
+      0
+    ],
+    [
+      1791476520000,
+      0
+    ]
+  ],
+  "hourly": {
+    "497586": {
+      "sessions": 44,
+      "ended": 35,
+      "durationMs": 464828,
+      "durHist": [
+        33,
+        2,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 43,
+      "returning": 1,
+      "pageViews": 119,
+      "peakOnline": 8,
+      "onlineSum": 59,
+      "onlineSamples": 40,
+      "device": {
+        "Desktop": 44
+      },
+      "browser": {
+        "Chrome": 44
+      },
+      "os": {
+        "Windows": 17,
+        "Linux": 27
+      },
+      "pages": {
+        "/": 43,
+        "/performance": 21,
+        "/news": 16,
+        "/info": 11,
+        "/discord": 17,
+        "/247": 11
+      },
+      "nostream": 76
+    },
+    "497587": {
+      "sessions": 35,
+      "ended": 35,
+      "durationMs": 166813,
+      "durHist": [
+        35,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 35,
+      "pageViews": 46,
+      "peakOnline": 12,
+      "onlineSum": 37,
+      "onlineSamples": 33,
+      "device": {
+        "Desktop": 35
+      },
+      "browser": {
+        "Chrome": 35
+      },
+      "os": {
+        "Linux": 31,
+        "Windows": 4
+      },
+      "pages": {
+        "/": 35,
+        "/performance": 3,
+        "/news": 2,
+        "/info": 2,
+        "/discord": 2,
+        "/247": 2
+      },
+      "nostream": 60
+    },
+    "497596": {
+      "sessions": 23,
+      "ended": 17,
+      "durationMs": 45552,
+      "durHist": [
+        17,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 23,
+      "pageViews": 41,
+      "peakOnline": 8,
+      "onlineSum": 23,
+      "onlineSamples": 30,
+      "device": {
+        "Desktop": 23
+      },
+      "browser": {
+        "Chrome": 23
+      },
+      "os": {
+        "Linux": 17,
+        "Windows": 6
+      },
+      "pages": {
+        "/": 23,
+        "/performance": 6,
+        "/news": 3,
+        "/info": 3,
+        "/discord": 3,
+        "/247": 3
+      },
+      "nostream": 39,
+      "streamReady": 16,
+      "streamReadyMs": 15222
+    },
+    "497597": {
+      "sessions": 2,
+      "newVisitors": 2,
+      "pageViews": 7,
+      "peakOnline": 2,
+      "onlineSum": 2,
+      "onlineSamples": 15,
+      "device": {
+        "Desktop": 2
+      },
+      "browser": {
+        "Chrome": 2
+      },
+      "os": {
+        "Windows": 2
+      },
+      "pages": {
+        "/": 2,
+        "/performance": 1,
+        "/news": 1,
+        "/info": 1,
+        "/discord": 1,
+        "/247": 1
+      },
+      "nostream": 5
+    },
+    "497598": {
+      "sessions": 16,
+      "ended": 16,
+      "durationMs": 472586,
+      "durHist": [
+        16,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 7,
+      "returning": 9,
+      "pageViews": 16,
+      "peakOnline": 5,
+      "onlineSum": 22,
+      "onlineSamples": 10,
+      "device": {
+        "Desktop": 16
+      },
+      "browser": {
+        "Chrome": 16
+      },
+      "os": {
+        "Linux": 16
+      },
+      "pages": {
+        "/": 16
+      },
+      "nostream": 120
+    },
+    "497599": {
+      "sessions": 88,
+      "ended": 88,
+      "durationMs": 864200,
+      "durHist": [
+        88,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 2,
+      "returning": 86,
+      "pageViews": 94,
+      "peakOnline": 17,
+      "onlineSum": 105,
+      "onlineSamples": 57,
+      "device": {
+        "Desktop": 88
+      },
+      "browser": {
+        "Chrome": 88
+      },
+      "os": {
+        "Linux": 86,
+        "Windows": 2
+      },
+      "pages": {
+        "/": 72,
+        "/performance": 6,
+        "/info": 3,
+        "/247": 9,
+        "/audio": 2,
+        "/news": 1,
+        "/discord": 1
+      },
+      "nostream": 342
+    },
+    "497610": {
+      "sessions": 81,
+      "ended": 79,
+      "durationMs": 136923,
+      "durHist": [
+        79,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 71,
+      "returning": 10,
+      "pageViews": 81,
+      "peakOnline": 30,
+      "onlineSum": 49,
+      "onlineSamples": 19,
+      "device": {
+        "Desktop": 81
+      },
+      "browser": {
+        "Chrome": 78,
+        "Unknown": 3
+      },
+      "os": {
+        "Linux": 78,
+        "Unknown": 3
+      },
+      "pages": {
+        "/": 15,
+        "/other": 66
+      },
+      "nostream": 21
+    },
+    "497611": {
+      "sessions": 6,
+      "ended": 6,
+      "durationMs": 4923,
+      "durHist": [
+        6,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "returning": 6,
+      "pageViews": 6,
+      "peakOnline": 19,
+      "onlineSum": 19,
+      "onlineSamples": 3,
+      "device": {
+        "Desktop": 6
+      },
+      "browser": {
+        "Chrome": 6
+      },
+      "os": {
+        "Linux": 6
+      },
+      "pages": {
+        "/other": 5,
+        "/": 1
+      },
+      "nostream": 5
+    },
+    "497629": {
+      "sessions": 2,
+      "ended": 2,
+      "durHist": [
+        2,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 2,
+      "pageViews": 2,
+      "peakOnline": 2,
+      "onlineSamples": 1,
+      "device": {
+        "Desktop": 2
+      },
+      "browser": {
+        "Chrome": 2
+      },
+      "os": {
+        "Linux": 2
+      },
+      "pages": {
+        "/": 2
+      },
+      "nostream": 2
+    },
+    "497630": {
+      "sessions": 1,
+      "newVisitors": 1,
+      "pageViews": 1,
+      "peakOnline": 1,
+      "onlineSum": 1,
+      "onlineSamples": 2,
+      "device": {
+        "Desktop": 1
+      },
+      "browser": {
+        "Chrome": 1
+      },
+      "os": {
+        "Linux": 1
+      },
+      "pages": {
+        "/": 1
+      },
+      "nostream": 1
+    },
+    "497632": {
+      "onlineSamples": 4
+    }
+  },
+  "daily": {
+    "2026-09-12": {
+      "sessions": 192,
+      "ended": 144,
+      "durationMs": 59328000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 72,
+      "pageViews": 504,
+      "peakOnline": 9,
+      "onlineSum": 487,
+      "onlineSamples": 103,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-09-11": {
+      "sessions": 216,
+      "ended": 168,
+      "durationMs": 69216000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 96,
+      "pageViews": 528,
+      "peakOnline": 10,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-09-10": {
+      "sessions": 240,
+      "ended": 192,
+      "durationMs": 79104000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 120,
+      "pageViews": 552,
+      "peakOnline": 11,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-09-09": {
+      "sessions": 264,
+      "ended": 216,
+      "durationMs": 88992000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 72,
+      "pageViews": 576,
+      "peakOnline": 12,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-09-08": {
+      "sessions": 288,
+      "ended": 240,
+      "durationMs": 98880000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 96,
+      "pageViews": 600,
+      "peakOnline": 13,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-09-07": {
+      "sessions": 312,
+      "ended": 144,
+      "durationMs": 59328000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 120,
+      "pageViews": 624,
+      "peakOnline": 14,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-09-06": {
+      "sessions": 336,
+      "ended": 168,
+      "durationMs": 69216000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 72,
+      "pageViews": 648,
+      "peakOnline": 15,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-09-05": {
+      "sessions": 192,
+      "ended": 192,
+      "durationMs": 79104000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 96,
+      "pageViews": 672,
+      "peakOnline": 16,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-09-04": {
+      "sessions": 216,
+      "ended": 216,
+      "durationMs": 88992000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 120,
+      "pageViews": 696,
+      "peakOnline": 17,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-09-03": {
+      "sessions": 240,
+      "ended": 240,
+      "durationMs": 98880000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 72,
+      "pageViews": 504,
+      "peakOnline": 18,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-09-02": {
+      "sessions": 264,
+      "ended": 144,
+      "durationMs": 59328000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 96,
+      "pageViews": 528,
+      "peakOnline": 19,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-09-01": {
+      "sessions": 288,
+      "ended": 168,
+      "durationMs": 69216000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 120,
+      "pageViews": 552,
+      "peakOnline": 9,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-31": {
+      "sessions": 312,
+      "ended": 192,
+      "durationMs": 79104000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 72,
+      "pageViews": 576,
+      "peakOnline": 10,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-30": {
+      "sessions": 336,
+      "ended": 216,
+      "durationMs": 88992000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 96,
+      "pageViews": 600,
+      "peakOnline": 11,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-29": {
+      "sessions": 192,
+      "ended": 240,
+      "durationMs": 98880000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 120,
+      "pageViews": 624,
+      "peakOnline": 12,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-28": {
+      "sessions": 216,
+      "ended": 144,
+      "durationMs": 59328000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 72,
+      "pageViews": 648,
+      "peakOnline": 13,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-27": {
+      "sessions": 240,
+      "ended": 168,
+      "durationMs": 69216000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 96,
+      "pageViews": 672,
+      "peakOnline": 14,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-26": {
+      "sessions": 264,
+      "ended": 192,
+      "durationMs": 79104000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 120,
+      "pageViews": 696,
+      "peakOnline": 15,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-25": {
+      "sessions": 288,
+      "ended": 216,
+      "durationMs": 88992000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 72,
+      "pageViews": 504,
+      "peakOnline": 16,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-24": {
+      "sessions": 312,
+      "ended": 240,
+      "durationMs": 98880000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 96,
+      "pageViews": 528,
+      "peakOnline": 17,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-23": {
+      "sessions": 336,
+      "ended": 144,
+      "durationMs": 59328000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 120,
+      "pageViews": 552,
+      "peakOnline": 18,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-22": {
+      "sessions": 192,
+      "ended": 168,
+      "durationMs": 69216000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 72,
+      "pageViews": 576,
+      "peakOnline": 19,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-21": {
+      "sessions": 216,
+      "ended": 192,
+      "durationMs": 79104000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 96,
+      "pageViews": 600,
+      "peakOnline": 9,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-20": {
+      "sessions": 240,
+      "ended": 216,
+      "durationMs": 88992000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 120,
+      "pageViews": 624,
+      "peakOnline": 10,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-19": {
+      "sessions": 264,
+      "ended": 240,
+      "durationMs": 98880000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 72,
+      "pageViews": 648,
+      "peakOnline": 11,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-18": {
+      "sessions": 288,
+      "ended": 144,
+      "durationMs": 59328000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 96,
+      "pageViews": 672,
+      "peakOnline": 12,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-17": {
+      "sessions": 312,
+      "ended": 168,
+      "durationMs": 69216000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 120,
+      "pageViews": 696,
+      "peakOnline": 13,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-16": {
+      "sessions": 336,
+      "ended": 192,
+      "durationMs": 79104000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 72,
+      "pageViews": 504,
+      "peakOnline": 14,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-15": {
+      "sessions": 192,
+      "ended": 216,
+      "durationMs": 88992000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 96,
+      "pageViews": 528,
+      "peakOnline": 15,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-14": {
+      "sessions": 216,
+      "ended": 240,
+      "durationMs": 98880000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 120,
+      "pageViews": 552,
+      "peakOnline": 16,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-13": {
+      "sessions": 240,
+      "ended": 144,
+      "durationMs": 59328000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 72,
+      "pageViews": 576,
+      "peakOnline": 17,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-12": {
+      "sessions": 264,
+      "ended": 168,
+      "durationMs": 69216000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 96,
+      "pageViews": 600,
+      "peakOnline": 18,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-11": {
+      "sessions": 288,
+      "ended": 192,
+      "durationMs": 79104000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 120,
+      "pageViews": 624,
+      "peakOnline": 19,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-10": {
+      "sessions": 312,
+      "ended": 216,
+      "durationMs": 88992000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 72,
+      "pageViews": 648,
+      "peakOnline": 9,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-09": {
+      "sessions": 336,
+      "ended": 240,
+      "durationMs": 98880000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 96,
+      "pageViews": 672,
+      "peakOnline": 10,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-08": {
+      "sessions": 192,
+      "ended": 144,
+      "durationMs": 59328000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 120,
+      "pageViews": 696,
+      "peakOnline": 11,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-07": {
+      "sessions": 216,
+      "ended": 168,
+      "durationMs": 69216000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 72,
+      "pageViews": 504,
+      "peakOnline": 12,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-06": {
+      "sessions": 240,
+      "ended": 192,
+      "durationMs": 79104000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 96,
+      "pageViews": 528,
+      "peakOnline": 13,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-05": {
+      "sessions": 264,
+      "ended": 216,
+      "durationMs": 88992000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 120,
+      "pageViews": 552,
+      "peakOnline": 14,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-04": {
+      "sessions": 288,
+      "ended": 240,
+      "durationMs": 98880000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 72,
+      "pageViews": 576,
+      "peakOnline": 15,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-03": {
+      "sessions": 312,
+      "ended": 144,
+      "durationMs": 59328000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 96,
+      "pageViews": 600,
+      "peakOnline": 16,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-02": {
+      "sessions": 336,
+      "ended": 168,
+      "durationMs": 69216000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 120,
+      "pageViews": 624,
+      "peakOnline": 17,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-08-01": {
+      "sessions": 192,
+      "ended": 192,
+      "durationMs": 79104000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 72,
+      "pageViews": 648,
+      "peakOnline": 18,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-31": {
+      "sessions": 216,
+      "ended": 216,
+      "durationMs": 88992000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 96,
+      "pageViews": 672,
+      "peakOnline": 19,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-30": {
+      "sessions": 240,
+      "ended": 240,
+      "durationMs": 98880000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 120,
+      "pageViews": 696,
+      "peakOnline": 9,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-29": {
+      "sessions": 264,
+      "ended": 144,
+      "durationMs": 59328000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 72,
+      "pageViews": 504,
+      "peakOnline": 10,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-28": {
+      "sessions": 288,
+      "ended": 168,
+      "durationMs": 69216000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 96,
+      "pageViews": 528,
+      "peakOnline": 11,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-27": {
+      "sessions": 312,
+      "ended": 192,
+      "durationMs": 79104000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 120,
+      "pageViews": 552,
+      "peakOnline": 12,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-26": {
+      "sessions": 336,
+      "ended": 216,
+      "durationMs": 88992000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 72,
+      "pageViews": 576,
+      "peakOnline": 13,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-25": {
+      "sessions": 192,
+      "ended": 240,
+      "durationMs": 98880000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 96,
+      "pageViews": 600,
+      "peakOnline": 14,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-24": {
+      "sessions": 216,
+      "ended": 144,
+      "durationMs": 59328000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 120,
+      "pageViews": 624,
+      "peakOnline": 15,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-23": {
+      "sessions": 240,
+      "ended": 168,
+      "durationMs": 69216000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 72,
+      "pageViews": 648,
+      "peakOnline": 16,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-22": {
+      "sessions": 264,
+      "ended": 192,
+      "durationMs": 79104000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 96,
+      "pageViews": 672,
+      "peakOnline": 17,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-21": {
+      "sessions": 288,
+      "ended": 216,
+      "durationMs": 88992000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 120,
+      "pageViews": 696,
+      "peakOnline": 18,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-20": {
+      "sessions": 312,
+      "ended": 240,
+      "durationMs": 98880000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 72,
+      "pageViews": 504,
+      "peakOnline": 19,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-19": {
+      "sessions": 336,
+      "ended": 144,
+      "durationMs": 59328000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 96,
+      "pageViews": 528,
+      "peakOnline": 9,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-18": {
+      "sessions": 192,
+      "ended": 168,
+      "durationMs": 69216000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 120,
+      "pageViews": 552,
+      "peakOnline": 10,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-17": {
+      "sessions": 216,
+      "ended": 192,
+      "durationMs": 79104000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 72,
+      "pageViews": 576,
+      "peakOnline": 11,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-16": {
+      "sessions": 240,
+      "ended": 216,
+      "durationMs": 88992000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 96,
+      "pageViews": 600,
+      "peakOnline": 12,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-15": {
+      "sessions": 264,
+      "ended": 240,
+      "durationMs": 98880000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 120,
+      "pageViews": 624,
+      "peakOnline": 13,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-14": {
+      "sessions": 288,
+      "ended": 144,
+      "durationMs": 59328000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 72,
+      "pageViews": 648,
+      "peakOnline": 14,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-13": {
+      "sessions": 312,
+      "ended": 168,
+      "durationMs": 69216000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 144,
+      "returning": 96,
+      "pageViews": 672,
+      "peakOnline": 15,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-12": {
+      "sessions": 336,
+      "ended": 192,
+      "durationMs": 79104000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 168,
+      "returning": 120,
+      "pageViews": 696,
+      "peakOnline": 16,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-11": {
+      "sessions": 192,
+      "ended": 216,
+      "durationMs": 88992000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 192,
+      "returning": 72,
+      "pageViews": 504,
+      "peakOnline": 17,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-07-10": {
+      "sessions": 216,
+      "ended": 240,
+      "durationMs": 98880000,
+      "durHist": [
+        2,
+        3,
+        2,
+        1,
+        1,
+        0
+      ],
+      "newVisitors": 120,
+      "returning": 96,
+      "pageViews": 528,
+      "peakOnline": 18,
+      "onlineSum": 480,
+      "onlineSamples": 60,
+      "device": {
+        "Desktop": 144,
+        "Mobile": 96
+      },
+      "browser": {
+        "Chrome": 192,
+        "Safari": 2,
+        "Samsung": 1
+      },
+      "os": {
+        "Windows": 120,
+        "macOS": 3,
+        "Android": 2,
+        "iOS": 1
+      },
+      "country": {
+        "ZA": 5,
+        "GB": 3,
+        "US": 2,
+        "DE": 1,
+        "FR": 1,
+        "BR": 1,
+        "IN": 1,
+        "AU": 1
+      },
+      "pages": {
+        "/": 216,
+        "/news": 2,
+        "/info": 1
+      },
+      "source": {
+        "F1TV": 6,
+        "Sky UK": 2,
+        "AppleTV": 1,
+        "DAZN": 1
+      },
+      "team": {
+        "ferrari": 3,
+        "mclaren": 2,
+        "redbull": 2,
+        "mercedes": 1
+      },
+      "fullscreen": 2,
+      "nostream": 1,
+      "streamReady": 168,
+      "streamReadyMs": 22400,
+      "streamTimeout": 1
+    },
+    "2026-10-06": {
+      "sessions": 79,
+      "ended": 70,
+      "durationMs": 631641,
+      "durHist": [
+        68,
+        2,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 78,
+      "returning": 1,
+      "pageViews": 165,
+      "peakOnline": 12,
+      "onlineSum": 96,
+      "onlineSamples": 73,
+      "device": {
+        "Desktop": 79
+      },
+      "browser": {
+        "Chrome": 79
+      },
+      "os": {
+        "Windows": 21,
+        "Linux": 58
+      },
+      "pages": {
+        "/": 78,
+        "/performance": 24,
+        "/news": 18,
+        "/info": 13,
+        "/discord": 19,
+        "/247": 13
+      },
+      "nostream": 136
+    },
+    "2026-10-07": {
+      "sessions": 216,
+      "ended": 206,
+      "durationMs": 1524184,
+      "durHist": [
+        206,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 105,
+      "returning": 111,
+      "pageViews": 245,
+      "peakOnline": 30,
+      "onlineSum": 220,
+      "onlineSamples": 134,
+      "device": {
+        "Desktop": 216
+      },
+      "browser": {
+        "Chrome": 213,
+        "Unknown": 3
+      },
+      "os": {
+        "Linux": 203,
+        "Windows": 10,
+        "Unknown": 3
+      },
+      "pages": {
+        "/": 129,
+        "/performance": 13,
+        "/news": 5,
+        "/info": 7,
+        "/discord": 5,
+        "/247": 13,
+        "/audio": 2,
+        "/other": 71
+      },
+      "nostream": 532,
+      "streamReady": 16,
+      "streamReadyMs": 15222
+    },
+    "2026-10-08": {
+      "sessions": 3,
+      "ended": 2,
+      "durHist": [
+        2,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "newVisitors": 3,
+      "pageViews": 3,
+      "peakOnline": 2,
+      "onlineSum": 1,
+      "onlineSamples": 7,
+      "device": {
+        "Desktop": 3
+      },
+      "browser": {
+        "Chrome": 3
+      },
+      "os": {
+        "Linux": 3
+      },
+      "pages": {
+        "/": 3
+      },
+      "nostream": 3
+    }
+  }
+}

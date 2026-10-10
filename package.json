@@ -6,34 +6,31 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "npm run check:syntax && npm run check:targets && npm run check:unit && npm run check:browser && npm run check:site && npm run check:maintenance && npm run check:rounds && npm run check:admin && npm run check:security && npm run check:motion && npm run check:csp && npm run check:relay && npm run check:announce",
-    "check:syntax": "node --check server.js && node --check admin/admin.js && node --check admin/charts.js && node --check admin/analytics.js && node --check bot/discord-bot.js && node --check lib/client-ip.js && node --check lib/discord-link.js && node --check lib/durable-store.js && node --check lib/origin-policy.js && node --check lib/site-paths.js && node --check lib/stream-catalog.js && node --check lib/stream-url.js && node --check lib/tickets.js && node --check lib/user-agent.js && node --check scripts/module-check.js && node --check scripts/load-check.js && node --check scripts/redis-integration-check.js && node --check scripts/migrate-upstash-to-redis.js && node --check scripts/targets-check.js && node --check scripts/maintenance-fit-check.js && node --check scripts/security-check.js && node --check scripts/csp-check.js && node --check scripts/round-meeting-check.js && node --check scripts/motion-check.js && node --check scripts/discord-link-check.js && node --check scripts/discord-announce-check.js && node --check scripts/relay-disabled-check.js",
+    "check": "npm run check:syntax && npm run check:targets && npm run check:unit && npm run check:browser && npm run check:site && npm run check:maintenance && npm run check:rounds && npm run check:admin && npm run check:security && npm run check:motion && npm run check:csp && npm run check:relay",
+    "check:syntax": "node --check server.js && node --check admin/admin.js && node --check admin/charts.js && node --check admin/analytics.js && node --check bot/discord-bot.js && node --check bot/voice-relay.js && node --check scripts/security-check.js && node --check scripts/csp-check.js && node --check scripts/round-meeting-check.js && node --check scripts/motion-check.js && node --check scripts/targets-check.js",
     "check:targets": "node scripts/targets-check.js",
     "targets": "node scripts/targets-check.js",
-    "check:unit": "node scripts/module-check.js && node scripts/smoke-test.js && node scripts/redis-integration-check.js && node scripts/presence-check.js && node scripts/preview-auth-check.js && node scripts/race-times-check.js && node scripts/visitor-counter-check.js",
+    "check:unit": "node scripts/smoke-test.js && node scripts/presence-check.js && node scripts/preview-auth-check.js && node scripts/race-times-check.js && node scripts/visitor-counter-check.js",
     "check:browser": "node scripts/live247-shield-check.js",
     "check:site": "node scripts/site-dom-check.js",
     "check:maintenance": "node scripts/maintenance-fit-check.js",
     "maintenance": "node scripts/maintenance-fit-check.js",
     "check:admin": "node scripts/admin-dom-check.js",
     "check:security": "node scripts/security-check.js",
-    "check:relay": "node scripts/relay-disabled-check.js",
+    "check:relay": "node scripts/relay-audio-check.js",
+    "check:cdnlivetv": "node scripts/cdnlivetv-check.js",
+    "cdnlivetv": "node scripts/cdnlivetv-check.js",
     "smoke": "node scripts/smoke-test.js",
     "dom": "node scripts/admin-dom-check.js",
     "site": "node scripts/site-dom-check.js",
     "security": "node scripts/security-check.js",
-    "relay": "node scripts/relay-disabled-check.js",
+    "relay": "node scripts/relay-audio-check.js",
     "check:csp": "node scripts/csp-check.js",
     "csp": "node scripts/csp-check.js",
     "check:rounds": "node scripts/round-meeting-check.js",
     "rounds": "node scripts/round-meeting-check.js",
     "check:motion": "node scripts/motion-check.js",
-    "motion": "node scripts/motion-check.js",
-    "check:discord": "node scripts/discord-link-check.js",
-    "check:announce": "node scripts/discord-announce-check.js",
-    "migrate:redis": "node scripts/migrate-upstash-to-redis.js",
-    "check:load": "node scripts/load-check.js",
-    "check:redis": "node scripts/redis-integration-check.js"
+    "motion": "node scripts/motion-check.js"
   },
   "engines": {
     "node": ">=18.11"
@@ -43,7 +40,12 @@
     "cookie-session": "^2.1.1",
     "discord.js": "^14.27.0",
     "express": "^4.22.2",
-    "redis": "^6.3.0"
+    "tough-cookie": "^6.0.2"
+  },
+  "optionalDependencies": {
+    "@discordjs/opus": "^0.10.0",
+    "@discordjs/voice": "^0.18.0",
+    "ffmpeg-static": "^5.3.0"
   },
   "devDependencies": {
     "jsdom": "^29.1.1"

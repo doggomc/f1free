@@ -5,7 +5,7 @@
    ════════════════════════════════════════════════════════════════════
    Runs in-process with the f1free Express server; started only when
    DISCORD_BOT_TOKEN is set. Everything the owner configures with
-   commands is persisted (file locally / Redis in production), so
+   commands is persisted (file locally / Upstash in production), so
    restarts and redeploys keep panels, bindings and sent-history.
 
    Ownership is hard-coded to a single user id by design (spec):
@@ -27,10 +27,11 @@
                           soon-alert lead time. Everything editable
                           without re-posting panels.
      /status      owner — one glance at bindings, panels, next
-                          session and store backend.
+                          session, relay state and store backend.
      /live        owner — test-fires an alert embed (any state:
                           soon / live / ended) into the alerts channel.
      /emojis      owner — uploads any missing custom number emojis.
+     /watchparty  owner — start/stop/status the race-AUDIO relay.
      /website     everyone — stylish link embed for the site.
      scheduler    — per session: STARTING SOON (amber) embed + role
                     ping at T-minus config; the same message edits
@@ -43,7 +44,7 @@
 
    Intents stay unprivileged: Guilds, GuildMessages, GuildMessageReactions
    (+ Message/Reaction partials so legacy reaction panels survive bot
-   restarts).
+   restarts), GuildVoiceStates for the audio relay's empty-room pause.
    ════════════════════════════════════════════════════════════════════ */
 
 const fs = require('fs');
@@ -52,81 +53,10 @@ const {
   Client, GatewayIntentBits, Partials, ActionRowBuilder,
   ButtonBuilder, ButtonStyle, REST, Routes, Events, ActivityType,
 } = require('discord.js');
-/* ── link channel naming (module scope so it is testable) ─────────────────
-   A server may call the channel #link or #links; both are accepted so renaming
-   it does not silently break /link. Decoration is tolerated. */
-const LINK_CHANNEL_NAMES = new Set(['link', 'links']);
-const normaliseChannelName = (name) =>
-  String(name || '').toLowerCase().replace(/^[#\s]+/, '').trim();
-const isLinkChannelName = (name) => LINK_CHANNEL_NAMES.has(normaliseChannelName(name));
-
-/* Prefer an exact `links` when a server has both. */
-function pickLinkChannel(channels) {
-  const list = Array.isArray(channels) ? channels : [];
-  const matches = list.filter((c) => c && isLinkChannelName(c && c.name));
-  if (!matches.length) return null;
-  return matches.find((c) => String(c.name).toLowerCase() === 'links') || matches[0];
-}
-
-/* The wording the announcements use. Kept pure so the exact strings are
-   asserted in tests rather than eyeballed. */
-function linkAnnouncementText(event) {
-  const id = (event && event.userId) || (event && event.profile && event.profile.id) || '';
-  const mention = id
-    ? `<@${id}>`
-    : ((event && event.profile && (event.profile.globalName || event.profile.username)) || 'Someone');
-  if (!event) return `${mention} has unlinked their account.`;
-  if (event.type === 'linked') return `${mention} has linked their account.`;
-  if (event.reason === 'left') return `${mention} has left and was unlinked.`;
-  return `${mention} has unlinked their account.`;
-}
-
-/* Decides whether a failed login is the privileged-intent refusal (recover:
-   drop the bit and retry) or a genuine misconfiguration (bad token, no
-   OWNER_ID — retrying would just loop). Module scope so it is testable. */
-function isDisallowedIntentError(error) {
-  const msg = String((error && error.message) || error);
-  return /disallowed intent|privileged intent|4014|Used disallowed intents/i.test(msg);
-}
-
-/* Where the announcements go. Prefers an exact `links` so a server with both
-   gets them in the one this was asked for. Falls back to the cache when the
-   fetch is not permitted. */
-async function findLinkChannel(guild) {
-  if (!guild || !guild.channels) return null;
-  let list = [];
-  try {
-    const fetched = await guild.channels.fetch();
-    list = fetched && fetched.values ? [...fetched.values()] : [];
-  } catch (_) {
-    list = guild.channels.cache && guild.channels.cache.values
-      ? [...guild.channels.cache.values()] : [];
-  }
-  return pickLinkChannel(list.filter((c) => typeof c.isTextBased === 'function' && c.isTextBased()));
-}
-
-/* Announce a link event in the server's link channel. Best effort and fully
-   swallowed: a missing channel, no permission to speak, or a client that has
-   not connected yet must never surface as a failed link to the member. */
-async function announceLinkEvent(client, deps, event) {
-  const log = (deps && deps.log) || ((...a) => console.log('[Bot]', ...a));
-  try {
-    if (!event || !client || typeof client.isReady !== 'function' || !client.isReady()) return false;
-    const guildId = (event.profile && event.profile.guildId) || String((deps && deps.guildId) || '');
-    const guilds = client.guilds && client.guilds.cache;
-    const guild = guildId && guilds
-      ? guilds.get(guildId)
-      : (guilds && typeof guilds.first === 'function' ? guilds.first() : null);
-    if (!guild) { log('no guild to announce in'); return false; }
-    const channel = await findLinkChannel(guild);
-    if (!channel) { log('no #link/#links channel to announce in'); return false; }
-    await channel.send(linkAnnouncementText(event));
-    return true;
-  } catch (error) {
-    log('link announcement failed:', error && error.message);
-    return false;
-  }
-}
+/* Optional voice relay. Loaded lazily so the bot still boots (and the site
+   still serves) when the voice packages are not installed. See
+   bot/STREAMING.md for why this is audio-only. */
+const relayModule = require('./voice-relay.js');
 
 const OWNER_ID = String(process.env.DISCORD_OWNER_ID || '').trim();
 const DEFAULT_SOON_MINUTES = 10;    // lead time for the "starting soon" alert
@@ -360,7 +290,7 @@ function start(deps) {
   }
   const EMOJI_DIR = path.join(__dirname, 'assets', 'emoji');
 
-  /* ── durable store: file locally, Redis in production ──
+  /* ── durable store: file locally, Upstash in production ──
      Writes are immediate (no debounce): the sent-markers are the only
      thing standing between a redeploy and a double-posted alert, so a
      SIGTERM must never race a pending save. server.js calls flush()
@@ -371,8 +301,8 @@ function start(deps) {
     async load() {
       if (storeCache) return storeCache;
       try {
-        if (deps.storeCommand) {
-          const r = await deps.storeCommand(['GET', deps.redisKey]);
+        if (deps.upstash) {
+          const r = await deps.upstash(['GET', deps.redisKey]);
           storeCache = r && r.result ? JSON.parse(r.result) : { guilds: {} };
         } else {
           storeCache = deps.readLocalJson(deps.fileKey) || { guilds: {} };
@@ -389,7 +319,7 @@ function start(deps) {
       // snapshot.
       const write = async () => {
         try {
-          if (deps.storeCommand) await deps.storeCommand(['SET', deps.redisKey, JSON.stringify(storeCache)]);
+          if (deps.upstash) await deps.upstash(['SET', deps.redisKey, JSON.stringify(storeCache)]);
           else deps.writeLocalJson(deps.fileKey, storeCache);
         } catch (e) { log('store save failed:', e.message); }
       };
@@ -410,36 +340,29 @@ function start(deps) {
   };
   const soonMinutesFor = st => Number(st.config && st.config.soonMinutes) || DEFAULT_SOON_MINUTES;
 
-  /* PRIVILEGED and OFF BY DEFAULT.
+  /* Voice relay: joins a race-control channel and plays the race audio.
+     Everything degrades gracefully when the voice packages are absent. */
+  const relay = relayModule.create({
+    log,
+    getState: () => store.load(),
+    save: () => store.save()
+  });
+  if (!relayModule.isAvailable()) {
+    log('voice relay disabled — install @discordjs/voice @discordjs/opus ffmpeg-static to enable /watchparty');
+  }
 
-     Asking for GuildMembers while the switch is off in the Developer Portal
-     makes the gateway refuse the whole connection (close 4014), which takes
-     the ENTIRE bot down over one optional feature. It is also not something
-     we can recover from by mutating options after the fact: discord.js
-     captures the intent bitfield when the client is built, so a retry on the
-     same client re-sends the same intents and fails identically.
-
-     So it is opt-in. Everything works without it; only the automatic revoke
-     when a member leaves the server is missing, and /unlink still covers
-     that by hand. To turn it on:
-       1. Developer Portal > your app > Bot > Privileged Gateway Intents
-          > enable "Server Members Intent"
-       2. set DISCORD_GUILD_MEMBERS_INTENT=1 on the service
-       3. restart */
-  const WANT_GUILD_MEMBERS = String(process.env.DISCORD_GUILD_MEMBERS_INTENT || '0').trim() === '1';
-  const clientIntents = [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMessageReactions,
-  ];
-  if (WANT_GUILD_MEMBERS) clientIntents.push(GatewayIntentBits.GuildMembers);
-  if (!WANT_GUILD_MEMBERS) {
-    log('auto-revoke on member leave is OFF (set DISCORD_GUILD_MEMBERS_INTENT=1 '
-      + 'and enable the Server Members Intent in the portal to switch it on)');
+  function pauseIfEmpty(guild, channel) {
+    const humans = channel.members ? channel.members.filter(m => !m.user.bot).size : 0;
+    if (humans === 0) relay.setPaused(guild.id, true);
   }
 
   const client = new Client({
-    intents: clientIntents,
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.GuildMessageReactions,
+      GatewayIntentBits.GuildVoiceStates, // audio relay + empty-room pause
+    ],
     partials: [Partials.Message, Partials.Reaction],
   });
 
@@ -732,12 +655,13 @@ function start(deps) {
           options: [
             { type: 7, name: 'alerts_channel', description: 'Where session alerts get posted', required: false, channel_types: [0] },
             { type: 8, name: 'alerts_role', description: 'Role pinged by starting-soon alerts', required: false },
+            { type: 3, name: 'audio_url', description: 'Default race audio for /watchparty start', required: false },
             { type: 4, name: 'soon_minutes', description: 'Lead time for STARTING SOON alerts (1-120, default 10)', required: false, min_value: 1, max_value: 120 },
           ],
         },
       ],
     },
-    { name: 'status', description: 'Owner: bindings, panels, next session and store at a glance.', dm_permission: false },
+    { name: 'status', description: 'Owner: bindings, panels, next session, relay and store at a glance.', dm_permission: false },
     {
       name: 'live', description: 'Owner: test-fire an alert embed into the alerts channel.', dm_permission: false,
       options: [
@@ -754,28 +678,22 @@ function start(deps) {
       ],
     },
     { name: 'emojis', description: 'Owner: upload any missing number emojis to this server.', dm_permission: false },
-    { name: 'website', description: 'The FreeF1 stream hub — link embed.' },
-    /* Available to every member; links are community identity, not playback. */
     {
-      name: 'link', description: 'Link your Discord account to your FreeF1 profile.', dm_permission: false,
+      name: 'watchparty', description: 'Owner: relay the race AUDIO into a voice channel (bots cannot stream video).', dm_permission: false,
       options: [
-        { name: 'code', type: 3, description: 'The 5-character code shown on the site', required: true, min_length: 4, max_length: 16 },
-      ],
+        {
+          type: 1, name: 'start', description: 'Join a voice channel and play the race audio',
+          options: [
+            { type: 3, name: 'audio', description: 'Audio URL (HTTP/HTTPS/HLS/m3u8/MP3). Defaults to /config audio_url, then FREEF1_AUDIO_URL.', required: false },
+            { type: 7, name: 'channel', description: 'Voice channel to join (defaults to yours)', required: false, channel_types: [2] }
+          ]
+        },
+        { type: 1, name: 'stop', description: 'Leave the voice channel and stop the relay' },
+        { type: 1, name: 'status', description: 'Show whether the audio relay is running' }
+      ]
     },
-    { name: 'unlink', description: 'Unlink your Discord account from FreeF1.', dm_permission: false },
+    { name: 'website', description: 'The FreeF1 stream hub — link embed.' },
   ];
-
-  /* The bridge to the site's link table. Absent only if the server was not
-     wired up, in which case the commands say so instead of throwing. */
-  const links = deps.discordLink || null;
-
-  const announceLink = (event) => announceLinkEvent(client, deps, event);
-
-  function isLinkChannel(interaction) {
-    const name = interaction.channel && interaction.channel.name ? String(interaction.channel.name) : '';
-    return isLinkChannelName(name);
-  }
-
 
   /* ── interactions ── */
   async function onInteraction(interaction) {
@@ -787,51 +705,6 @@ function start(deps) {
     if (!interaction.isChatInputCommand()) return;
     try {
       const cmd = interaction.commandName;
-
-      /* Everyone, not just the owner — and deliberately before the owner gate
-         below. Kept to a channel named #link so the server's other channels
-         are not cluttered with codes and the command has an obvious home. */
-      if (cmd === 'link' || cmd === 'unlink') {
-        if (!links) {
-          return interaction.reply({ content: 'Linking is not configured on the site right now.', ephemeral: true });
-        }
-        if (!isLinkChannel(interaction)) {
-          return interaction.reply({ content: 'Run this in the #links channel.', ephemeral: true });
-        }
-        const user = interaction.user;
-        const profile = {
-          id: user.id,
-          username: user.username,
-          globalName: user.globalName || user.username,
-          avatar: user.displayAvatarURL ? user.displayAvatarURL({ size: 64, extension: 'png' }) : '',
-          guildId: interaction.guildId || '',
-        };
-
-        if (cmd === 'unlink') {
-          const result = await links.revoke(user.id);
-          log(`unlink ${user.tag || user.id}: ${result.wasLinked ? 'revoked' : 'was not linked'}`);
-          return interaction.reply({
-            content: result.wasLinked
-              ? 'Your Discord account is unlinked from FreeF1.'
-              : 'That account was not linked to begin with.',
-            ephemeral: true,
-          });
-        }
-
-        const code = String(interaction.options.getString('code') || '').trim().toUpperCase();
-        const result = await links.claimCode(code, profile);
-        if (result.error) {
-          return interaction.reply({ content: `Could not link: ${result.error}`, ephemeral: true });
-        }
-        log(`link code ${code} claimed by ${user.tag || user.id}`);
-        /* Ephemeral: the code is a credential until the site confirms it, and
-           the site shows the profile back for the member to approve. */
-        return interaction.reply({
-          content: `Code ${code} accepted for **${profile.globalName || profile.username}**. Confirm on the site — it should be asking "is this you?" now.`,
-          ephemeral: true,
-        });
-      }
-
       if (cmd !== 'website' && interaction.user.id !== OWNER_ID) {
         return interaction.reply({ content: 'Owner-only command.', ephemeral: true });
       }
@@ -876,6 +749,7 @@ function start(deps) {
                 { name: 'Alerts channel', value: st.alerts && st.alerts.channelId ? `<#${st.alerts.channelId}>` : 'not set', inline: true },
                 { name: 'Alerts role', value: st.alerts && st.alerts.roleId ? `<@&${st.alerts.roleId}>` : 'not set', inline: true },
                 { name: 'Soon lead time', value: `${soonMinutesFor(st)} min`, inline: true },
+                { name: 'Audio url', value: (st.config.audioUrl || deps.audioUrl || 'not set').slice(0, 80), inline: false },
                 { name: 'Grid panel', value: grid ? `https://discord.com/channels/${guild.id}/${grid.channelId}/${grid.messageId}` : 'not posted', inline: false },
                 { name: 'Alerts panel', value: alerts ? `https://discord.com/channels/${guild.id}/${alerts.channelId}/${alerts.messageId}` : 'not posted', inline: false },
               ],
@@ -886,9 +760,11 @@ function start(deps) {
         const changed = [];
         const ch = interaction.options.getChannel('alerts_channel');
         const role = interaction.options.getRole('alerts_role');
+        const audio = interaction.options.getString('audio_url');
         const soon = interaction.options.getInteger('soon_minutes');
         if (ch) { st.alerts = { channelId: ch.id, roleId: st.alerts ? st.alerts.roleId : null }; changed.push(`alerts channel -> ${ch}`); }
         if (role) { st.alerts = { channelId: st.alerts ? st.alerts.channelId : null, roleId: role.id }; changed.push(`alerts role -> ${role.name}`); }
+        if (audio !== null) { st.config.audioUrl = audio.trim(); changed.push('audio url updated'); }
         if (soon !== null) { st.config.soonMinutes = soon; changed.push(`soon lead time -> ${soon} min`); }
         if (!changed.length) return interaction.reply({ content: 'Nothing to change - pass at least one option to /config set.', ephemeral: true });
         await store.save();
@@ -898,6 +774,7 @@ function start(deps) {
       if (cmd === 'status') {
         const next = nextSession();
         const live = liveSession();
+        const relayState = relay.status(guild.id);
         const grid = st.panels.grid;
         return interaction.reply({
           ephemeral: true,
@@ -909,11 +786,70 @@ function start(deps) {
               { name: 'Alerts', value: st.alerts && st.alerts.channelId ? `<#${st.alerts.channelId}> pinging ${st.alerts.roleId ? `<@&${st.alerts.roleId}>` : 'nobody'}` : 'not configured', inline: false },
               { name: 'Panels', value: `grid: ${grid ? 'posted' : 'not posted'} · alerts: ${st.panels.alerts ? 'posted' : 'not posted'} · legacy reaction panels: ${st.panels.d1 || st.panels.d2 ? 'yes' : 'no'}`, inline: false },
               { name: 'Roles', value: `${Object.keys(st.driverRoles).length}/${ALL_DRIVERS.length} grid roles mapped · ${Object.keys(st.emojiIds).length} emojis stored`, inline: false },
-              { name: 'Store', value: deps.storeCommand ? `${deps.storeProvider || 'Redis'} (durable)` : 'local JSON', inline: true },
+              { name: 'Audio relay', value: relayState ? `${relayState.state}${relayState.paused ? ' (paused, empty room)' : ''} in <#${relayState.channelId}>` : 'not running', inline: false },
+              { name: 'Store', value: deps.upstash ? 'Upstash Redis (durable)' : 'local JSON', inline: true },
               { name: 'Soon lead', value: `${soonMinutesFor(st)} min`, inline: true },
             ],
           }],
         });
+      }
+
+      if (cmd === 'watchparty') {
+        const subcommand = interaction.options.getSubcommand();
+        const guildId = guild.id;
+
+        if (subcommand === 'status') {
+          const current = relay.status(guildId);
+          if (!current) return interaction.reply({ content: 'The audio relay is not running.', ephemeral: true });
+          const seconds = Math.round((Date.now() - current.startedAt) / 1000);
+          return interaction.reply({
+            content: `Audio relay is **${current.state}**${current.paused ? ' (paused - empty room)' : ''} in <#${current.channelId}> for ${Math.floor(seconds / 60)}m ${seconds % 60}s.`,
+            ephemeral: true
+          });
+        }
+
+        if (subcommand === 'stop') {
+          const stopped = relay.stop(guildId, { clearSaved: true });
+          return interaction.reply({
+            content: stopped ? 'Left the voice channel and stopped the relay.' : 'The relay was not running.',
+            ephemeral: true
+          });
+        }
+
+        // start
+        if (!relayModule.isAvailable()) {
+          return interaction.reply({
+            content: 'Voice packages are missing. Install them and restart:\n`npm i @discordjs/voice @discordjs/opus ffmpeg-static`',
+            ephemeral: true
+          });
+        }
+
+        const channel = interaction.options.getChannel('channel') || interaction.member?.voice?.channel;
+        if (!channel) return interaction.reply({ content: 'Join a voice channel first, or pass one with `channel:`.', ephemeral: true });
+        if (!channel.joinable) return interaction.reply({ content: `I do not have permission to join ${channel}.`, ephemeral: true });
+        if (!channel.speakable) return interaction.reply({ content: `I do not have permission to speak in ${channel}.`, ephemeral: true });
+
+        const url = (interaction.options.getString('audio') || st.config.audioUrl || deps.audioUrl || '').trim();
+        if (!url) {
+          return interaction.reply({
+            content: 'No audio source configured. Pass one with `audio:`, or set one with `/config set audio_url:` or `FREEF1_AUDIO_URL`.',
+            ephemeral: true
+          });
+        }
+        if (!/^https?:\/\//i.test(url)) {
+          return interaction.reply({ content: 'The audio source must be an http(s) URL.', ephemeral: true });
+        }
+
+        await interaction.deferReply({ ephemeral: true });
+        try {
+          await relay.start(guild, channel, url);
+          pauseIfEmpty(guild, channel);
+          return interaction.editReply({
+            content: `Race audio is live in ${channel}\nSource: \`${url}\`\n\nThe relay pauses itself when the room is empty and resumes when someone joins.\nVideo stays on the site - Discord bots cannot stream video into a voice channel (see bot/STREAMING.md).`
+          });
+        } catch (error) {
+          return interaction.editReply({ content: `Could not start the relay: ${error.message}` });
+        }
       }
 
       if (cmd === 'live') {
@@ -968,6 +904,17 @@ function start(deps) {
       discoverDriverRoles(guild, st);
       log(`guild: ${guild.name} — ${Object.keys(st.driverRoles).length} grid roles mapped`);
 
+      // Resume an audio relay that was running before the restart.
+      if (st.relay && st.relay.channelId && st.relay.url && relayModule.isAvailable()) {
+        const channel = guild.channels.cache.get(st.relay.channelId);
+        if (channel) {
+          relay.start(guild, channel, st.relay.url, st.relay.attempts || 1)
+            .then(() => pauseIfEmpty(guild, channel))
+            .catch(e => log(`relay resume failed in ${guild.name}: ${e.message}`));
+        } else {
+          delete st.relay; await store.save();
+        }
+      }
     }
 
     if (!schedulerStarted) {
@@ -982,58 +929,33 @@ function start(deps) {
   client.on(Events.MessageReactionAdd, (r, u) => { handleReaction(r, u, true).catch(() => {}); });
   client.on(Events.MessageReactionRemove, (r, u) => { handleReaction(r, u, false).catch(() => {}); });
 
-  /* Someone leaving the server should not keep a stale community link.
-     The link represents current membership. If the GuildMembers intent is not enabled
-     in the portal this event never fires and nothing is revoked here; /unlink
-     and the site-side checks are unaffected. */
-  client.on(Events.GuildMemberRemove, (member) => {
-    (async () => {
-      try {
-        if (!links) return;
-        const id = member && (member.id || (member.user && member.user.id));
-        if (!id) return;
-        const result = await links.revoke(id, 'left');
-        log(`member left ${id}: ${result.wasLinked ? 'unlinked' : 'was not linked'}`);
-      } catch (error) {
-        log('guildMemberRemove handler failed:', error && error.message);
-      }
-    })();
+  /* Pause the relay when the voice room empties (ffmpeg blocks on the full
+     pipe, so CPU drops to ~0) and resume the moment anyone joins. */
+  client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+    try {
+      const guild = newState.guild || oldState.guild;
+      if (!guild) return;
+      const current = relay.status(guild.id);
+      if (!current) return;
+      if (oldState.channelId !== current.channelId && newState.channelId !== current.channelId) return;
+      const channel = guild.channels.cache.get(current.channelId);
+      if (!channel) return;
+      const humans = channel.members.filter(m => !m.user.bot).size;
+      relay.setPaused(guild.id, humans === 0);
+    } catch (_) { /* never let a voice event break the bot */ }
   });
 
   client.on(Events.Error, e => log('client error:', e.message));
 
-  /* GuildMembers is a PRIVILEGED intent, and it is off by default in the
-     Developer Portal. Asking for it while it is switched off makes the gateway
-     refuse the connection outright (close 4014), which would take the entire
-     bot down over one optional announcement — so on that specific refusal we
-     drop the bit and reconnect. Only the auto-revoke on leave is lost, and
-     the log says exactly how to get it back. Any other login failure is a
-     real misconfiguration (bad token, missing OWNER_ID) and is left alone;
-     it must not be retried.
-
-     Note client.options.intents is frozen, so the bit is cleared by swapping
-     in a fresh BitField rather than calling .remove() (which would no-op). */
-  client.login(deps.token).catch((error) => {
-    const msg = String((error && error.message) || error);
-    log('login failed:', msg);
-    if (!isDisallowedIntentError(error)) return;
-    /* Deliberately NOT retried: the intents were fixed when the client was
-       constructed, so a second attempt sends the same payload and fails the
-       same way — that just spams the log. Explain the two switches instead. */
-    log('the gateway refused our intents. Two things must both be true to use '
-      + 'GuildMembers: the "Server Members Intent" toggle in the Developer Portal '
-      + '(Applications > Bot > Privileged Gateway Intents) AND '
-      + 'DISCORD_GUILD_MEMBERS_INTENT=1 here. Until then the bot runs without it; '
-      + 'everything works except auto-revoke when a member leaves.');
-  });
+  client.login(deps.token).catch(e => log('login failed:', e.message));
 
   /* Handle for server.js: flush the store during graceful shutdown. */
   return {
     client,
-    announceLink,
     flush: () => store.save(),
     stop: () => {
       if (tickTimer) clearInterval(tickTimer);
+      relay.stopAll();
       try { client.destroy(); } catch (_) {}
     },
   };
@@ -1042,9 +964,6 @@ function start(deps) {
 module.exports = {
   start,
   _test: {
-    normaliseChannelName, isLinkChannelName, pickLinkChannel, linkAnnouncementText,
-    findLinkChannel, announceLinkEvent, isDisallowedIntentError,
-    LINK_CHANNEL_NAMES,
     driverPanelEmbed, alertsPanelEmbed, sessionEmbed, websiteEmbed,
     gridRows, alertsRow,
     nextSession, liveSession, sessionState, findSession, presenceActivity,

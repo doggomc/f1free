@@ -788,7 +788,7 @@ function syncOverrideConflict() {
   overrideConflict.hidden = !(overrideActive && maintenanceActive);
 }
 
-const STORE_COLORS = { REDIS: 'var(--green)', UPSTASH: 'var(--green)', FILE: 'var(--amber)' };
+const STORE_COLORS = { UPSTASH: 'var(--green)', FILE: 'var(--amber)' };
 const storeColor = store => STORE_COLORS[String(store || '').toUpperCase()] || '#ff6b62';
 
 function updateSystemInfo(data) {
@@ -953,7 +953,7 @@ async function saveNews(event) {
     const data = await response.json();
     if (!response.ok || !data.success) throw new Error(data.error || 'News update failed.');
     showToast(id ? 'News update saved.' : 'News update published.', 'success');
-    if (!data.durable) showToast('Saved in memory only. Configure REDIS_URL to keep news after a server restart.', 'warning');
+    if (!data.durable) showToast('Saved in memory only. Configure Upstash to keep news after a server restart.', 'warning');
     resetNewsForm();
     await loadNews();
   } catch (error) {
@@ -1104,7 +1104,7 @@ async function toggleSource(sourceId) {
     if (!response.ok || !data.success) throw new Error(data.error || 'Feed source update failed.');
     disabledSources = new Set((Array.isArray(data.disabled) ? data.disabled : []).map(String));
     renderSources();
-    if (!data.durable) showToast('Saved in memory only. Configure REDIS_URL to keep this after a server restart.', 'warning');
+    if (!data.durable) showToast('Saved in memory only. Configure Upstash to keep this after a server restart.', 'warning');
   } catch (error) {
     // Roll back to the server-confirmed state.
     if (wasDisabled) next.add(sourceId); else next.delete(sourceId);
@@ -1430,7 +1430,7 @@ let visitorRenderTimer = null;
 let visitorRenderPending = false;
 const VISITOR_RENDER_COALESCE_MS = 250;
 // Fallback window for a payload that carries no deadline: the server's PRESENCE_TTL_MS.
-const LIVE_WINDOW_MS = 270_000;
+const LIVE_WINDOW_MS = 30_000;
 
 function indexVisitors(visitors) {
   const index = new Map();
@@ -1636,7 +1636,7 @@ async function toggleMaintenanceMode() {
     if (currentStats) currentStats.maintenance = data.maintenance;
     updateMaintenanceStatus(data.maintenance);
     if (!data.durable) {
-      showToast('Mode changed, but permanent storage is unavailable. Configure REDIS_URL before restarting Render.', 'warning');
+      showToast('Mode changed, but permanent storage is unavailable. Configure Upstash before restarting Render.', 'warning');
     } else {
       showToast(nextActive ? 'Maintenance mode is live.' : 'The public website is live again.', nextActive ? 'warning' : 'success');
     }
@@ -1716,7 +1716,7 @@ async function postStreamAction(path, body) {
 
 function noteOverrideResult(data, changed, activeMessage, idleMessage) {
   if (changed) showToast(data.override?.active ? activeMessage : idleMessage, data.override?.active ? 'warning' : 'success');
-  if (data.durable === false) showToast('Saved in memory only. Configure REDIS_URL to keep the override after a restart.', 'warning');
+  if (data.durable === false) showToast('Saved in memory only. Configure Upstash to keep the override after a restart.', 'warning');
 }
 
 async function activateStreamOverride() {

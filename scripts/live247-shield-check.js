@@ -36,8 +36,6 @@ const emptyJson = body => ({ ok: true, status: 200, json: async () => body, text
 window.fetch = async (url) => {
   const u = String(url);
   if (u.includes('/api/stream/sources')) return emptyJson({ sources: [], disabled: [], updatedAt: 0 });
-  // 24/7 stations are reached through an API-minted alias like every feed.
-  if (u.includes('/api/stream/ticket')) return emptyJson({ href: '/stream/test-alias', expiresAt: Date.now() + 3_600_000 });
   if (u.includes('driverstandings')) return emptyJson({ MRData: { StandingsTable: { StandingsLists: [{ DriverStandings: [] }] } } });
   return emptyJson({});
 };
@@ -63,20 +61,10 @@ window.addEventListener('error', event => runtimeErrors.push(String(event.error 
 
   // Open the 24/7 view — auto-loads the default station (Sky UK 2, gate:'auto').
   click(window.document.querySelector('a[data-route="247"]'));
-  // The station frame mounts after an async alias request.
-  for (let i = 0; i < 40 && !($('live247FrameWrap') && $('live247FrameWrap').querySelector('iframe')); i++) {
-    await new Promise(resolve => setTimeout(resolve, 25));
-  }
+  await new Promise(resolve => setTimeout(resolve, 50));
 
   const wrap = $('live247FrameWrap');
   let iframe = wrap && wrap.querySelector('iframe');
-  if (!wrap || !iframe) {
-    // Report instead of crashing on the first property write below.
-    check('24/7 view mounts a station frame', false, `wrap=${Boolean(wrap)} iframe=${Boolean(iframe)}`);
-    for (const c of checks) console.log(`  ${c.pass ? 'ok  ' : 'FAIL'}  ${c.label}${c.pass || !c.detail ? '' : `  →  ${c.detail}`}`);
-    console.log(`\n${checks.filter(c => c.pass).length}/${checks.length} checks passed`);
-    process.exit(1);
-  }
   let gate = $('live247Gate');
 
   check('default channel is the reliable Sky UK 2', $('live247StationChip').textContent.includes('Sky UK 2'), $('live247StationChip').textContent);

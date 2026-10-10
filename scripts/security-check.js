@@ -112,23 +112,8 @@ async function waitForServer(server) {
   throw new Error(`server never came up:\n${server.log()}`);
 }
 
-/* Everything under /api that is not on the bootstrap allowlist needs the
-   browser's site ticket (default-deny), so these reads present one exactly as
-   the site does. Before the gate existed they were made bare, and every one
-   came back 403 with no `active` field. */
-async function siteTicket(server) {
-  const res = await fetch(`${server.base}/api/site/ticket`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', Origin: TRUSTED_ORIGIN, Referer: TRUSTED_ORIGIN + '/' },
-    body: '{}'
-  });
-  const { ticket } = await res.json();
-  assert.ok(ticket, `site ticket refused: ${res.status}`);
-  return ticket;
-}
-
 async function readCount(server) {
-  const res = await server.get('/api/visitors/active', { 'X-Site-Ticket': await siteTicket(server) });
+  const res = await server.get('/api/visitors/active');
   const payload = await res.json();
   return payload.active;
 }
@@ -245,9 +230,8 @@ async function main() {
     // and the next connection would legitimately be admitted.
     const controller = new AbortController();
     const statuses = [];
-    const ticket = await siteTicket(sse);
     for (let i = 0; i < 3; i++) {
-      const res = await fetch(`${sse.base}/api/events?ticket=${encodeURIComponent(ticket)}`, { signal: controller.signal });
+      const res = await fetch(`${sse.base}/api/events`, { signal: controller.signal });
       statuses.push(res.status);
       await new Promise(resolve => setTimeout(resolve, 150));
     }
@@ -334,20 +318,14 @@ async function main() {
     ADMIN_PASS: 'Un-guessable-Passphrase-9',
     ADMIN_SECRET: 'a'.repeat(64),
     VISITOR_SECRET: 'b'.repeat(32),
-    UNIQUE_VISITOR_HASH_SECRET: 'c'.repeat(32),
-    SELFCHECK_TOKEN: 'd'.repeat(32),
-    REDIS_URL: 'redis://127.0.0.1:1',
-    UPSTASH_REDIS_REST_URL: '',
-    UPSTASH_REDIS_REST_TOKEN: ''
+    UPSTASH_REDIS_REST_URL: 'https://example.invalid',
+    UPSTASH_REDIS_REST_TOKEN: 'token'
   });
   await waitForServer(prod);
   try {
     // A direct call to the API host (the shape of every scraping/farming
     // script) — the request must not look like a same-origin site call.
     const directBase = `http://${externalIp || '127.0.0.1'}:${prod.port}`;
-    const hiddenSelfcheck = await prod.get('/selfcheck');
-    check('production self-check is hidden without its token', hiddenSelfcheck.status === 404,
-      `status=${hiddenSelfcheck.status}`);
     const noOrigin = externalIp
       ? await fetch(`${directBase}/api/visitors/token?userId=noorigin`)
       : null;

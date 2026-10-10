@@ -6,36 +6,17 @@ const express = require('express');
 const cookieSession = require('cookie-session');
 const fs = require('fs');
 const path = require('path');
-const { createDurableStore } = require('./lib/durable-store.js');
-const { createClientIpResolver } = require('./lib/client-ip.js');
-const { createTicketService, safeEqual } = require('./lib/tickets.js');
-const { parseUserAgent } = require('./lib/user-agent.js');
-const { classifyStreamUrl } = require('./lib/stream-url.js');
-const {
-  RETIRED_RELAY_IDS: RETIRED_RELAY_SOURCE_IDS,
-  SOURCES: FEED_SOURCES,
-  SOURCE_IDS: FEED_SOURCE_IDS,
-  validTargetUrl
-} = require('./lib/stream-catalog.js');
-const {
-  findIndex: findIndexHtml,
-  resolveDirectory: resolveDir,
-  resolveSiteDirectory: resolveSiteDir
-} = require('./lib/site-paths.js');
-const {
-  createOriginPolicy,
-  hostnameFromUrl,
-  isLocalOrigin,
-  normalizeOrigin,
-  parseOrigins
-} = require('./lib/origin-policy.js');
+
+/* The cdnlivetv relay: resolves a channel to a playable HLS playlist and serves
+   the player page the cockpit frames. See lib/cdnlivetv-relay.js for the why —
+   the upstream playlist is signed and expires in ~4h, so it is re-minted per
+   request rather than stored anywhere. */
+const cdnlivetvRelay = require('./lib/cdnlivetv-relay.js');
+const cdnlivetvPlayer = require('./lib/cdnlivetv-player.js');
 
 const app = express();
 
 app.disable('x-powered-by');
-// Dynamic API responses are no-store; validators only add bytes. Static
-// middleware below enables its own ETags where browser revalidation helps.
-app.disable('etag');
 
 /* ── Client IP trust ──────────────────────────────────────────────
    proxy-addr walks the X-Forwarded-For chain backwards from the socket and
@@ -64,8 +45,8 @@ const AUTHORIZED_DOMAIN = process.env.AUTHORIZED_DOMAIN || 'freef1.netlify.app';
 const AUTHORIZED_HOSTNAME = String(AUTHORIZED_DOMAIN).replace(/^https?:\/\//i, '').split('/')[0].split(':')[0].toLowerCase();
 const ALLOWED_ORIGINS = parseOrigins(process.env.ALLOWED_ORIGIN || 'https://freef1.netlify.app');
 
-// Durable mutable state. A standard Redis connection is preferred; the adapter
-// keeps the application independent from any one compatible provider.
+// Durable unique-visitor storage. Upstash's REST API is intentionally used
+// directly so this stays dependency-free and works on every Render plan.
 const UNIQUE_VISITOR_BASELINE = Math.max(0, Number.parseInt(process.env.UNIQUE_VISITOR_BASELINE || '0', 10) || 0);
 const UNIQUE_VISITOR_REDIS_KEY = process.env.UNIQUE_VISITOR_REDIS_KEY || 'freef1:unique-visitors:v1';
 const MAINTENANCE_REDIS_KEY = process.env.MAINTENANCE_REDIS_KEY || 'freef1:maintenance:v1';
@@ -74,22 +55,9 @@ const NEWS_MAX_ITEMS = Math.max(1, Math.min(100, Number.parseInt(process.env.NEW
 // Keep visitor hashes independent from the admin cookie key so rotating
 // ADMIN_SECRET does not reset the unique-visitor identity space.
 const UNIQUE_VISITOR_HASH_SECRET = process.env.UNIQUE_VISITOR_HASH_SECRET || VISITOR_SECRET;
-/* A standard Redis/Valkey URL is the preferred durable store. It avoids the
-   request-per-command ceiling of REST-only databases and works with Redis
-   Cloud's free database as well as any future compatible provider. Upstash is
-   retained as a migration fallback: REDIS_URL wins whenever both are set. */
-const REDIS_URL = String(process.env.REDIS_URL || '').trim();
 const UPSTASH_REDIS_REST_URL = String(process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/+$/, '');
 const UPSTASH_REDIS_REST_TOKEN = String(process.env.UPSTASH_REDIS_REST_TOKEN || '');
-const durableStore = createDurableStore({
-  redisUrl: REDIS_URL,
-  upstashUrl: UPSTASH_REDIS_REST_URL,
-  upstashToken: UPSTASH_REDIS_REST_TOKEN,
-  timeoutMs: process.env.REDIS_TIMEOUT_MS,
-  logger: message => console.warn(message)
-});
-const UNIQUE_VISITOR_REMOTE_ENABLED = durableStore.enabled;
-const REMOTE_STORE_LABEL = durableStore.provider === 'redis' ? 'Redis' : 'Upstash Redis';
+const UNIQUE_VISITOR_REMOTE_ENABLED = Boolean(UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN);
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const NEWS_FILE = path.join(DATA_DIR, 'news.json');
 const MAINTENANCE_FILE = path.join(DATA_DIR, 'maintenance.json');
@@ -152,33 +120,19 @@ const SERVER_TIMEZONE = (() => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (_) { return 'UTC'; }
 })();
 const PRODUCTION_MODE = process.env.NODE_ENV === 'production' || process.env.REQUIRE_PRODUCTION_SECRETS === '1';
-const { getRequestOrigin, isAllowedOrigin, isAuthorizedHostname, isSameOriginRequest } = createOriginPolicy({
-  authorizedHostname: AUTHORIZED_HOSTNAME,
-  allowedOrigins: ALLOWED_ORIGINS,
-  production: PRODUCTION_MODE
-});
 /* A one-word password with a per-IP lockout is still guessable offline of the
-   limiter; refuse short or copy-pasted placeholder secrets in production. */
+   limiter; refuse short secrets in production rather than warning about them. */
 const ADMIN_PASS_MIN_LENGTH = Math.max(8, Number.parseInt(process.env.ADMIN_PASS_MIN_LENGTH || '12', 10) || 12);
-const looksLikePlaceholder = value => /(?:change[-_ ]?me|replace|generate|your[-_ ]|example|placeholder)/i
-  .test(String(value || ''));
-const strongSecretMissing = (value, minimum = 32) =>
-  !value || String(value).length < minimum || looksLikePlaceholder(value);
 const insecureProductionConfig = [
-  !process.env.ADMIN_USER || /^(?:admin|change[-_ ]?me)$/i.test(process.env.ADMIN_USER) ? 'ADMIN_USER' : null,
-  !process.env.ADMIN_PASS || process.env.ADMIN_PASS === 'admin' || looksLikePlaceholder(process.env.ADMIN_PASS)
-    ? 'ADMIN_PASS' : null,
+  !process.env.ADMIN_USER ? 'ADMIN_USER' : null,
+  !process.env.ADMIN_PASS || process.env.ADMIN_PASS === 'admin' ? 'ADMIN_PASS' : null,
   process.env.ADMIN_PASS && process.env.ADMIN_PASS.length < ADMIN_PASS_MIN_LENGTH
     ? `ADMIN_PASS (shorter than ${ADMIN_PASS_MIN_LENGTH} characters)` : null,
-  strongSecretMissing(process.env.ADMIN_SECRET) ? 'ADMIN_SECRET (minimum 32 random characters)' : null,
-  strongSecretMissing(process.env.VISITOR_SECRET) ? 'VISITOR_SECRET (minimum 32 random characters)' : null,
-  strongSecretMissing(process.env.UNIQUE_VISITOR_HASH_SECRET)
-    ? 'UNIQUE_VISITOR_HASH_SECRET (minimum 32 random characters)' : null,
-  strongSecretMissing(process.env.SELFCHECK_TOKEN, 24)
-    ? 'SELFCHECK_TOKEN (minimum 24 random characters)' : null,
+  !process.env.ADMIN_SECRET || process.env.ADMIN_SECRET === 'freef1-admin-secret-change-me' ? 'ADMIN_SECRET' : null,
+  !process.env.VISITOR_SECRET || process.env.VISITOR_SECRET === 'doggomc' ? 'VISITOR_SECRET' : null,
   // Analytics, news, unique visitors and maintenance live on the instance disk
-  // without a remote store — Render wipes that disk on every rebuild.
-  !durableStore.enabled ? 'REDIS_URL (or legacy UPSTASH_REDIS_REST_URL/TOKEN)' : null
+  // without Upstash — Render wipes that disk on every rebuild.
+  !process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN ? 'UPSTASH_REDIS_REST_URL/TOKEN' : null
 ].filter(Boolean);
 if (PRODUCTION_MODE && insecureProductionConfig.length) {
   throw new Error(`Refusing to start with insecure production configuration: ${insecureProductionConfig.join(', ')}.`);
@@ -204,6 +158,141 @@ const ADMIN_DIR = resolveDir(process.env.ADMIN_DIR, [
   path.join(process.cwd(), 'admin'),
   path.join('/opt', 'render', 'project', 'admin')
 ]);
+
+function dirHasIndex(dir) {
+  if (!dir || !fs.existsSync(dir)) return false;
+  try {
+    if (fs.existsSync(path.join(dir, 'index.html'))) return true;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && fs.existsSync(path.join(dir, entry.name, 'index.html'))) return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
+function resolveDir(envValue, candidates) {
+  if (dirHasIndex(envValue)) return envValue;
+  for (const candidate of candidates) {
+    if (dirHasIndex(candidate)) return candidate;
+  }
+  if (envValue && fs.existsSync(envValue)) return envValue;
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) return candidate;
+  }
+  return envValue || candidates[0];
+}
+
+function resolveSiteDir(envValue, candidates) {
+  if (dirHasIndex(envValue)) return envValue;
+  for (const candidate of candidates) {
+    if (dirHasIndex(candidate)) return candidate;
+  }
+  return null;
+}
+
+function findIndexHtml(dir) {
+  if (!dir) return null;
+
+  const direct = path.join(dir, 'index.html');
+  if (fs.existsSync(direct)) return direct;
+
+  // Search one level deep for any index.html. This keeps deploys working even
+  // when the static site is wrapped in one extra folder by the host/build step.
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const nested = path.join(dir, entry.name, 'index.html');
+        if (fs.existsSync(nested)) return nested;
+      }
+    }
+  } catch (_) {
+    // No nested index.html either.
+  }
+
+  return null;
+}
+
+function parseOrigins(value) {
+  return String(value || '')
+    .split(',')
+    .map(origin => normalizeOrigin(origin.trim()))
+    .filter(Boolean);
+}
+
+function normalizeOrigin(value) {
+  if (!value) return '';
+  try {
+    return new URL(value).origin.replace(/\/$/, '');
+  } catch (_) {
+    return String(value).replace(/\/$/, '');
+  }
+}
+
+function hostnameFromUrl(value) {
+  if (!value) return '';
+  try { return new URL(value).hostname.toLowerCase(); } catch (_) { return ''; }
+}
+
+function isAuthorizedHostname(value) {
+  const hostname = String(value || '').split(':')[0].toLowerCase();
+  if (hostname === AUTHORIZED_HOSTNAME) return true;
+  // Netlify deploy previews & branch deploys of the authorized site:
+  // deploy-preview-<n>--freef1.netlify.app / <branch>--freef1.netlify.app.
+  // Only Netlify can issue the `--<site>.netlify.app` suffix for the site that
+  // owns AUTHORIZED_HOSTNAME, so they are first-party for auth purposes.
+  if (AUTHORIZED_HOSTNAME.endsWith('.netlify.app') &&
+      hostname.length > AUTHORIZED_HOSTNAME.length + 2 &&
+      hostname.endsWith(`--${AUTHORIZED_HOSTNAME}`)) return true;
+  return false;
+}
+
+function getRequestOrigin(req) {
+  const origin = normalizeOrigin(req.headers.origin || '');
+  if (origin) return origin;
+
+  const host = req.headers.host;
+  if (!host) return '';
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+  return `${proto}://${host}`;
+}
+
+function isLocalOrigin(origin) {
+  try {
+    const { hostname } = new URL(origin);
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  } catch (_) {
+    return false;
+  }
+}
+
+function isPreviewOrigin(origin) {
+  try { return new URL(origin).hostname.endsWith('.e2b.app'); } catch (_) { return false; }
+}
+
+function isSameOriginRequest(req, origin) {
+  if (!origin || !req.headers.host) return false;
+  const host = req.headers.host;
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const protocolCandidates = new Set([req.protocol || 'http', 'http', 'https']);
+  if (forwardedProto) protocolCandidates.add(forwardedProto);
+  return [...protocolCandidates].some(proto => normalizeOrigin(`${proto}://${host}`) === origin);
+}
+
+function isAllowedOrigin(req, origin) {
+  if (!origin) return true;
+  if (ALLOWED_ORIGINS.includes(origin) || isSameOriginRequest(req, origin)) return true;
+  if (isAuthorizedHostname(hostnameFromUrl(origin))) return true;
+  if (!PRODUCTION_MODE && (isLocalOrigin(origin) || isPreviewOrigin(origin))) return true;
+  return false;
+}
+
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a || ''));
+  const right = Buffer.from(String(b || ''));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
 
 // ─────────────────────────────────────────────
 // DATA STORES
@@ -254,16 +343,39 @@ let maintenanceStoreReady = false;
 let maintenanceInitPromise = Promise.resolve(false);
 
 // Small, admin-managed public news feed. The array is the fast local snapshot;
-// The durable store keeps updates available after a Render restart.
+// Upstash keeps updates available after a Render restart when configured.
 const newsItems = [];
 let newsStoreReady = false;
 let newsInitPromise = Promise.resolve(false);
 
 /* ── Feed sources (public player) ──────────────────────────
-   Provider-hosted embeds are redirects: Render only issues a tiny signed alias
-   and never carries video or HLS playlists. The two former self-hosted HLS
-   relays are retired permanently to protect the 5 GB monthly egress budget. */
-const relayDisabledMessage = 'Self-hosted relays are permanently disabled to protect service bandwidth.';
+   `id` values must match the `sources` array in the public site's app.js —
+   that array owns the URLs/suffixes and stays the offline fallback. The
+   server only owns which feeds are switched on, so an admin can pull a dead
+   provider mid-session without redeploying Netlify. */
+const FEED_SOURCES = [
+  { id: 'sky-sports-f1', label: 'Sky Sports F1' },
+  { id: 'westream', label: 'WeStream F1' },
+  { id: 'sky-uk-2', label: 'Sky UK 2' },
+  { id: 'sky-uk', label: 'Sky UHD' },
+  { id: 'f1tv', label: 'F1TV' },
+  { id: 'appletv', label: 'AppleTV' },
+  { id: 'dazn', label: 'DAZN' },
+  { id: 'wikisport', label: 'WikiSport' },
+  { id: 'cdnlivetv-f1', label: 'Sky F1 (CDN)' }
+];
+const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
+
+/* Sources this server plays ITSELF instead of redirecting to a provider.
+   Everything above is a plain https target the browser is sent to; these need
+   a relay because the upstream hands out a signed playlist that dies in ~4h
+   and cannot be rendered by an <iframe>. Adding one is: an id here, an entry
+   in this table, and nothing else — the cockpit lists whatever the API serves.
+   `title` is what the player page shows; it never leaves the server as a URL. */
+const RELAY_CHANNELS = {
+  'cdnlivetv-f1': { name: 'sky sports f1', code: 'gb', title: 'Sky Sports F1' }
+};
+const RELAY_SOURCE_IDS = new Set(Object.keys(RELAY_CHANNELS));
 const sourceConfig = { disabled: new Set(), updatedAt: null };
 let sourceStoreReady = false;
 let sourceInitPromise = Promise.resolve(false);
@@ -275,24 +387,16 @@ const sseClients = new Set();
 const publicSseClients = new Set();
 
 // One shared timer scales better than allocating a timer per connected SSE client.
-// Twenty-five seconds stays below common proxy idle timeouts while cutting
-// keepalive egress by 40% compared with the old 15-second cadence.
-const SSE_HEARTBEAT_MS = Math.max(10_000, Number(process.env.SSE_HEARTBEAT_MS || 25_000));
 const sseHeartbeatTimer = setInterval(() => {
   const heartbeat = ': heartbeat\n\n';
   writeSSE(sseClients, heartbeat);
   writeSSE(publicSseClients, heartbeat);
   reconcilePublicSseCounts();
-}, SSE_HEARTBEAT_MS);
+}, 15_000);
 sseHeartbeatTimer.unref?.();
 
 // Heartbeat / cleanup settings
-// Analytics and public presence must use the same freshness horizon. Falling
-// back to the old 60-second value would mark every two-minute client stale
-// halfway between valid heartbeats.
-const HEARTBEAT_TIMEOUT = Number(
-  process.env.HEARTBEAT_TIMEOUT_MS || process.env.PRESENCE_TTL_MS || 270_000
-);
+const HEARTBEAT_TIMEOUT = Number(process.env.HEARTBEAT_TIMEOUT_MS || 60_000);
 
 /* Presence, as opposed to "did this browser ever send a heartbeat".
    WATCHING is a viewer: their tab is visible, the player is on screen and
@@ -304,22 +408,28 @@ const HEARTBEAT_TIMEOUT = Number(
    flicker in and out of it.
    LEAVE grace exists because a reload closes the page before the new one
    starts: without it every refresh would flash the viewer out and back in. */
-// The scaled client beats every two minutes. A 270-second window tolerates one
-// delayed or lost request without multiplying Render traffic. Deliberate exits
-// use a beacon and take effect after the shared-browser grace below, so this
-// longer silence window is only the fallback for tabs that vanish unexpectedly.
-const PRESENCE_TTL_MS = Number(process.env.PRESENCE_TTL_MS || 270_000);
-/* Stream targets stay server-managed so the frontend can deploy independently
-   and targets can be rotated through STREAM_TARGETS_JSON. A signed alias limits
-   when the browser may initiate a redirect; it is authorization, not secrecy —
-   the provider URL is necessarily visible to the browser after redirect. */
+// Comfortably longer than the site's own 18s heartbeat (2.2 beats), so one
+// delayed, throttled or failed heartBeat cannot drop somebody who is still
+// watching. Everything that ends watching *deliberately* — hiding the tab,
+// closing the player, leaving the page — is reported by the browser and takes
+// effect immediately, so this window only covers silence.
+/* Presence is one number and one window. A browser counts as "on the site"
+   while its tab is visible (the client stops beating when it is not) and its
+   heartbeat is fresh. The site beats every 15s, so 30s forgives a lost beat
+   without letting a closed tab linger in the count. */
+const PRESENCE_TTL_MS = Number(process.env.PRESENCE_TTL_MS || 30_000);
+/* Stream targets are the one thing on this server that must never reach a
+   visitor's browser: the actual playback URLs. They live here, in a
+   git-ignored data file (or the STREAM_TARGETS_JSON env var on Render) — never
+   in the site bundle, never in an API response, never in a log line. The
+   browser only ever receives a short-lived signed alias it cannot reuse
+   anywhere else. */
 const STREAM_TICKETS_ENABLED = process.env.STREAM_TICKETS !== 'false';
 const OVERRIDE_SOURCE_ID = 'override';
 /* One permission per browser session, minted only from the site itself (same
-   gate as a stream ticket) and presented on API calls that cost this server
-   something — upstream quota, the feed list, live data. This blocks accidental
-   cross-origin use and casual hotlinking; it is not a substitute for secrets or
-   a user-authenticated authorization boundary. */
+   gate as a stream ticket) and presented on every API call that costs this
+   server something — upstream quota, the feed list, live data. A script or a
+   clone cannot mint one, so those calls get a 403 instead of the data. */
 const SITE_TICKETS_ENABLED = process.env.SITE_TICKETS !== 'false';
 const SITE_TICKET_TTL_MS = Number(process.env.SITE_TICKET_TTL_MS || 6 * 60 * 60 * 1000);
 const SITE_TICKET_RATE_MAX = Number(process.env.SITE_TICKET_RATE_MAX || 60);
@@ -346,41 +456,23 @@ const SITE_TICKET_FREE_PATHS = new Set([
 ]);
 const STREAM_TICKET_TTL_MS = Number(process.env.STREAM_TICKET_TTL_MS || 60 * 60 * 1000);
 const STREAM_TICKET_RATE_MAX = Number(process.env.STREAM_TICKET_RATE_MAX || 120);
-const ticketService = createTicketService({
-  secret: VISITOR_SECRET,
-  // Retired ids remain verifiable only so old aliases receive a useful 410.
-  allowedSourceIds: new Set([...FEED_SOURCE_IDS, ...RETIRED_RELAY_SOURCE_IDS]),
-  overrideSourceId: OVERRIDE_SOURCE_ID
-});
-const DISCORD_CODE_RATE_MAX = Number(process.env.DISCORD_CODE_RATE_MAX || 20);
-/* Shown in the link dialog so a visitor who is not in the server yet has
-   somewhere to go. Only ever rendered as an <a href>, so a bad value is a
-   dead link, not an injection risk — but it is still restricted to discord
-   hosts so a mistyped env var cannot point members somewhere hostile. */
-const DISCORD_INVITE_URL = (() => {
-  const raw = String(process.env.DISCORD_INVITE || 'https://discord.gg/KYXHCAzhN4').trim();
-  try {
-    const u = new URL(raw);
-    if (u.protocol !== 'https:') return 'https://discord.gg/KYXHCAzhN4';
-    if (u.hostname !== 'discord.gg' && u.hostname !== 'discord.com' &&
-        !u.hostname.endsWith('.discord.com')) return 'https://discord.gg/KYXHCAzhN4';
-    return u.toString();
-  } catch (_) { return 'https://discord.gg/KYXHCAzhN4'; }
-})();
 /* The leave beacon fires per TAB, and a browser can have several. Closing one
    of two tabs must not drop the browser, so a goodbye only ends the count if
    no heartbeat follows it — and the grace is deliberately longer than the
    site's beat interval, so the surviving tab's next beat clears it first. A
    browser whose LAST tab closed is out of the count at this mark. */
-const PRESENCE_LEAVE_GRACE_MS = Number(process.env.PRESENCE_LEAVE_GRACE_MS || 125_000);
+const PRESENCE_LEAVE_GRACE_MS = Number(process.env.PRESENCE_LEAVE_GRACE_MS || 18_000);
 const CLEANUP_INTERVAL = Number(process.env.CLEANUP_INTERVAL_MS || 30_000);
 const VISITOR_TOKEN_TTL_MS = Number(process.env.VISITOR_TOKEN_TTL_MS || 24 * 60 * 60 * 1000);
 const VISITOR_RATE_LIMIT_WINDOW_MS = Number(process.env.VISITOR_RATE_LIMIT_WINDOW_MS || 60_000);
 const VISITOR_RATE_LIMIT_MAX = Number(process.env.VISITOR_RATE_LIMIT_MAX || 30);
 
 /* Heartbeats and viewer events are per VIEWER, not per address. A household, an
-   office, a campus or a mobile carrier puts many viewers behind one IP. The
-   identity is signed and verified before its own budget is charged. The
+   office, a campus or a mobile carrier puts many viewers behind one IP — and
+   behind a proxy they all share the proxy's address — so an IP-keyed budget
+   starts refusing real viewers' heartbeats once there are more of them than the
+   budget allows (at 30/min and one beat per 18s that is roughly nine viewers).
+   The identity is signed and verified before its own budget is charged. The
    per-IP ceilings below stay as a flood backstop, set far above any plausible
    number of viewers inside one network. Identity MINTING (`/token`) stays
    keyed by address, because that is the budget an attacker would farm. */
@@ -416,10 +508,8 @@ const NEW_IDENTITY_ALERT_PER_HOUR = Math.max(10,
 /* Public SSE is a long-lived socket per viewer. The global cap alone let one
    host hold the whole pool open and starve every other viewer of the
    override/maintenance/news pushes, so there is a per-IP cap as well. */
-const PUBLIC_SSE_MAX = Math.max(20, Math.min(2_000,
-  Number.parseInt(process.env.PUBLIC_SSE_MAX || '1200', 10) || 1200));
-const PUBLIC_SSE_MAX_PER_IP = Math.max(1, Math.min(64,
-  Number.parseInt(process.env.PUBLIC_SSE_MAX_PER_IP || '32', 10) || 32));
+const PUBLIC_SSE_MAX = Math.max(20, Number.parseInt(process.env.PUBLIC_SSE_MAX || '400', 10) || 400);
+const PUBLIC_SSE_MAX_PER_IP = Math.max(1, Number.parseInt(process.env.PUBLIC_SSE_MAX_PER_IP || '4', 10) || 4);
 
 // ─────────────────────────────────────────────
 // MIDDLEWARE
@@ -434,9 +524,17 @@ app.use(compression({
   }
 }));
 
-/* Keep this byte-equivalent to netlifyf1/_headers; scripts/csp-check.js fails
-   on drift. The backend uses it only when serving the static site locally. */
-function buildCsp() {
+/* One policy, two callers. The default must stay byte-identical to the one in
+   netlifyf1/_headers — scripts/csp-check.js diffs them and fails on drift — so
+   anything that needs a different policy passes an override instead of editing
+   this list. The relay player page is the only such caller today: the cockpit
+   frames it (frame-ancestors), and hls.js fetches the segments itself
+   (connect-src) and feeds them to MSE (media-src blob:). */
+function buildCsp(overrides = {}) {
+  const frameAncestors = overrides.frameAncestors || "'self'";
+  const extraConnect = overrides.extraConnect || [];
+  const extraMedia = overrides.extraMedia || [];
+  const extraScript = overrides.extraScript || [];
   return [
     "default-src 'self'",
     "base-uri 'self'",
@@ -444,63 +542,54 @@ function buildCsp() {
     // Mirrors netlifyf1/_headers: typefaces are served from this origin, so no
     // external font host is allowed. Keep the two policies in step — this one
     // governs local/preview serving of the site, that one governs Netlify.
-    "script-src 'self' 'unsafe-inline'",
+    ["script-src 'self' 'unsafe-inline'", ...extraScript].join(' '),
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
-    "img-src 'self' data: https://media.formula1.com https://cdn.discordapp.com",
-    "connect-src 'self' https://freef1.onrender.com https://api.jolpi.ca",
-    // The app frames its own signed redirect first, then the HTTPS provider.
+    "img-src 'self' data: https://media.formula1.com",
+    ["connect-src 'self' https://f1free.onrender.com https://api.jolpi.ca", ...extraConnect].join(' '),
+    // 'self' matters now the player frames the site's own /stream/<ticket>
+    // alias; any https feed host is still allowed by the scheme source.
     "frame-src 'self' https:",
-    "frame-ancestors 'self'",
+    `frame-ancestors ${frameAncestors}`,
     // data: is required by the iOS wake-lock fallback, which loops a 1px
     // silent data:video/mp4 to keep the screen on where Wake Lock is missing.
-    "media-src 'self' data: https:",
+    ["media-src 'self' data: https:", ...extraMedia].join(' '),
     "form-action 'self'"
   ].join('; ');
 }
 
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  const isApi = req.path.startsWith('/api/') || req.path.startsWith('/admin/api/');
-  const isProbe = req.path === '/healthz' || req.path === '/readyz' || req.path === '/selfcheck';
-  /* Document policies do nothing on JSON/SSE responses. Omitting those large
-     headers from high-frequency heartbeats saves meaningful Render egress at
-     1,000 viewers; health probes keep a deny-all policy for defense in depth. */
-  if (isProbe) {
-    res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
-  } else if (!isApi && !req.path.startsWith('/relay/')) {
-    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
-    res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
-    res.setHeader('Content-Security-Policy', buildCsp());
-  }
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+  res.setHeader('Content-Security-Policy', buildCsp());
   if (PRODUCTION_MODE) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  if (isApi || isProbe) res.setHeader('Cache-Control', 'no-store');
+  if (req.path.startsWith('/api/') || req.path.startsWith('/admin/api/') || req.path === '/healthz') {
+    res.setHeader('Cache-Control', 'no-store');
+  }
   next();
 });
 
 app.use((req, res, next) => {
   const origin = normalizeOrigin(req.headers.origin || '');
+
   res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Visitor-Token, X-User-Id, X-Site-Ticket');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
 
   if (origin && !isAllowedOrigin(req, origin)) {
     return res.status(403).json({ error: 'Forbidden' });
   }
-  if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
 
-  // These negotiation headers are useful on preflight responses only. Sending
-  // them on every 60-byte heartbeat used more egress than the JSON body.
-  if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Visitor-Token, X-User-Id, X-Site-Ticket');
-    res.setHeader('Access-Control-Max-Age', '86400');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    return res.sendStatus(204);
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else if (ALLOWED_ORIGINS[0]) {
+    res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGINS[0]);
   }
-  // Only account-link endpoints use a cross-origin cookie.
-  if (req.path.startsWith('/api/discord/')) {
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-  }
+
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 
@@ -516,7 +605,7 @@ app.use('/api', (req, res, next) => {
   const path = (req.originalUrl || '').split('?')[0];
   if (SITE_TICKET_FREE_PATHS.has(path)) return next();
   const supplied = req.headers['x-site-ticket'] || (path === '/api/events' ? req.query.ticket : '');
-  if (!ticketService.verifySite(supplied)) {
+  if (!verifySiteTicket(supplied)) {
     return res.status(403).json({
       error: 'Forbidden',
       message: 'This endpoint needs a site ticket. The site asks for one at /api/site/ticket.'
@@ -538,6 +627,106 @@ const sessionMiddleware = cookieSession({
   secure: PRODUCTION_MODE,
   maxAge: 24 * 60 * 60 * 1000 // 24 hours
 });
+
+// ─────────────────────────────────────────────
+// UTILITY — User-Agent Parsing
+// ─────────────────────────────────────────────
+
+function parseUA(ua) {
+  if (!ua) return { browser: 'Unknown', os: 'Unknown', deviceType: 'Desktop' };
+  const lower = ua.toLowerCase();
+
+  const osMatch =
+    /windows nt (\d+\.?\d*)/.exec(lower) ? { os: 'Windows ' + RegExp.$1 } :
+    /mac os x (\d+[._]\d+[._]?\d*)/.exec(lower) ? { os: 'macOS ' + RegExp.$1.replace(/_/g, '.') } :
+    /iphone os (\d+[._]\d+)/.exec(lower) ? { os: 'iOS ' + RegExp.$1.replace(/_/g, '.') } :
+    /ipad.*os (\d+[._]\d+)/.exec(lower) ? { os: 'iPadOS ' + RegExp.$1.replace(/_/g, '.') } :
+    /android (\d+(?:[./]\d+)?)/.exec(lower) ? { os: 'Android ' + RegExp.$1.replace(/\//, '.') } :
+    /cros/.test(lower) ? { os: 'ChromeOS' } :
+    /linux/.test(lower) ? { os: 'Linux' } :
+    { os: 'Unknown' };
+
+  const browserMatch =
+    /edg\/(\d+[\.\d]*)/.exec(lower) ? { browser: 'Edge ' + RegExp.$1.split('.')[0] } :
+    /opr\/(\d+[\.\d]*)/.exec(lower) ? { browser: 'Opera ' + RegExp.$1.split('.')[0] } :
+    /samsungbrowser\/(\d+)/.exec(lower) ? { browser: 'Samsung ' + RegExp.$1 } :
+    /firefox\/(\d+[\.\d]*)/.exec(lower) ? { browser: 'Firefox ' + RegExp.$1.split('.')[0] } :
+    /chrome\/(\d+[\.\d]*)/.exec(lower) && !/edg|opr/.test(lower) ? { browser: 'Chrome ' + RegExp.$1.split('.')[0] } :
+    /safari\/(\d+[\.\d]*)/.exec(lower) && !/chrome/.test(lower) ? { browser: 'Safari ' + RegExp.$1.split('.')[0] } :
+    /micromessenger\/(\d+)/.exec(lower) ? { browser: 'WeChat ' + RegExp.$1 } :
+    /instagram/.test(lower) ? { browser: 'Instagram' } :
+    /tiktok/.test(lower) ? { browser: 'TikTok' } :
+    { browser: 'Unknown' };
+
+  const deviceType =
+    /tablet|ipad|playbook|silk|(android(?!.*mobile))/.test(lower) ? 'Tablet' :
+    /mobile|android|iphone|ipod|blackberry|mini|windows\s+phone|silk/.test(lower) ? 'Mobile' :
+    'Desktop';
+
+  return { ...osMatch, ...browserMatch, deviceType };
+}
+
+// ─────────────────────────────────────────────
+// UTILITY — Stream URL Classification
+// ─────────────────────────────────────────────
+
+function isPrivateHostname(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host || host === 'localhost' || host === '::1' || host === '0.0.0.0') return true;
+  if (/^(127|10|0)\./.test(host)) return true;
+  if (/^192\.168\./.test(host) || /^169\.254\./.test(host) || /^100\.64\./.test(host)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
+  if (/^(fc00:|fd00:|fe80:)/i.test(host)) return true;
+  return false;
+}
+
+function getYouTubeId(parsedUrl) {
+  const host = parsedUrl.hostname.replace(/^www\./, '').toLowerCase();
+  if (host === 'youtu.be') return parsedUrl.pathname.split('/').filter(Boolean)[0] || null;
+  if (host !== 'youtube.com' && host !== 'youtube-nocookie.com' && host !== 'm.youtube.com') return null;
+
+  if (parsedUrl.pathname === '/watch') return parsedUrl.searchParams.get('v');
+
+  const parts = parsedUrl.pathname.split('/').filter(Boolean);
+  if (['embed', 'shorts', 'live'].includes(parts[0])) return parts[1] || null;
+
+  return null;
+}
+
+function classifyStreamURL(url) {
+  if (!url) return { type: null, embedUrl: null };
+  const trimmed = url.trim();
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(trimmed);
+  } catch (_) {
+    return { type: null, embedUrl: null };
+  }
+
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    return { type: null, embedUrl: null };
+  }
+
+  if (PRODUCTION_MODE && isPrivateHostname(parsedUrl.hostname)) {
+    return { type: null, embedUrl: null };
+  }
+
+  const youtubeId = getYouTubeId(parsedUrl);
+  if (youtubeId && /^[A-Za-z0-9_-]{6,}$/.test(youtubeId)) {
+    return {
+      type: 'youtube',
+      embedUrl: `https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&rel=0&modestbranding=1`
+    };
+  }
+
+  const pathAndQuery = parsedUrl.pathname + parsedUrl.search;
+  if (/\.webm(\?.*)?$/i.test(pathAndQuery)) return { type: 'webm', embedUrl: parsedUrl.href };
+  if (/\.mp4(\?.*)?$/i.test(pathAndQuery)) return { type: 'mp4', embedUrl: parsedUrl.href };
+
+  // Generic HTTP(S) embed fallback.
+  return { type: 'embed', embedUrl: parsedUrl.href };
+}
 
 // ─────────────────────────────────────────────
 // UTILITY — SSE Broadcast
@@ -611,18 +800,9 @@ function pruneGeoCache() {
    most once per window, in the server log only. */
 let geoPrivateSkips = 0;
 let geoPublicLookups = 0;
-/* Reported ONCE per process. It was once per 5-minute window, which meant a
-   mis-set hop count nagged forever — and the advice cannot change without a
-   redeploy anyway, so repeating it adds noise, not information. The counters
-   keep running so a later /admin check can still see the real state. */
-let geoNoticeLogged = false;
 setInterval(() => {
-  if (GEO_ENABLED && !geoNoticeLogged && geoPrivateSkips >= 5 && geoPublicLookups === 0) {
-    geoNoticeLogged = true;
-    console.warn('[Geo] Every visitor is arriving on a private address, so no '
-      + 'country can be resolved. Set TRUST_PROXY_HOPS to the number of proxies '
-      + 'in front of this service (Render is normally 1) — then client IPs, '
-      + 'rate limits and per-IP budgets all work. This is logged once per start.');
+  if (GEO_ENABLED && geoPrivateSkips >= 5 && geoPublicLookups === 0) {
+    console.warn(`[Geo] ${geoPrivateSkips} visitors had no locatable address in the last 5 min — on a deployment, check that TRUST_PROXY_HOPS matches the proxy chain in front of the server.`);
   }
   geoPrivateSkips = 0;
   geoPublicLookups = 0;
@@ -718,52 +898,8 @@ function writeLocalJson(filePath, value) {
   }
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   Discord account linking — see lib/discord-link.js. No current stream source
-   depends on this subsystem; it remains available for community identity and
-   can be unused without affecting playback.
-   ───────────────────────────────────────────────────────────────────────────── */
-/* The store is built before the bot is, so the announcer is reached through a
-   mutable sink the bot fills in once it has a connected client. Until then
-   events are simply dropped — a link made seconds after boot must not fail
-   just because Discord has not finished connecting. */
-let linkEventSink = null;
-const discordLink = require('./lib/discord-link.js').createStore({
-  readLocalJson,
-  writeLocalJson,
-  storeCommand: UNIQUE_VISITOR_REMOTE_ENABLED ? storeRequest : null,
-  redisKey: 'freef1:discordlink:v1',
-  fileKey: path.join(DATA_DIR, 'discord-link.json'),
-  secret: process.env.DISCORD_LINK_SECRET || ADMIN_SECRET,
-  log: (...a) => console.log('[DiscordLink]', ...a),
-  onLinkEvent: (event) => {
-    const sink = linkEventSink;
-    if (!sink) return;
-    Promise.resolve(sink(event)).catch((error) => {
-      console.log('[DiscordLink] announcement failed:', error && error.message);
-    });
-  },
-});
-
-/* SameSite=None is only sent over https, and a browser drops it otherwise, so
-   the flag follows the real protocol rather than NODE_ENV: behind Render's TLS
-   proxy the socket is plain http even though the visitor is on https, and
-   getting this wrong silently locks every player page out. */
-function isSecureRequest(req) {
-  if (req.secure) return true;
-  const forwarded = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
-  return forwarded === 'https';
-}
-
-async function hasDiscordAccess(req) {
-  return discordLink.checkRequest(req);
-}
-
 function dataStoreStatus(remoteEnabled, remoteReady) {
-  if (remoteEnabled) {
-    const provider = durableStore.provider === 'redis' ? 'redis' : 'upstash';
-    return remoteReady ? provider : `${provider}-connecting`;
-  }
+  if (remoteEnabled) return remoteReady ? 'upstash' : 'upstash-connecting';
   return fileStoreReady ? 'file' : 'memory';
 }
 
@@ -787,19 +923,44 @@ function warnUniqueStore(error) {
   console.warn(`[Visitors] Durable store unavailable; keeping the last confirmed total. ${error?.message || error}`);
 }
 
-/* Kept under its old internal name to avoid churning every store consumer.
-   The adapter uses REDIS_URL first and only falls back to Upstash REST while an
-   existing deployment is being migrated. */
-async function storeRequest(commands) {
-  return durableStore.command(commands);
+async function upstashRequest(commands) {
+  if (!UNIQUE_VISITOR_REMOTE_ENABLED) throw new Error('Upstash is not configured');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3500);
+  timeout.unref?.();
+
+  try {
+    const isPipeline = Array.isArray(commands[0]);
+    const response = await fetch(`${UPSTASH_REDIS_REST_URL}${isPipeline ? '/pipeline' : ''}`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${UPSTASH_REDIS_REST_TOKEN}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify(commands),
+      cache: 'no-store',
+      signal: controller.signal
+    });
+
+    if (!response.ok) throw new Error(`Upstash HTTP ${response.status}`);
+    const payload = await response.json();
+    if (payload?.error) throw new Error(payload.error);
+    if (Array.isArray(payload)) {
+      const failed = payload.find(item => item?.error);
+      if (failed) throw new Error(failed.error);
+    }
+    return payload;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function syncUniqueVisitorCount() {
   if (!UNIQUE_VISITOR_REMOTE_ENABLED) return false;
   try {
-    const payload = await storeRequest(['SCARD', UNIQUE_VISITOR_REDIS_KEY]);
+    const payload = await upstashRequest(['SCARD', UNIQUE_VISITOR_REDIS_KEY]);
     const count = Number(payload?.result);
-    if (!Number.isFinite(count) || count < 0) throw new Error('Redis returned an invalid visitor count');
+    if (!Number.isFinite(count) || count < 0) throw new Error('Upstash returned an invalid visitor count');
     persistentUniqueCount = count;
     uniqueVisitorStoreReady = true;
     scheduleStatsBroadcast();
@@ -840,13 +1001,13 @@ async function trackUniqueVisitor(key) {
       // SADD is atomic: two simultaneous requests for one browser can never
       // increment the permanent total twice. SCARD returns the authoritative
       // count after the write, including visitors recorded by another process.
-      const payload = await storeRequest([
+      const payload = await upstashRequest([
         ['SADD', UNIQUE_VISITOR_REDIS_KEY, hash],
         ['SCARD', UNIQUE_VISITOR_REDIS_KEY]
       ]);
       const added = Number(payload?.[0]?.result) === 1;
       const count = Number(payload?.[1]?.result);
-      if (!Number.isFinite(count) || count < 0) throw new Error('Redis returned an invalid visitor count');
+      if (!Number.isFinite(count) || count < 0) throw new Error('Upstash returned an invalid visitor count');
 
       persistedVisitorHashes.add(hash);
       persistentUniqueCount = count;
@@ -926,7 +1087,7 @@ async function syncMaintenanceState() {
   }
 
   try {
-    const { found, value: stored } = await readStoreJson(MAINTENANCE_REDIS_KEY);
+    const { found, value: stored } = await readUpstashJson(MAINTENANCE_REDIS_KEY);
     if (found) applyMaintenanceState(stored);
     maintenanceStoreReady = true;
     scheduleStatsBroadcast();
@@ -945,12 +1106,12 @@ async function persistMaintenanceState() {
     return saved;
   }
   try {
-    const payload = await storeRequest([
+    const payload = await upstashRequest([
       'SET',
       MAINTENANCE_REDIS_KEY,
       JSON.stringify(publicMaintenanceState())
     ]);
-    if (payload?.result !== 'OK') throw new Error('Redis did not confirm the maintenance update');
+    if (payload?.result !== 'OK') throw new Error('Upstash did not confirm the maintenance update');
     maintenanceStoreReady = true;
     return true;
   } catch (error) {
@@ -1057,7 +1218,7 @@ function deleteNewsRecord(id) {
   return true;
 }
 
-/* Reads a JSON blob out of the durable store. A value that will not parse must not be
+/* Reads a JSON blob out of Upstash. A value that will not parse must not be
    allowed to strand a store in the "connecting" state forever — the old code
    threw on JSON.parse, flipped the store's ready flag off, and never retried,
    so one bad blob meant news (or maintenance, or the feed list) stayed dead
@@ -1065,15 +1226,15 @@ function deleteNewsRecord(id) {
    value under a timestamped key so it can be inspected by hand, report
    `found: false`, and let the caller fall back to defaults — the next save
    then repairs the store naturally. */
-async function readStoreJson(key) {
-  const payload = await storeRequest(['GET', key]);
+async function readUpstashJson(key) {
+  const payload = await upstashRequest(['GET', key]);
   const raw = payload?.result;
   if (raw === null || raw === undefined || raw === '') return { found: false, value: undefined };
   try {
     return { found: true, value: JSON.parse(raw) };
   } catch (error) {
     const quarantineKey = `${key}:corrupt:${Date.now()}`;
-    storeRequest(['RENAME', key, quarantineKey]).catch(() => {});
+    upstashRequest(['RENAME', key, quarantineKey]).catch(() => {});
     console.warn(`[Storage] ${key} held an unparseable value (${error.message}); quarantined as ${quarantineKey}.`);
     return { found: false, value: undefined, corrupt: true };
   }
@@ -1092,7 +1253,7 @@ async function syncNewsStore() {
   }
 
   try {
-    const { found, value: stored } = await readStoreJson(NEWS_REDIS_KEY);
+    const { found, value: stored } = await readUpstashJson(NEWS_REDIS_KEY);
     if (found) {
       const restored = Array.isArray(stored)
         ? stored.map(item => normalizeNewsRecord(item)).filter(item => item.title && item.body).slice(0, NEWS_MAX_ITEMS)
@@ -1116,8 +1277,8 @@ async function persistNewsStore() {
     return saved;
   }
   try {
-    const payload = await storeRequest(['SET', NEWS_REDIS_KEY, JSON.stringify(newsItems)]);
-    if (payload?.result !== 'OK') throw new Error('Redis did not confirm the news update');
+    const payload = await upstashRequest(['SET', NEWS_REDIS_KEY, JSON.stringify(newsItems)]);
+    if (payload?.result !== 'OK') throw new Error('Upstash did not confirm the news update');
     newsStoreReady = true;
     return true;
   } catch (error) {
@@ -1135,25 +1296,10 @@ function newsStoreIsDurable() {
 // FEED SOURCE AVAILABILITY
 // ─────────────────────────────────────────────
 
-/* Exactly what the admin set. This is what is persisted and what the admin
-   panel reads and writes back, so the kill switch below can never leak into
-   saved state. */
-function storedSourceConfig() {
+function publicSourceConfig() {
   return {
     sources: FEED_SOURCES.map(source => ({ id: source.id, label: source.label })),
     disabled: [...sourceConfig.disabled],
-    updatedAt: sourceConfig.updatedAt
-  };
-}
-
-function publicSourceConfig() {
-  /* The current Netlify bundle still knows the old ids, so explicitly report
-     them disabled until that bundle no longer lists them. They cannot be
-     re-enabled by environment variable or from the admin panel. */
-  const disabled = new Set([...sourceConfig.disabled, ...RETIRED_RELAY_SOURCE_IDS]);
-  return {
-    sources: FEED_SOURCES.map(source => ({ id: source.id, label: source.label })),
-    disabled: [...disabled],
     updatedAt: sourceConfig.updatedAt
   };
 }
@@ -1179,7 +1325,7 @@ async function syncSourceConfig() {
     return fileStoreReady;
   }
   try {
-    const { found, value: state } = await readStoreJson(SOURCE_REDIS_KEY);
+    const { found, value: state } = await readUpstashJson(SOURCE_REDIS_KEY);
     if (found) applySourceConfig(state);
     sourceStoreReady = true;
     return true;
@@ -1192,13 +1338,13 @@ async function syncSourceConfig() {
 
 async function persistSourceConfig() {
   if (!UNIQUE_VISITOR_REMOTE_ENABLED) {
-    const saved = writeLocalJson(SOURCE_CONFIG_FILE, storedSourceConfig());
+    const saved = writeLocalJson(SOURCE_CONFIG_FILE, publicSourceConfig());
     sourceStoreReady = saved;
     return saved;
   }
   try {
-    const payload = await storeRequest(['SET', SOURCE_REDIS_KEY, JSON.stringify(storedSourceConfig())]);
-    if (payload?.result !== 'OK') throw new Error('Redis did not confirm the source update');
+    const payload = await upstashRequest(['SET', SOURCE_REDIS_KEY, JSON.stringify(publicSourceConfig())]);
+    if (payload?.result !== 'OK') throw new Error('Upstash did not confirm the source update');
     sourceStoreReady = true;
     return true;
   } catch (error) {
@@ -1209,12 +1355,11 @@ async function persistSourceConfig() {
 }
 
 function broadcastSourceConfig() {
-  // Admin sees (and writes back) what it set; visitors see the effective list.
-  const stored = storedSourceConfig();
-  broadcastSSE('sources_update', stored);
-  broadcastPublicSSE('sources_update', publicSourceConfig());
+  const payload = publicSourceConfig();
+  broadcastSSE('sources_update', payload);
+  broadcastPublicSSE('sources_update', payload);
   scheduleStatsBroadcast(0);
-  return stored;
+  return payload;
 }
 
 // ─────────────────────────────────────────────
@@ -1235,6 +1380,15 @@ let streamTargets = new Map();
 let streamTargetsReady = false;
 let streamTargetsSource = 'none';
 
+function validStreamTargetUrl(url) {
+  if (typeof url !== 'string' || url.length > 500) return false;
+  // https only, except a loopback http target so local runs and the checks can
+  // point at a stub instead of a real provider.
+  if (/^https:\/\//i.test(url)) return true;
+  if (process.env.NODE_ENV !== 'production' && /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(url)) return true;
+  return false;
+}
+
 function applyStreamTargets(raw) {
   const next = new Map();
   if (raw && typeof raw === 'object') {
@@ -1242,7 +1396,7 @@ function applyStreamTargets(raw) {
       const key = String(id || '').trim().slice(0, 40);
       if (!FEED_SOURCE_IDS.has(key)) continue;
       const url = entry && typeof entry === 'object' ? entry.url : entry;
-      if (!validTargetUrl(url, { allowLoopback: process.env.NODE_ENV !== 'production' })) continue;
+      if (!validStreamTargetUrl(url)) continue;
       next.set(key, { url: String(url) });
     }
   }
@@ -1273,7 +1427,7 @@ async function syncStreamTargets() {
   }
   if (UNIQUE_VISITOR_REMOTE_ENABLED) {
     try {
-      const { found, value: stored } = await readStoreJson(STREAM_TARGETS_REDIS_KEY);
+      const { found, value: stored } = await readUpstashJson(STREAM_TARGETS_REDIS_KEY);
       if (found) {
         const n = applyStreamTargets(stored);
         if (n > 0) {
@@ -1310,7 +1464,7 @@ async function persistStreamTargets() {
   for (const [id, entry] of streamTargets) plain[id] = { url: entry.url };
   if (UNIQUE_VISITOR_REMOTE_ENABLED) {
     try {
-      const payload = await storeRequest(['SET', STREAM_TARGETS_REDIS_KEY, JSON.stringify(plain)]);
+      const payload = await upstashRequest(['SET', STREAM_TARGETS_REDIS_KEY, JSON.stringify(plain)]);
       if (payload?.result === 'OK') return true;
     } catch (_) {}
   }
@@ -1323,6 +1477,11 @@ function maskedStreamTargets() {
   const out = {};
   for (const source of FEED_SOURCES) {
     const entry = streamTargets.get(source.id);
+    // A relay source has no provider URL to show: this server is the host.
+    if (RELAY_SOURCE_IDS.has(source.id)) {
+      out[source.id] = { label: source.label, configured: true, host: 'this server (relay)', relay: true };
+      continue;
+    }
     out[source.id] = {
       label: source.label,
       configured: Boolean(entry),
@@ -1330,6 +1489,69 @@ function maskedStreamTargets() {
     };
   }
   return { targets: out, updatedAt: Date.now() };
+}
+
+/* Every ticket is the same shape — base64url payload + HMAC over `kind|body` —
+   kept apart by the kind, so a play ticket can never be presented as a site
+   permission and vice versa. */
+function signTicket(kind, payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto.createHmac('sha256', VISITOR_SECRET).update(`${kind}|${body}`).digest('base64url');
+  return `${body}.${sig}`;
+}
+
+/* Returns { payload, expired } when the signature and shape are sound, or null
+   when the ticket is forged/garbled. Expiry is REPORTED rather than folded in,
+   because the two failures deserve different answers: a forged ticket is a 403,
+   an expired one is a 410 that tells the page to reload. */
+function verifyTicket(kind, ticket) {
+  const parts = String(ticket || '').split('.');
+  if (parts.length !== 2) return null;
+  const [body, sig] = parts;
+  const expected = crypto.createHmac('sha256', VISITOR_SECRET).update(`${kind}|${body}`).digest('base64url');
+  if (!safeEqual(sig, expected)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (!payload || typeof payload !== 'object') return null;
+    return { payload, expired: Boolean(Number(payload.e)) && Date.now() > Number(payload.e) };
+  } catch (_) {
+    return null;
+  }
+}
+
+function createStreamTicket(sourceId, ttlMs = STREAM_TICKET_TTL_MS) {
+  return signTicket('stream-ticket', {
+    i: sourceId,
+    n: crypto.randomBytes(8).toString('hex'),
+    e: Date.now() + ttlMs
+  });
+}
+
+function verifyStreamTicket(ticket) {
+  const verified = verifyTicket('stream-ticket', ticket);
+  if (!verified) return null;
+  const id = String(verified.payload.i);
+  // 'override' is the operator's own feed: same ticket rules, different store.
+  if (!FEED_SOURCE_IDS.has(id) && id !== OVERRIDE_SOURCE_ID) return null;
+  return { sourceId: id, exp: Number(verified.payload.e) || 0, expired: verified.expired };
+}
+
+/* ── Site tickets: one permission per browser session ───────────────────── */
+function createSiteTicket(ttlMs = SITE_TICKET_TTL_MS) {
+  return signTicket('site-ticket', {
+    n: crypto.randomBytes(8).toString('hex'),
+    e: Date.now() + ttlMs
+  });
+}
+
+/* Absent, forged or expired all come back null. Expiry is checked inside
+   verifyTicket, next to the signature, so both failures share one code path. */
+function verifySiteTicket(ticket) {
+  const verified = verifyTicket('site-ticket', ticket);
+  // A gate has nothing useful to say about why: expired and forged are both
+  // "fetch a fresh one and try again".
+  if (!verified || verified.expired) return null;
+  return { exp: Number(verified.payload.e) || 0 };
 }
 
 /* Substitution is the only place client input touches a URL, so it is strict:
@@ -1360,7 +1582,7 @@ function renderStreamTarget(sourceId, params = {}) {
   });
   // An unsubstituted placeholder means the client did not supply what the
   // template needs: refuse rather than send the browser to a literal "{slug}".
-  if (/\{[a-zA-Z]+\}/.test(url) || !validTargetUrl(url, { allowLoopback: process.env.NODE_ENV !== 'production' })) return null;
+  if (/\{[a-zA-Z]+\}/.test(url) || !validStreamTargetUrl(url)) return null;
   return url;
 }
 
@@ -1416,7 +1638,7 @@ function adminOverrideState() {
 
 function applyOverrideState(state = {}) {
   const input = String(state.input || '').trim().slice(0, 2000);
-  const classified = input ? classifyStreamUrl(input, { rejectPrivateHosts: PRODUCTION_MODE }) : { type: null, embedUrl: null };
+  const classified = input ? classifyStreamURL(input) : { type: null, embedUrl: null };
   const playback = classified.embedUrl || String(state.url || '').trim() || null;
   const active = Boolean(state.active) && Boolean(playback);
   streamOverride.input = input || null;
@@ -1454,7 +1676,7 @@ async function syncOverrideState() {
     return fileStoreReady;
   }
   try {
-    const { found, value: stored } = await readStoreJson(OVERRIDE_REDIS_KEY);
+    const { found, value: stored } = await readUpstashJson(OVERRIDE_REDIS_KEY);
     if (found) applyFound(stored);
     overrideStoreReady = true;
     return true;
@@ -1473,8 +1695,8 @@ async function persistOverrideState() {
     return saved;
   }
   try {
-    const payload = await storeRequest(['SET', OVERRIDE_REDIS_KEY, JSON.stringify(record)]);
-    if (payload?.result !== 'OK') throw new Error('Redis did not confirm the stream override');
+    const payload = await upstashRequest(['SET', OVERRIDE_REDIS_KEY, JSON.stringify(record)]);
+    if (payload?.result !== 'OK') throw new Error('Upstash did not confirm the stream override');
     overrideStoreReady = true;
     return true;
   } catch (error) {
@@ -1515,7 +1737,7 @@ async function syncExperimentalState() {
     return fileStoreReady;
   }
   try {
-    const { found, value: stored } = await readStoreJson(EXPERIMENTAL_REDIS_KEY);
+    const { found, value: stored } = await readUpstashJson(EXPERIMENTAL_REDIS_KEY);
     if (found) applyExperimentalState(stored);
     experimentalStoreReady = true;
     return true;
@@ -1533,12 +1755,12 @@ async function persistExperimentalState() {
     return saved;
   }
   try {
-    const payload = await storeRequest([
+    const payload = await upstashRequest([
       'SET',
       EXPERIMENTAL_REDIS_KEY,
       JSON.stringify(publicExperimentalState())
     ]);
-    if (payload?.result !== 'OK') throw new Error('Redis did not confirm experimental update');
+    if (payload?.result !== 'OK') throw new Error('Upstash did not confirm experimental update');
     experimentalStoreReady = true;
     return true;
   } catch (error) {
@@ -1586,7 +1808,7 @@ async function syncStreamWindowState() {
     return fileStoreReady;
   }
   try {
-    const { found, value: stored } = await readStoreJson(STREAM_WINDOW_REDIS_KEY);
+    const { found, value: stored } = await readUpstashJson(STREAM_WINDOW_REDIS_KEY);
     if (found) applyStreamWindowState(stored);
     streamWindowStoreReady = true;
     return true;
@@ -1604,8 +1826,8 @@ async function persistStreamWindowState() {
     return saved;
   }
   try {
-    const payload = await storeRequest(['SET', STREAM_WINDOW_REDIS_KEY, JSON.stringify(publicStreamWindowState())]);
-    if (payload?.result !== 'OK') throw new Error('Redis did not confirm stream window update');
+    const payload = await upstashRequest(['SET', STREAM_WINDOW_REDIS_KEY, JSON.stringify(publicStreamWindowState())]);
+    if (payload?.result !== 'OK') throw new Error('Upstash did not confirm stream window update');
     streamWindowStoreReady = true;
     return true;
   } catch (error) {
@@ -1650,14 +1872,14 @@ if (UNIQUE_VISITOR_REMOTE_ENABLED) {
   if (UPSTASH_REDIS_REST_URL || UPSTASH_REDIS_REST_TOKEN) {
     console.warn('[Visitors] Both Upstash variables are required for remote persistence; using local JSON storage instead.');
   } else if (fileStoreReady) {
-    console.log(`[Storage] Using local JSON persistence at ${DATA_DIR}. Configure REDIS_URL or a persistent disk for deploy-safe storage.`);
+    console.log(`[Storage] Using local JSON persistence at ${DATA_DIR}. Configure Upstash or a persistent disk for deploy-safe storage.`);
   } else {
     console.warn('[Storage] Local JSON storage is unavailable; mutable state will remain in memory.');
   }
 }
 
 /* A store that failed its boot-time sync used to stay "connecting" forever —
-   one transient durable-store blip during startup left news (or maintenance, or the
+   one transient Upstash blip during startup left news (or maintenance, or the
    feed-source list) dead until someone happened to write to it again. Retry
    the failures on a slow timer until every store reports ready. */
 const STORE_RESYNC_INTERVAL_MS = 60_000;
@@ -1702,15 +1924,55 @@ startStoreResyncTimer();
 // VISITOR TRACKING
 // ─────────────────────────────────────────────
 
-/* Render puts Cloudflare in front of the service and overwrites
-   CF-Connecting-IP. Trust that header only through Render's private socket;
-   other deployments keep it off unless explicitly configured. */
-const CLIENT_IP_HEADER = (() => {
-  const raw = String(process.env.CLIENT_IP_HEADER ?? (process.env.RENDER === 'true' ? 'cf-connecting-ip' : 'off'))
-    .trim().toLowerCase();
-  return ['', 'off', 'none', '0', 'false'].includes(raw) ? '' : raw;
-})();
-const getClientIp = createClientIpResolver({ headerName: CLIENT_IP_HEADER });
+/* Whether an address can identify a visitor at all. Used both by getClientIp
+   (never trust a private candidate) and by the dashboard: a private address
+   either means the viewer is on the same private network, or that the
+   deployment is still showing us the proxy instead of the visitor
+   (TRUST_PROXY_HOPS on Render). Neither can be geolocated, so the dashboard
+   labels it instead of printing a globe and "Unknown". */
+function isPrivateIp(ip){
+  const v = String(ip||'').trim();
+  if(!v || v==='unknown') return true;
+  if(v==='127.0.0.1' || v==='::1' || v==='::ffff:127.0.0.1') return true;
+  // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, fc00::/7, fe80::/10, ::/128
+  if(/^10\./.test(v)) return true;
+  if(/^192\.168\./.test(v)) return true;
+  if(/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(v)) return true;
+  if(/^169\.254\./.test(v)) return true;
+  if(v.startsWith('fc') || v.startsWith('fd') || v.startsWith('fe80') || v==='::') return true;
+  if(v.startsWith('::ffff:10.') || v.startsWith('::ffff:192.168.') || v.startsWith('::ffff:172.')) return true;
+  return false;
+}
+/* Normalise one address: strip ports/brackets, unwrap IPv4-mapped IPv6,
+   collapse loopback spellings. Returns '' for anything unusable. */
+function normalizeIpValue(value) {
+  let ip = String(value || '').trim();
+  if (ip.includes(',')) ip = ip.split(',')[0].trim();
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  if (ip.startsWith('[') && ip.includes(']')) ip = ip.slice(1, ip.indexOf(']'));
+  if (ip === '::1') return '127.0.0.1';
+  if (ip === '::') return '';
+  return ip;
+}
+
+/* The client IP, derived ONLY from the socket and the trusted-proxy chain
+   configured above. Client-supplied identity headers are never consulted:
+   they are trivially forgeable whenever the origin is reachable directly,
+   and a forged IP made every per-IP limit in this file — including the admin
+   login guard — bypassable. */
+function getClientIp(req) {
+  const socketIp = normalizeIpValue(req.socket?.remoteAddress);
+  // A public socket address means nothing is proxying us: the socket is the
+  // client, and no header can override it.
+  if (socketIp && !isPrivateIp(socketIp)) return socketIp;
+
+  const proxyIp = normalizeIpValue(req.ip);
+  if (proxyIp && !isPrivateIp(proxyIp)) return proxyIp;
+
+  // Local development / internal probes: every candidate is private. Keep a
+  // usable value for logs and for the (per-instance) dev rate limits.
+  return proxyIp || socketIp || 'unknown';
+}
 
 function normalizeVisitorId(value) {
   return String(value || '')
@@ -1816,7 +2078,7 @@ function rejectUnauthorizedSiteRequest(res) {
 /* ── New-identity budget (see NEW_IDENTITY_BUDGET_PER_IP_HOUR) ──── */
 const newIdentityWindows = new Map(); // ip -> { count, resetAt }
 let newIdentityBlockedCount = 0;
-const newIdentityWarnedIps = new Set();
+let newIdentityWarnedAt = 0;
 
 function consumeNewIdentityBudget(ip) {
   const now = Date.now();
@@ -1827,20 +2089,9 @@ function consumeNewIdentityBudget(ip) {
   }
   if (state.count >= NEW_IDENTITY_BUDGET_PER_IP_HOUR) {
     newIdentityBlockedCount++;
-    /* One line per address, ever. Throttling it to once a minute still filled
-       the log during a race, and a shared egress address (a mobile carrier, a
-       university, an office) hits this constantly by design — it is the budget
-       working, not a fault. The running total stays available to /admin. */
-    if (!newIdentityWarnedIps.has(ip)) {
-      newIdentityWarnedIps.add(ip);
-      if (newIdentityWarnedIps.size <= 3) {
-        console.warn(`[Visitors] New-identity budget reached for ${ip}; further `
-          + 'identities stay live but are not added to the all-time total '
-          + '(expected for shared/carrier egress addresses).');
-      } else if (newIdentityWarnedIps.size === 4) {
-        console.warn('[Visitors] New-identity budget reached for further '
-          + 'addresses too — suppressing the rest, they are normal for shared egress.');
-      }
+    if (now - newIdentityWarnedAt >= 60_000) {
+      newIdentityWarnedAt = now;
+      console.warn(`[Visitors] New-identity budget reached for ${ip}; further identities stay live but are not added to the all-time total.`);
     }
     return false;
   }
@@ -1878,7 +2129,7 @@ function upsertVisitor(key, req, options = {}) {
   const now = Date.now();
   const ip = getClientIp(req);
   const ua = req.headers['user-agent'] || '';
-  const { browser, os, deviceType } = parseUserAgent(ua);
+  const { browser, os, deviceType } = parseUA(ua);
   const page = options.page || req.path || '/';
 
   let entry = activeUsers.get(key);
@@ -2151,7 +2402,7 @@ function sampleAnalytics() {
 }
 
 // Write every minute while something is happening; only every few minutes when
-// the minute sampler is the sole source of changes (keeps durable-store writes low).
+// the minute sampler is the sole source of changes (keeps Upstash usage low).
 function flushAnalyticsIfDue() {
   if (!analyticsIsDirty()) return;
   if (analyticsDirty.significant || Date.now() - lastAnalyticsFlushAt >= ANALYTICS_IDLE_FLUSH_MS) flushAnalytics().catch(() => {});
@@ -2249,9 +2500,9 @@ async function syncAnalyticsStore() {
       }
       analyticsStoreReady = fileStoreReady;
     } else {
-      const payload = await storeRequest(['HGETALL', ANALYTICS_REDIS_KEY]);
+      const payload = await upstashRequest(['HGETALL', ANALYTICS_REDIS_KEY]);
       const result = payload?.result;
-      // Redis adapters can return {field:value} object or [field,value,…] flat array depending on REST version
+      // Upstash HGETALL can return {field:value} object or [field,value,…] flat array depending on REST version
       if (Array.isArray(result)) {
         for (let i = 0; i + 1 < result.length; i += 2) hydrateAnalyticsField(String(result[i]), result[i + 1]);
       } else if (result && typeof result === 'object') {
@@ -2329,7 +2580,7 @@ function flushAnalytics(force = false) {
       const commands = [];
       for (let i = 0; i < fields.length; i += 120) commands.push(['HSET', ANALYTICS_REDIS_KEY, ...fields.slice(i, i + 120)]);
       if (removed.length) commands.push(['HDEL', ANALYTICS_REDIS_KEY, ...removed]);
-      if (commands.length) await storeRequest(commands);
+      if (commands.length) await upstashRequest(commands);
       analyticsStoreReady = true;
       return true;
     } catch (error) {
@@ -2567,7 +2818,8 @@ function sanitizeVisitor(v) {
 }
 
 /* People on the site right now. One browser is one count: the site heartbeats
-   every two minutes while visible and stops when hidden, so freshness is the rule. */
+   every 15s while its tab is visible and stops when it is not, so a fresh
+   heartbeat is the whole rule. */
 function countLiveUsers(now = Date.now()) {
   let count = 0;
   for (const visitor of activeUsers.values()) {
@@ -2672,7 +2924,7 @@ function getStats() {
     visitors,
     override: adminOverrideState(),
     maintenance: publicMaintenanceState(),
-    sources: storedSourceConfig(),
+    sources: publicSourceConfig(),
     server: {
       startedAt: SERVER_STARTED_AT,
       uptimeMs: now - SERVER_STARTED_AT,
@@ -2751,118 +3003,6 @@ if (SITE_STATIC_SAFE) {
   }));
 }
 
-/* Self-hosted HLS relays are retired. Keep the old paths explicit so a stale
-   client gets a small deterministic response instead of the SPA fallback. */
-app.get(['/vendor/hls.min.js', '/relay/:channel/m3u8'], (req, res) => {
-  res.setHeader('Cache-Control', 'public, max-age=86400');
-  res.status(410).type('text/plain').send(relayDisabledMessage);
-});
-
-/* ── self-check ────────────────────────────────────────────────────────────
-   /healthz only proves the process is up, which is useless when the streams
-   are down but the server is fine — the situation that actually happens. This
-   checks the things that break, and for each failing one says what to do.
-
-   Kept off /healthz so Render's own probe stays fast: this one reaches out to
-   the upstream providers, which is exactly what you want on demand and exactly
-   what you do not want on a 30-second readiness poll. */
-const withTimeout = (promise, ms, fallback) => Promise.race([
-  Promise.resolve(promise).catch((e) => ({ __error: e && e.message })),
-  new Promise((r) => setTimeout(() => r({ __timeout: true }), ms)),
-]).then((v) => (v === undefined ? fallback : v));
-
-/* Deliberately NOT under /api: that prefix is default-deny and needs a site
-   ticket, which is precisely what you cannot get when the site is the thing
-   that is broken. Protected by its own shared secret instead.
-
-   Set SELFCHECK_TOKEN on the service and bookmark
-   https://<host>/selfcheck?token=<that value>. If the variable is unset the
-   endpoint stays open, which is fine locally and worth avoiding in production. */
-const SELFCHECK_TOKEN = String(process.env.SELFCHECK_TOKEN || '').trim();
-
-app.get('/selfcheck', async (req, res) => {
-  if (SELFCHECK_TOKEN && req.query.token !== SELFCHECK_TOKEN) {
-    return res.status(404).send('Not found');
-  }
-  const checks = [];
-  /* `warn` marks a deliberate, operator-chosen state that is not a fault. It
-     still shows on the page but does not fail the run — otherwise flipping a
-     switch on purpose would leave this page permanently red and the real
-     outages would stop standing out. */
-  const add = (name, ok, detail, fix, warn) => {
-    const c = { name, ok: !!ok, detail: String(detail || ''), fix: fix || '' };
-    if (warn) c.warn = true;
-    checks.push(c);
-  };
-
-  // 1. Discord is optional. It is an error only when configured but not ready.
-  const botConfigured = Boolean(process.env.DISCORD_BOT_TOKEN);
-  let botOk = !botConfigured;
-  let botDetail = botConfigured ? 'configured but not connected' : 'optional bot disabled';
-  try {
-    if (botConfigured && discordBot && discordBot.client) {
-      const ready = typeof discordBot.client.isReady === 'function' && discordBot.client.isReady();
-      botOk = ready;
-      botDetail = ready ? 'connected' : 'client created but not connected';
-    }
-  } catch (e) { botOk = false; botDetail = 'error: ' + (e && e.message); }
-  add('discordBot', botOk, botDetail, botOk ? '' :
-    'Check DISCORD_BOT_TOKEN, DISCORD_OWNER_ID and DISCORD_GUILD_ID are all set. '
-    + 'If the log says "Used disallowed intents", leave DISCORD_GUILD_MEMBERS_INTENT unset '
-    + 'and enable Server Members Intent in the portal before setting it to 1.');
-
-  // 2. Announcements are required only when the bot itself is enabled.
-  const announcementsOk = !botConfigured || Boolean(linkEventSink);
-  add('linkAnnouncements', announcementsOk,
-    linkEventSink ? 'wired to the bot' : 'optional bot disabled',
-    announcementsOk ? '' : 'The configured bot did not expose announceLink; check its startup log.');
-
-  // 3. link store readable? A lookup for an id that cannot exist still proves
-  //    the store loads and answers, which is the thing that breaks.
-  try {
-    const probe = await withTimeout(discordLink.isUserLinked('selfcheck-probe'), 3000, null);
-    add('linkStore', probe !== null && probe !== undefined,
-      'store answers (durable store: ' + (UNIQUE_VISITOR_REMOTE_ENABLED ? durableStore.provider : 'no') + ')',
-      (probe === null || probe === undefined)
-        ? 'Link store did not answer within 3s. Check the Redis URL and network.' : '');
-  } catch (e) {
-    add('linkStore', false, 'unreadable: ' + (e && e.message), 'Check the durable-store environment variables.');
-  }
-
-  // 4. Prove the configured durable transport itself can answer.
-  if (UNIQUE_VISITOR_REMOTE_ENABLED) {
-    const pong = await withTimeout(storeRequest(['PING']), 3000, null);
-    const durableOk = String(pong?.result || '').toUpperCase() === 'PONG';
-    add('durableStore', durableOk,
-      durableOk ? `${durableStore.provider} answered PONG` : 'configured store did not answer PING within 3s',
-      durableOk ? '' : 'Check REDIS_URL, TLS mode, credentials and provider network access.');
-  } else {
-    add('durableStore', !PRODUCTION_MODE, 'local file/memory only',
-      PRODUCTION_MODE ? 'Set REDIS_URL to a durable Redis/Valkey database.' : '');
-  }
-
-  // 5. Every advertised source must have a valid redirect target.
-  await withTimeout(streamTargetsInitPromise, 3000, null);
-  const missingTargets = [...FEED_SOURCE_IDS].filter(id => !streamTargets.has(id));
-  add('streamTargets', missingTargets.length === 0,
-    missingTargets.length ? `missing: ${missingTargets.join(', ')}` : `${streamTargets.size} valid target(s) loaded`,
-    missingTargets.length ? 'Set STREAM_TARGETS_JSON or repair data/stream-targets.json.' : '');
-
-  // 6. Relays are intentionally absent: this must never turn into an
-  // upstream probe or a media path on the bandwidth-limited service.
-  add('selfHostedRelays', true,
-    'retired — provider-hosted redirects only; no playlists or media cross Render', '');
-
-  // 7. Community linking is optional and never gates playback.
-  add('discordLinking', true,
-    botConfigured ? 'bot configured; profile linking available' : 'optional bot is not configured', '');
-
-  const ok = checks.every((c) => c.ok);
-  const warnings = checks.filter((c) => c.warn).length;
-  res.setHeader('Cache-Control', 'no-store');
-  res.status(ok ? 200 : 503).json({ ok, warnings, checkedAt: Date.now(), checks });
-});
-
 app.get('/healthz', (req, res) => {
   res.json({
     ok: true,
@@ -2872,32 +3012,6 @@ app.get('/healthz', (req, res) => {
     newsStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, newsStoreReady),
     sourceStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, sourceStoreReady),
     overrideStore: dataStoreStatus(UNIQUE_VISITOR_REMOTE_ENABLED, overrideStoreReady)
-  });
-});
-
-/* Render uses readiness, not bare process liveness. A bad Redis credential must
-   fail the deploy instead of producing a green service that silently loses
-   mutable state on its ephemeral filesystem. */
-app.get('/readyz', (req, res) => {
-  const stores = {
-    uniqueVisitors: uniqueVisitorStoreReady,
-    maintenance: maintenanceStoreReady,
-    news: newsStoreReady,
-    sources: sourceStoreReady,
-    override: overrideStoreReady,
-    experimental: experimentalStoreReady,
-    streamWindow: streamWindowStoreReady,
-    analytics: analyticsStoreReady
-  };
-  const durableReady = UNIQUE_VISITOR_REMOTE_ENABLED && Object.values(stores).every(Boolean);
-  const targetsReady = [...FEED_SOURCE_IDS].every(id => streamTargets.has(id));
-  const ok = targetsReady && (PRODUCTION_MODE ? durableReady : (durableReady || fileStoreReady));
-  res.status(ok ? 200 : 503).json({
-    ok,
-    durableProvider: durableStore.provider,
-    durableReady,
-    targetsReady,
-    stores
   });
 });
 
@@ -3002,9 +3116,6 @@ app.get('/api/visitors/heartbeat', async (req, res, next) => {
     // for a new live session or a newly confirmed permanent visitor.
     broadcastVisitorChange(isNew ? 'online' : 'heartbeat', entry, isNew || isGloballyNew);
     broadcastPresence();
-    // Scaled clients already receive presence over SSE and request a header-only
-    // acknowledgement. Keep JSON as the default for older clients and tooling.
-    if (req.query.minimal === '1') return res.status(204).end();
     res.json(presencePayload());
   } catch (error) {
     next(error);
@@ -3140,66 +3251,6 @@ app.get('/api/stream/sources', async (req, res, next) => {
    browser (Origin or Referer present and authorized), and it has to name a
    source that has a target configured. What it gets back is an alias on this
    origin that expires — not the destination. */
-/* ─────────────────────────────────────────────────────────────────────────────
-   Discord link API. These ride the ordinary site ticket, so a script cannot
-   mint codes without first loading the page like a browser.
-   ───────────────────────────────────────────────────────────────────────────── */
-app.post('/api/discord/link-code', async (req, res, next) => {
-  try {
-    const ip = getClientIp(req);
-    if (!consumeVisitorRateLimit(`discord-code:${ip}`, DISCORD_CODE_RATE_MAX)) {
-      res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
-      return res.status(429).json({ error: 'Too many codes requested. Try again in a little while.' });
-    }
-    const result = await discordLink.createCode();
-    if (result.error) return res.status(503).json({ error: result.error });
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({ code: result.code, expiresAt: result.expiresAt, ttlMs: discordLink.CODE_TTL_MS, inviteUrl: DISCORD_INVITE_URL });
-  } catch (error) { next(error); }
-});
-
-app.get('/api/discord/link-status', async (req, res, next) => {
-  try {
-    const code = String(req.query.code || '').slice(0, 16);
-    if (!code) return res.status(400).json({ error: 'Missing code.' });
-    const status = await discordLink.status(code);
-    res.setHeader('Cache-Control', 'no-store');
-    res.json(status);
-  } catch (error) { next(error); }
-});
-
-app.post('/api/discord/link-confirm', async (req, res, next) => {
-  try {
-    const body = req.body || {};
-    const result = await discordLink.confirm(String(body.code || '').slice(0, 16), body.yes === true);
-    res.setHeader('Cache-Control', 'no-store');
-    if (result.error) return res.status(400).json({ error: result.error });
-    if (!result.ok) return res.json({ ok: false, reason: result.reason });
-    /* SameSite=None so the cookie also rides the cross-site /stream/<ticket>
-       iframe request — 'strict' would leave the player page locked out. */
-    res.setHeader('Set-Cookie', discordLink.cookieValue(result.token, { secure: isSecureRequest(req) }));
-    res.json({ ok: true, profile: result.profile });
-  } catch (error) { next(error); }
-});
-
-app.get('/api/discord/me', async (req, res, next) => {
-  try {
-    const access = await hasDiscordAccess(req);
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({ linked: access.linked, profile: access.profile || null, reason: access.reason || null });
-  } catch (error) { next(error); }
-});
-
-/* Only forgets this browser's cookie. `/unlink` in Discord removes the account
-   row itself, so every linked browser observes the change. */
-app.post('/api/discord/unlink', async (req, res, next) => {
-  try {
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('Set-Cookie', discordLink.clearedCookie({ secure: isSecureRequest(req) }));
-    res.json({ ok: true });
-  } catch (error) { next(error); }
-});
-
 app.post('/api/stream/ticket', async (req, res, next) => {
   try {
     await Promise.all([sourceInitPromise, streamTargetsInitPromise]);
@@ -3214,13 +3265,15 @@ app.post('/api/stream/ticket', async (req, res, next) => {
     }
     const body = req.body || {};
     const sourceId = String(body.sourceId || '').trim().slice(0, 40);
-    if (RETIRED_RELAY_SOURCE_IDS.has(sourceId)) {
-      return res.status(410).json({ error: relayDisabledMessage });
-    }
     if (!FEED_SOURCE_IDS.has(sourceId) && sourceId !== OVERRIDE_SOURCE_ID) {
       return res.status(400).json({ error: 'Unknown source id.' });
     }
-    if (sourceId === OVERRIDE_SOURCE_ID) {
+    if (RELAY_SOURCE_IDS.has(sourceId)) {
+      /* Played by this server, so there is no provider target to check: the
+         playlist is minted on demand at /relay/cdnlivetv/m3u8. Everything else
+         about the ticket — where it comes from, how long it lives — is the
+         same, so a relay source is no easier to harvest than any other. */
+    } else if (sourceId === OVERRIDE_SOURCE_ID) {
       await overrideInitPromise;
       if (!streamOverride.active || !streamOverride.url) {
         return res.status(503).json({ error: 'No stream override is active.' });
@@ -3234,7 +3287,7 @@ app.post('/api/stream/ticket', async (req, res, next) => {
         return res.status(400).json({ error: 'Missing or invalid parameters for that source.' });
       }
     }
-    const ticket = ticketService.createStream(sourceId, STREAM_TICKET_TTL_MS);
+    const ticket = createStreamTicket(sourceId);
     res.setHeader('Cache-Control', 'no-store');
     res.json({ href: `/stream/${ticket}`, expiresAt: Date.now() + STREAM_TICKET_TTL_MS });
   } catch (error) {
@@ -3257,7 +3310,7 @@ app.post('/api/site/ticket', async (req, res, next) => {
       return res.status(429).json({ error: 'Too many site tickets. Try again later.' });
     }
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ ticket: ticketService.createSite(SITE_TICKET_TTL_MS), expiresAt: Date.now() + SITE_TICKET_TTL_MS });
+    res.json({ ticket: createSiteTicket(), expiresAt: Date.now() + SITE_TICKET_TTL_MS });
   } catch (error) {
     next(error);
   }
@@ -3269,12 +3322,16 @@ app.post('/api/site/ticket', async (req, res, next) => {
 app.get('/stream/:ticket', async (req, res, next) => {
   try {
     if (!STREAM_TICKETS_ENABLED) return res.status(503).send('Stream tickets are disabled.');
-    const decoded = ticketService.verifyStream(req.params.ticket);
+    const decoded = verifyStreamTicket(req.params.ticket);
     if (!decoded) return res.status(403).send('Invalid stream ticket.');
     if (decoded.exp && Date.now() > decoded.exp) return res.status(410).send('This stream ticket has expired — reload the page.');
     await Promise.all([sourceInitPromise, streamTargetsInitPromise, overrideInitPromise]);
-    if (RETIRED_RELAY_SOURCE_IDS.has(decoded.sourceId)) {
-      return res.status(410).type('text/plain').send(relayDisabledMessage);
+    /* A relay source is played here rather than redirected: an <iframe> cannot
+       render an .m3u8, so it gets a document with hls.js inlined that pulls the
+       playlist from /relay/cdnlivetv/m3u8. Same ticket, same expiry — only the
+       thing handed to the browser changes. */
+    if (RELAY_SOURCE_IDS.has(decoded.sourceId)) {
+      return sendRelayPlayer(res, decoded.sourceId);
     }
     const url = decoded.sourceId === OVERRIDE_SOURCE_ID
       ? (streamOverride.active && streamOverride.url ? streamOverride.url : null)
@@ -3285,6 +3342,105 @@ app.get('/stream/:ticket', async (req, res, next) => {
     // 302: the browser then loads the feed from the provider; our origin is
     // never the stream host, and the alias itself is worth nothing elsewhere.
     res.redirect(302, url);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ─────────────────────────────────────────────
+// RELAY — cdnlivetv (played by this server, not redirected)
+// ─────────────────────────────────────────────
+
+/* Two routes and a token cache.
+
+   /stream/<ticket>      → the player page the cockpit frames (HTML)
+   /relay/cdnlivetv/m3u8 → the live playlist, segments rewritten to absolute urls
+
+   Only the ~2KB playlist crosses this server: the segments are absolute
+   https://cdnlivetv.tv/… urls the viewer's browser fetches directly, so a full
+   race weekend costs the Render instance a few megabytes, not the stream.
+
+   The playlist route is the one relay thing that is reachable without a ticket,
+   so it carries the same gate as ticket minting (an authorized browser origin)
+   plus a single addition: our own player page. That page is served from this
+   origin and fetches same-origin, so the browser sends no Origin — only a
+   Referer whose origin is us. Anything else is refused. */
+
+const RELAY_RATE_MAX = Number(process.env.RELAY_RATE_MAX || 180);
+/* How long the page's own playback permission lasts. A race with a red-flag
+   delay runs past the 1h stream ticket, so this is deliberately longer — it is
+   scoped to one source and worthless off this origin either way. */
+const RELAY_PLAYBACK_TTL_MS = Number(process.env.RELAY_PLAYBACK_TTL_MS || 12 * 60 * 60 * 1000);
+
+/* The player page is served from this origin and the frame is mounted with
+   referrerpolicy="no-referrer", so its playlist fetch is a same-origin GET with
+   neither Origin nor Referer — there is nothing for the origin gate to read.
+   So the page carries its own permission instead: minted here when the page is
+   handed out (which only happens after a real stream ticket is redeemed),
+   scoped to one source, and expiring. Same shape as every other ticket in this
+   file, kept apart by its kind. */
+function createRelayTicket(sourceId, ttlMs = RELAY_PLAYBACK_TTL_MS) {
+  return signTicket('relay-ticket', {
+    i: sourceId,
+    n: crypto.randomBytes(8).toString('hex'),
+    e: Date.now() + ttlMs
+  });
+}
+
+function verifyRelayTicket(ticket, sourceId) {
+  const verified = verifyTicket('relay-ticket', ticket);
+  if (!verified || verified.expired) return false;
+  return String(verified.payload.i) === sourceId;
+}
+
+function siteOriginForCsp() {
+  const fromEnv = String(process.env.ALLOWED_ORIGIN || '').split(',')[0].trim();
+  if (fromEnv) return normalizeOrigin(fromEnv) || fromEnv;
+  return `https://${AUTHORIZED_DOMAIN}`;
+}
+
+/* The iframe target for a relay source. Deliberately not a redirect: the frame
+   has to stay on this origin for its playlist fetch to be same-origin. */
+function sendRelayPlayer(res, sourceId) {
+  const channel = RELAY_CHANNELS[sourceId];
+  if (!channel) return res.status(503).send('That source is not available right now.');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Content-Security-Policy', buildCsp({
+    // The cockpit frames this page from the site's origin.
+    frameAncestors: `'self' ${siteOriginForCsp()}`,
+    // hls.js fetches the manifest from us and the segments from the CDN.
+    extraConnect: [cdnlivetvRelay.CDN_ORIGIN],
+    // MediaSource Extensions attach via a blob: url, and hls.js runs its
+    // demuxer in a Worker created from one. Without blob: in script-src the
+    // worker is refused and hls.js quietly falls back to the main thread.
+    extraMedia: ['blob:'],
+    extraScript: ['blob:']
+  }));
+  res.type('html').send(cdnlivetvPlayer.buildPlayerPage({
+    title: channel.title || 'Live stream',
+    src: `/relay/cdnlivetv/m3u8?t=${encodeURIComponent(createRelayTicket(sourceId))}`
+  }));
+}
+
+app.get('/relay/cdnlivetv/m3u8', async (req, res, next) => {
+  try {
+    /* Accepted callers: the site itself (authorized browser origin), or the
+       player page this server handed out, presenting its playback ticket. */
+    const playbackTicket = String(req.query.t || '').slice(0, 400);
+    if (!isBrowserSiteRequest(req) && !verifyRelayTicket(playbackTicket, 'cdnlivetv-f1')) {
+      return res.status(403).type('text/plain')
+        .send('Relay playlists are only served to the site or to the player it frames.');
+    }
+    const ip = getClientIp(req);
+    if (!consumeVisitorRateLimit(`relay-m3u8:${ip}`, RELAY_RATE_MAX)) {
+      res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
+      return res.status(429).type('text/plain').send('Too many relay requests. Try again later.');
+    }
+    const channel = RELAY_CHANNELS['cdnlivetv-f1'];
+    const { playlist } = await cdnlivetvRelay.getPlaylist(channel.name, channel.code);
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('application/vnd.apple.mpegurl').send(playlist);
   } catch (error) {
     next(error);
   }
@@ -3302,7 +3458,7 @@ async function openf1SnapshotLoad(url) {
   if (local) return local;
   if (!UNIQUE_VISITOR_REMOTE_ENABLED) return null;
   try {
-    const payload = await storeRequest(['GET', openf1SnapshotKey(url)]);
+    const payload = await upstashRequest(['GET', openf1SnapshotKey(url)]);
     const raw = payload && payload.result;
     if (typeof raw !== 'string') return null;
     const parsed = JSON.parse(raw);
@@ -3338,7 +3494,7 @@ function openf1SnapshotSave(url, data) {
     return;
   }
   openf1SnapshotWritesToday++;
-  storeRequest(['SET', openf1SnapshotKey(url), raw, 'EX', OPENF1_SNAPSHOT_TTL_S]).catch(() => {});
+  upstashRequest(['SET', openf1SnapshotKey(url), raw, 'EX', OPENF1_SNAPSHOT_TTL_S]).catch(() => {});
 }
 
 async function openf1FetchUpstream(url) {
@@ -3643,7 +3799,7 @@ app.get('/api/career/:driverId', async (req, res) => {
 // Public audio-only feed for the experimental Audio page.
 // Direct m3u8 / AAC / MP3 URL — never a video embed page.
 app.get('/api/audio-feed', (req, res) => {
-  const url = String(process.env.AUDIO_FEED_URL || process.env.FREEF1_AUDIO_URL || '').trim();
+  const url = String(process.env.FREEF1_AUDIO_URL || process.env.APEX_AUDIO_URL || '').trim();
   res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=45');
   return res.json({ url, available: Boolean(url) });
 });
@@ -3849,7 +4005,7 @@ async function persistLoginGuard() {
   const payload = serializeLoginGuard();
   try {
     if (UNIQUE_VISITOR_REMOTE_ENABLED) {
-      await storeRequest(['SET', LOGIN_GUARD_REDIS_KEY, JSON.stringify(payload), 'EX', 86_400]);
+      await upstashRequest(['SET', LOGIN_GUARD_REDIS_KEY, JSON.stringify(payload), 'EX', 86_400]);
     } else {
       writeLocalJson(LOGIN_GUARD_FILE, payload);
     }
@@ -3869,7 +4025,7 @@ async function loadLoginGuard() {
   try {
     let stored = null;
     if (UNIQUE_VISITOR_REMOTE_ENABLED) {
-      const payload = await storeRequest(['GET', LOGIN_GUARD_REDIS_KEY]);
+      const payload = await upstashRequest(['GET', LOGIN_GUARD_REDIS_KEY]);
       if (typeof payload?.result === 'string') stored = JSON.parse(payload.result);
     } else {
       stored = readLocalJson(LOGIN_GUARD_FILE);
@@ -4140,7 +4296,7 @@ app.post('/admin/api/stream/override', async (req, res, next) => {
     const input = String((req.body || {}).url || '').trim().slice(0, 2000);
     if (!input) return res.status(400).json({ error: 'Stream URL is required' });
 
-    const { type, embedUrl } = classifyStreamUrl(input, { rejectPrivateHosts: PRODUCTION_MODE });
+    const { type, embedUrl } = classifyStreamURL(input);
     if (!embedUrl) return res.status(400).json({ error: 'Unsupported URL format' });
 
     streamOverride.active = true;
@@ -4194,7 +4350,7 @@ app.post('/admin/api/stream/normal', async (req, res, next) => {
 app.get('/admin/api/stream/sources', async (req, res, next) => {
   try {
     await sourceInitPromise;
-    res.json({ ...storedSourceConfig(), durable: sourceStoreReady });
+    res.json({ ...publicSourceConfig(), durable: sourceStoreReady });
   } catch (error) {
     next(error);
   }
@@ -4264,7 +4420,7 @@ app.post('/admin/api/stream/targets', async (req, res, next) => {
       if (!FEED_SOURCE_IDS.has(id)) return res.status(400).json({ error: `Unknown source id: ${id}` });
       if (rawUrl === null) { delete next[id]; continue; }
       const url = String(rawUrl || '').trim();
-      if (!validTargetUrl(url, { allowLoopback: process.env.NODE_ENV !== 'production' })) {
+      if (!validStreamTargetUrl(url)) {
         return res.status(400).json({ error: `Target for ${id} must be an https URL (http is allowed for loopback in development).` });
       }
       next[id] = { url };
@@ -4330,7 +4486,7 @@ app.get('/admin/api/events', async (req, res, next) => {
   res.write(payload);
   res.write(`event: stream_window_update\ndata: ${JSON.stringify(publicStreamWindowState())}\n\n`);
   res.write(`event: news_update\ndata: ${JSON.stringify({ news: getAdminNewsItems(), durable: newsStoreIsDurable() })}\n\n`);
-  res.write(`event: sources_update\ndata: ${JSON.stringify(storedSourceConfig())}\n\n`);
+  res.write(`event: sources_update\ndata: ${JSON.stringify(publicSourceConfig())}\n\n`);
   res.write(`event: experimental_update\ndata: ${JSON.stringify(publicExperimentalState())}\n\n`);
 
   req.on('close', () => {
@@ -4393,28 +4549,18 @@ if (process.env.DISCORD_BOT_TOKEN) {
       token: process.env.DISCORD_BOT_TOKEN,
       guildId: process.env.DISCORD_GUILD_ID || '',
       siteUrl: process.env.SITE_URL || 'https://freef1.netlify.app',
-      discordInvite: DISCORD_INVITE_URL,
+      discordInvite: process.env.DISCORD_INVITE || 'https://discord.gg/KYXHCAzhN4',
       ownerId: process.env.DISCORD_OWNER_ID || '',
       readLocalJson,
       writeLocalJson,
-      storeCommand: UNIQUE_VISITOR_REMOTE_ENABLED ? storeRequest : null,
-      storeProvider: REMOTE_STORE_LABEL,
+      upstash: UNIQUE_VISITOR_REMOTE_ENABLED ? upstashRequest : null,
       redisKey: 'freef1:discordbot:v1',
       fileKey: path.join(DATA_DIR, 'discord-bot.json'),
-      // Lets /link and /unlink act on the same link table the API reads.
-      discordLink,
+      // Default audio source for /watchparty start. Discord bots can relay
+      // audio into a voice channel, never video — see bot/STREAMING.md.
+      audioUrl: String(process.env.FREEF1_AUDIO_URL || process.env.APEX_AUDIO_URL || '').trim(),
       log: (...a) => console.log('[Bot]', ...a),
     });
-    /* Now there is a client, hand the store its announcer so link and unlink
-       events reach #links. Logged because it is the one piece of the chain
-       with no other symptom when it is missing: links still work, the channel
-       just stays silent. */
-    if (discordBot && typeof discordBot.announceLink === 'function') {
-      linkEventSink = discordBot.announceLink;
-      console.log('[DiscordLink] announcement channel wired to the bot');
-    } else {
-      console.log('[DiscordLink] bot has no announceLink — #links will stay silent');
-    }
   } catch (error) {
     console.error('[Bot] failed to start:', error.message);
   }
@@ -4429,10 +4575,9 @@ loadLoginGuard().catch(() => {});
 const server = app.listen(PORT, () => {
   console.log(`[Server] Running on http://localhost:${PORT}`);
   console.log(`[Server] Trusted proxy hops: ${TRUST_PROXY_HOPS}${TRUST_PROXY_HOPS === 0 ? ' (no proxy: socket address is the client)' : ''}`);
-  console.log(`[Server] Client IP header: ${CLIENT_IP_HEADER || 'off (X-Forwarded-For only)'}`);
   console.log(`[Main]  Site:  http://localhost:${PORT}/  (${DEV_DIR})`);
   console.log(`[Admin] Panel: http://localhost:${PORT}/admin  (${ADMIN_DIR})`);
-  console.log(`[Visitors] Unique store: ${UNIQUE_VISITOR_REMOTE_ENABLED ? `${REMOTE_STORE_LABEL} (durable)` : 'local file/memory (ephemeral on Render)'}`);
+  console.log(`[Visitors] Unique store: ${UNIQUE_VISITOR_REMOTE_ENABLED ? 'Upstash Redis (durable)' : 'memory (resets on restart)'}`);
   if (UNIQUE_VISITOR_BASELINE) console.log(`[Visitors] Restored baseline: ${UNIQUE_VISITOR_BASELINE}`);
 
   if (ADMIN_USER === 'admin' && ADMIN_PASS === 'admin') {
@@ -4461,8 +4606,6 @@ function shutdown(signal) {
   console.log(`[Server] ${signal} received; shutting down gracefully.`);
   clearInterval(sseHeartbeatTimer);
   if (uniqueVisitorSyncTimer) clearInterval(uniqueVisitorSyncTimer);
-  if (storeResyncTimer) clearInterval(storeResyncTimer);
-  if (loginGuardPersistTimer) clearTimeout(loginGuardPersistTimer);
   clearTimeout(statsBroadcastTimer);
   writeSSE(sseClients, 'event: shutdown\ndata: {}\n\n');
   writeSSE(publicSseClients, 'event: shutdown\ndata: {}\n\n');
@@ -4478,7 +4621,6 @@ function shutdown(signal) {
   const guardFlush = loginGuardDirty ? persistLoginGuard().catch(() => false) : Promise.resolve();
   server.close(async () => {
     await Promise.allSettled([...pendingUniqueWrites.values(), finalFlush, botFlush, guardFlush]);
-    try { await durableStore.close(); } catch (_) {}
     try { discordBot?.stop?.(); } catch (_) {}
     process.exit(0);
   });

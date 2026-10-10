@@ -136,24 +136,7 @@ async function beatAs(userId, extraHeaders = {}) {
   return hb.json();
 }
 
-/* /api/visitors/active and /api/events are behind the default-deny site-ticket
-   gate; mint one the way the site does (allowed Origin) and reuse it. */
-const SITE_ORIGIN = 'https://freef1.netlify.app';
-let siteTicketCache = '';
-async function siteTicket() {
-  if (siteTicketCache) return siteTicketCache;
-  const r = await fetch(`${base}/api/site/ticket`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: SITE_ORIGIN, Referer: SITE_ORIGIN + '/', 'User-Agent': CHROME_UA },
-    body: '{}'
-  });
-  const { ticket } = await r.json();
-  assert.ok(ticket, `site ticket refused: ${r.status}`);
-  siteTicketCache = ticket;
-  return ticket;
-}
-
-const liveCount = async () => (await (await get('/api/visitors/active', { 'X-Site-Ticket': await siteTicket() })).json()).active;
+const liveCount = async () => (await (await get('/api/visitors/active')).json()).active;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -164,7 +147,7 @@ function openPresenceStream() {
   const controller = new AbortController();
   const events = [];
   const ready = (async () => {
-    const res = await fetch(`${base}/api/events?ticket=${encodeURIComponent(await siteTicket())}`, {
+    const res = await fetch(`${base}/api/events`, {
       headers: { Accept: 'text/event-stream', 'User-Agent': CHROME_UA },
       signal: controller.signal
     });
@@ -312,7 +295,7 @@ function openPresenceStream() {
     check('beating again after the goodbye restores the browser', rejoin.active === beforeLeave, JSON.stringify(rejoin));
 
     // ── the payloads carry no address, and say so by shape ───────────────
-    const activePayload = await (await get('/api/visitors/active', { 'X-Site-Ticket': await siteTicket() })).json();
+    const activePayload = await (await get('/api/visitors/active')).json();
     check('/api/visitors/active is exactly { active, at }',
       Object.keys(activePayload).sort().join(',') === 'active,at', JSON.stringify(activePayload));
     check('no address text anywhere in the public payloads',
@@ -368,26 +351,18 @@ function openPresenceStream() {
     // ── the shipped constants (test overrides are for speed only) ────────
     const serverSource = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
     const ttlDefault = /PRESENCE_TTL_MS\s*=\s*Number\(process\.env\.PRESENCE_TTL_MS\s*\|\|\s*([0-9_]+)\)/.exec(serverSource);
-    const ttlMs = ttlDefault ? Number(ttlDefault[1].replace(/_/g, '')) : 0;
-    check('the shipped window is sized for two-minute heartbeats (test override is 2.5s)',
-      ttlMs === 270000,
+    check('the shipped window default is 30s (test override is 2.5s)',
+      ttlDefault && Number(ttlDefault[1].replace(/_/g, '')) === 30000,
       ttlDefault ? ttlDefault[1] : 'constant not found');
-    const siteRoot = process.env.SITE_DIR || '/home/user/netlifyf1';
-    const siteSource = fs.readFileSync(path.join(siteRoot, 'app.js'), 'utf8');
-    const directBeat = /const INTERVAL = (\d+);/.exec(siteSource);
-    const runtimePath = path.join(siteRoot, 'runtime-config.js');
-    const runtimeBeat = fs.existsSync(runtimePath)
-      ? /heartbeatMs:\s*(\d+)/.exec(fs.readFileSync(runtimePath, 'utf8'))
-      : null;
-    const beatMs = Number((runtimeBeat || directBeat || [0, 0])[1]);
-    check('two of the site\'s beat intervals fit in the presence window',
-      beatMs > 0 && beatMs * 2 <= ttlMs,
-      beatMs ? `${beatMs}ms` : 'beat interval not found');
+    const siteBeat = /const INTERVAL = (\d+);/.exec(fs.readFileSync(path.join(process.env.SITE_DIR || '/home/user/netlifyf1', 'app.js'), 'utf8'));
+    check('two of the site\'s beat intervals fit in the window, so one delayed beat cannot drop a browser',
+      Boolean(siteBeat) && Number(siteBeat[1]) * 2 <= 30000, siteBeat ? `${siteBeat[1]}ms` : 'beat interval not found');
     const graceDefault = /PRESENCE_LEAVE_GRACE_MS\s*=\s*Number\(process\.env\.PRESENCE_LEAVE_GRACE_MS\s*\|\|\s*([0-9_]+)\)/.exec(serverSource);
-    const graceMs = graceDefault ? Number(graceDefault[1].replace(/_/g, '')) : 0;
-    check('the goodbye grace exceeds one beat but stays below the presence window',
-      graceMs > beatMs && graceMs < ttlMs,
-      `grace=${graceMs}, beat=${beatMs}, ttl=${ttlMs}`);
+    check('the shipped goodbye grace is longer than a beat interval, so closing one tab of two never drops the browser',
+      graceDefault && Boolean(siteBeat) &&
+        Number(graceDefault[1].replace(/_/g, '')) > Number(siteBeat[1]) &&
+        Number(graceDefault[1].replace(/_/g, '')) < 30000,
+      graceDefault ? `grace=${graceDefault[1]}, beat=${siteBeat && siteBeat[1]}` : 'constant not found');
 
     /* ── budgets are per viewer, not per address ──────────────────────────
        Two viewers behind one address used to share one budget, so the
