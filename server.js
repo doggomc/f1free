@@ -13,6 +13,7 @@ const path = require('path');
    request rather than stored anywhere. */
 const cdnlivetvRelay = require('./lib/cdnlivetv-relay.js');
 const cdnlivetvPlayer = require('./lib/cdnlivetv-player.js');
+const strmfreeRelay = require('./lib/strmfree-relay.js');
 
 const app = express();
 
@@ -362,7 +363,8 @@ const FEED_SOURCES = [
   { id: 'appletv', label: 'AppleTV' },
   { id: 'dazn', label: 'DAZN' },
   { id: 'wikisport', label: 'WikiSport' },
-  { id: 'cdnlivetv-f1', label: 'Sky F1 (CDN)' }
+  { id: 'cdnlivetv-f1', label: 'Sky F1 (CDN)' },
+  { id: 'strmfree-f1', label: 'Sky F1 (Mirror)' }
 ];
 const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
 
@@ -371,11 +373,37 @@ const FEED_SOURCE_IDS = new Set(FEED_SOURCES.map(source => source.id));
    a relay because the upstream hands out a signed playlist that dies in ~4h
    and cannot be rendered by an <iframe>. Adding one is: an id here, an entry
    in this table, and nothing else — the cockpit lists whatever the API serves.
-   `title` is what the player page shows; it never leaves the server as a URL. */
+   `title` is what the player page shows; it never leaves the server as a URL.
+
+   `path` is the /relay/<path>/m3u8 segment, `connect` the extra origins the
+   player page must be allowed to fetch segments from (a function where the
+   upstream picks the CDN per request). The cockpit does NOT pick these up from
+   the API — netlifyf1/app.js carries its own source list and must be updated
+   in step. */
 const RELAY_CHANNELS = {
-  'cdnlivetv-f1': { name: 'sky sports f1', code: 'gb', title: 'Sky Sports F1' }
+  'cdnlivetv-f1': {
+    path: 'cdnlivetv',
+    name: 'sky sports f1', code: 'gb',
+    title: 'Sky Sports F1',
+    relay: cdnlivetvRelay,
+    connect: [cdnlivetvRelay.CDN_ORIGIN]
+  },
+  'strmfree-f1': {
+    path: 'strmfree',
+    name: 'skyf1', code: '1080p',
+    title: 'Sky Sports F1 (Mirror)',
+    relay: strmfreeRelay,
+    /* Which CDN serves segments is decided upstream per request, so it is
+       read at player-page time rather than baked into the policy. */
+    connect: () => [strmfreeRelay.cdnOrigin()]
+  }
 };
 const RELAY_SOURCE_IDS = new Set(Object.keys(RELAY_CHANNELS));
+/* Look a channel up by its /relay/<path> segment. */
+const relayChannelByPath = (p) =>
+  Object.values(RELAY_CHANNELS).find((c) => c.path === String(p || '')) || null;
+const relayConnectOrigins = (channel) =>
+  typeof channel.connect === 'function' ? channel.connect() : (channel.connect || []);
 const sourceConfig = { disabled: new Set(), updatedAt: null };
 let sourceStoreReady = false;
 let sourceInitPromise = Promise.resolve(false);
@@ -457,6 +485,20 @@ const SITE_TICKET_FREE_PATHS = new Set([
 const STREAM_TICKET_TTL_MS = Number(process.env.STREAM_TICKET_TTL_MS || 60 * 60 * 1000);
 const STREAM_TICKET_RATE_MAX = Number(process.env.STREAM_TICKET_RATE_MAX || 120);
 const DISCORD_CODE_RATE_MAX = Number(process.env.DISCORD_CODE_RATE_MAX || 20);
+/* Shown in the link dialog so a visitor who is not in the server yet has
+   somewhere to go. Only ever rendered as an <a href>, so a bad value is a
+   dead link, not an injection risk — but it is still restricted to discord
+   hosts so a mistyped env var cannot point members somewhere hostile. */
+const DISCORD_INVITE_URL = (() => {
+  const raw = String(process.env.DISCORD_INVITE || 'https://discord.gg/KYXHCAzhN4').trim();
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'https:') return 'https://discord.gg/KYXHCAzhN4';
+    if (u.hostname !== 'discord.gg' && u.hostname !== 'discord.com' &&
+        !u.hostname.endsWith('.discord.com')) return 'https://discord.gg/KYXHCAzhN4';
+    return u.toString();
+  } catch (_) { return 'https://discord.gg/KYXHCAzhN4'; }
+})();
 /* The leave beacon fires per TAB, and a browser can have several. Closing one
    of two tabs must not drop the browser, so a goodbye only ends the count if
    no heartbeat follows it — and the grace is deliberately longer than the
@@ -546,7 +588,7 @@ function buildCsp(overrides = {}) {
     ["script-src 'self' 'unsafe-inline'", ...extraScript].join(' '),
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
-    "img-src 'self' data: https://media.formula1.com",
+    "img-src 'self' data: https://media.formula1.com https://cdn.discordapp.com",
     ["connect-src 'self' https://f1free.onrender.com https://api.jolpi.ca", ...extraConnect].join(' '),
     // 'self' matters now the player frames the site's own /stream/<ticket>
     // alias; any https feed host is still allowed by the scheme source.
@@ -929,6 +971,22 @@ function isSecureRequest(req) {
 
 async function hasDiscordAccess(req) {
   if (!DISCORD_LINK_REQUIRED) return { linked: true, bypass: true };
+  return discordLink.checkRequest(req);
+}
+
+/* The player page is framed cross-site, and iOS/Safari block third-party
+   cookies inside such an iframe, so the link cookie often never arrives and
+   an otherwise entitled member is refused. The stream ticket is signed by
+   this server, so a uid inside it is just as trustworthy and always reaches
+   the player.
+
+   The store is consulted on every call rather than trusting the ticket's
+   lifetime, so /unlink still revokes the very next request instead of letting
+   a ticket outlive the account by an hour. */
+async function resolveRelayAccess(req, ticketUid) {
+  if (!DISCORD_LINK_REQUIRED) return { linked: true, bypass: true };
+  const uid = String(ticketUid || '').trim();
+  if (uid) return discordLink.checkUid(uid);
   return discordLink.checkRequest(req);
 }
 
@@ -1553,11 +1611,12 @@ function verifyTicket(kind, ticket) {
   }
 }
 
-function createStreamTicket(sourceId, ttlMs = STREAM_TICKET_TTL_MS) {
+function createStreamTicket(sourceId, ttlMs = STREAM_TICKET_TTL_MS, extra = null) {
   return signTicket('stream-ticket', {
     i: sourceId,
     n: crypto.randomBytes(8).toString('hex'),
-    e: Date.now() + ttlMs
+    e: Date.now() + ttlMs,
+    ...(extra || {})
   });
 }
 
@@ -1567,7 +1626,15 @@ function verifyStreamTicket(ticket) {
   const id = String(verified.payload.i);
   // 'override' is the operator's own feed: same ticket rules, different store.
   if (!FEED_SOURCE_IDS.has(id) && id !== OVERRIDE_SOURCE_ID) return null;
-  return { sourceId: id, exp: Number(verified.payload.e) || 0, expired: verified.expired };
+  return {
+    sourceId: id,
+    exp: Number(verified.payload.e) || 0,
+    expired: verified.expired,
+    /* The linked account bound to this ticket, if any. Rebuilding the object
+       drops every claim it does not name, so this has to be carried through
+       explicitly — it is what lets the player work without a cookie. */
+    u: verified.payload.u ? String(verified.payload.u) : ''
+  };
 }
 
 /* ── Site tickets: one permission per browser session ───────────────────── */
@@ -3299,7 +3366,7 @@ app.post('/api/discord/link-code', async (req, res, next) => {
     const result = await discordLink.createCode();
     if (result.error) return res.status(503).json({ error: result.error });
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ code: result.code, expiresAt: result.expiresAt, ttlMs: discordLink.CODE_TTL_MS });
+    res.json({ code: result.code, expiresAt: result.expiresAt, ttlMs: discordLink.CODE_TTL_MS, inviteUrl: DISCORD_INVITE_URL });
   } catch (error) { next(error); }
 });
 
@@ -3362,6 +3429,7 @@ app.post('/api/stream/ticket', async (req, res, next) => {
     if (!FEED_SOURCE_IDS.has(sourceId) && sourceId !== OVERRIDE_SOURCE_ID) {
       return res.status(400).json({ error: 'Unknown source id.' });
     }
+    let relayAccess = null;
     if (RELAY_SOURCE_IDS.has(sourceId)) {
       /* Played by this server, so there is no provider target to check: the
          playlist is minted on demand at /relay/cdnlivetv/m3u8. Everything else
@@ -3374,6 +3442,7 @@ app.post('/api/stream/ticket', async (req, res, next) => {
           message: 'This source is limited to linked Discord accounts.'
         });
       }
+      relayAccess = access;
     } else if (sourceId === OVERRIDE_SOURCE_ID) {
       await overrideInitPromise;
       if (!streamOverride.active || !streamOverride.url) {
@@ -3388,7 +3457,10 @@ app.post('/api/stream/ticket', async (req, res, next) => {
         return res.status(400).json({ error: 'Missing or invalid parameters for that source.' });
       }
     }
-    const ticket = createStreamTicket(sourceId);
+    /* Bind the linked account to the ticket so the player can identify it
+       without a cookie. Only set for gated sources — the rest need nothing. */
+    const ticket = createStreamTicket(sourceId, STREAM_TICKET_TTL_MS,
+      relayAccess && relayAccess.userId ? { u: relayAccess.userId } : null);
     res.setHeader('Cache-Control', 'no-store');
     res.json({ href: `/stream/${ticket}`, expiresAt: Date.now() + STREAM_TICKET_TTL_MS });
   } catch (error) {
@@ -3432,12 +3504,12 @@ app.get('/stream/:ticket', async (req, res, next) => {
        playlist from /relay/cdnlivetv/m3u8. Same ticket, same expiry — only the
        thing handed to the browser changes. */
     if (RELAY_SOURCE_IDS.has(decoded.sourceId)) {
-      const access = await hasDiscordAccess(req);
+      const access = await resolveRelayAccess(req, decoded.u);
       if (!access.linked) {
         return res.status(403).type('text/plain')
           .send('This source is limited to linked Discord accounts. Open it from the site to link yours.');
       }
-      return sendRelayPlayer(res, decoded.sourceId);
+      return sendRelayPlayer(res, decoded.sourceId, decoded.u);
     }
     const url = decoded.sourceId === OVERRIDE_SOURCE_ID
       ? (streamOverride.active && streamOverride.url ? streamOverride.url : null)
@@ -3485,12 +3557,22 @@ const RELAY_PLAYBACK_TTL_MS = Number(process.env.RELAY_PLAYBACK_TTL_MS || 12 * 6
    handed out (which only happens after a real stream ticket is redeemed),
    scoped to one source, and expiring. Same shape as every other ticket in this
    file, kept apart by its kind. */
-function createRelayTicket(sourceId, ttlMs = RELAY_PLAYBACK_TTL_MS) {
+function createRelayTicket(sourceId, ttlMs = RELAY_PLAYBACK_TTL_MS, extra = null) {
   return signTicket('relay-ticket', {
     i: sourceId,
     n: crypto.randomBytes(8).toString('hex'),
-    e: Date.now() + ttlMs
+    e: Date.now() + ttlMs,
+    ...(extra || {})
   });
+}
+
+/* Same verification as verifyRelayTicket, but hands back the payload so the
+   route can read the claims it carries. */
+function verifyRelayTicketPayload(ticket, sourceId) {
+  const verified = verifyTicket('relay-ticket', ticket);
+  if (!verified || verified.expired) return null;
+  if (String(verified.payload.i) !== sourceId) return null;
+  return verified.payload;
 }
 
 function verifyRelayTicket(ticket, sourceId) {
@@ -3507,7 +3589,7 @@ function siteOriginForCsp() {
 
 /* The iframe target for a relay source. Deliberately not a redirect: the frame
    has to stay on this origin for its playlist fetch to be same-origin. */
-function sendRelayPlayer(res, sourceId) {
+function sendRelayPlayer(res, sourceId, linkedUid) {
   const channel = RELAY_CHANNELS[sourceId];
   if (!channel) return res.status(503).send('That source is not available right now.');
   res.setHeader('Cache-Control', 'no-store');
@@ -3516,7 +3598,7 @@ function sendRelayPlayer(res, sourceId) {
     // The cockpit frames this page from the site's origin.
     frameAncestors: `'self' ${siteOriginForCsp()}`,
     // hls.js fetches the manifest from us and the segments from the CDN.
-    extraConnect: [cdnlivetvRelay.CDN_ORIGIN],
+    extraConnect: relayConnectOrigins(channel),
     // MediaSource Extensions attach via a blob: url, and hls.js runs its
     // demuxer in a Worker created from one. Without blob: in script-src the
     // worker is refused and hls.js quietly falls back to the main thread.
@@ -3525,23 +3607,33 @@ function sendRelayPlayer(res, sourceId) {
   }));
   res.type('html').send(cdnlivetvPlayer.buildPlayerPage({
     title: channel.title || 'Live stream',
-    src: `/relay/cdnlivetv/m3u8?t=${encodeURIComponent(createRelayTicket(sourceId))}`
+    /* Carry the linked account into the playback ticket too: the playlist is
+       fetched by the framed player, so it has the same cookie problem. */
+    src: `/relay/${channel.path}/m3u8?t=${encodeURIComponent(
+      createRelayTicket(sourceId, RELAY_PLAYBACK_TTL_MS,
+        linkedUid ? { u: linkedUid } : null))}`
   }));
 }
 
-app.get('/relay/cdnlivetv/m3u8', async (req, res, next) => {
+/* One route serves every relay channel: the path segment picks the channel, so
+   adding a source needs no new route and no new gating logic. */
+app.get('/relay/:channel/m3u8', async (req, res, next) => {
   try {
+    const channel = relayChannelByPath(req.params.channel);
+    if (!channel) return res.status(404).type('text/plain').send('Unknown relay channel.');
+    const sourceId = Object.keys(RELAY_CHANNELS).find((id) => RELAY_CHANNELS[id] === channel);
     /* Accepted callers: the site itself (authorized browser origin), or the
        player page this server handed out, presenting its playback ticket. */
     const playbackTicket = String(req.query.t || '').slice(0, 400);
-    if (!isBrowserSiteRequest(req) && !verifyRelayTicket(playbackTicket, 'cdnlivetv-f1')) {
+    const relayPayload = verifyRelayTicketPayload(playbackTicket, sourceId);
+    if (!isBrowserSiteRequest(req) && !relayPayload) {
       return res.status(403).type('text/plain')
         .send('Relay playlists are only served to the site or to the player it frames.');
     }
     /* The player page only exists for a browser that already passed the check
        at /stream/<ticket>, but the playlist is its own route and can be called
        directly with a ticket, so it is checked here too. */
-    const access = await hasDiscordAccess(req);
+    const access = await resolveRelayAccess(req, relayPayload && relayPayload.u);
     if (!access.linked) {
       return res.status(403).type('text/plain')
         .send('This source is limited to linked Discord accounts.');
@@ -3551,8 +3643,7 @@ app.get('/relay/cdnlivetv/m3u8', async (req, res, next) => {
       res.setHeader('Retry-After', String(Math.ceil(VISITOR_RATE_LIMIT_WINDOW_MS / 1000)));
       return res.status(429).type('text/plain').send('Too many relay requests. Try again later.');
     }
-    const channel = RELAY_CHANNELS['cdnlivetv-f1'];
-    const { playlist } = await cdnlivetvRelay.getPlaylist(channel.name, channel.code);
+    const { playlist } = await channel.relay.getPlaylist(channel.name, channel.code);
     res.setHeader('Cache-Control', 'no-store');
     res.type('application/vnd.apple.mpegurl').send(playlist);
   } catch (error) {
@@ -4663,7 +4754,7 @@ if (process.env.DISCORD_BOT_TOKEN) {
       token: process.env.DISCORD_BOT_TOKEN,
       guildId: process.env.DISCORD_GUILD_ID || '',
       siteUrl: process.env.SITE_URL || 'https://freef1.netlify.app',
-      discordInvite: process.env.DISCORD_INVITE || 'https://discord.gg/KYXHCAzhN4',
+      discordInvite: DISCORD_INVITE_URL,
       ownerId: process.env.DISCORD_OWNER_ID || '',
       readLocalJson,
       writeLocalJson,

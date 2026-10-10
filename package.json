@@ -7,7 +7,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "check": "npm run check:syntax && npm run check:targets && npm run check:unit && npm run check:browser && npm run check:site && npm run check:maintenance && npm run check:rounds && npm run check:admin && npm run check:security && npm run check:motion && npm run check:csp && npm run check:relay",
-    "check:syntax": "node --check server.js && node --check admin/admin.js && node --check admin/charts.js && node --check admin/analytics.js && node --check bot/discord-bot.js && node --check bot/voice-relay.js && node --check lib/discord-link.js && node --check lib/cdnlivetv-relay.js && node --check lib/cdnlivetv-player.js && node --check scripts/security-check.js && node --check scripts/csp-check.js && node --check scripts/round-meeting-check.js && node --check scripts/motion-check.js && node --check scripts/discord-link-check.js && node --check scripts/cdnlivetv-check.js && node --check scripts/discord-gate-check.js",
+    "check:syntax": "node --check server.js && node --check admin/admin.js && node --check admin/charts.js && node --check admin/analytics.js && node --check bot/discord-bot.js && node --check bot/voice-relay.js && node --check lib/discord-link.js && node --check lib/cdnlivetv-relay.js && node --check lib/cdnlivetv-player.js && node --check lib/strmfree-relay.js && node --check scripts/security-check.js && node --check scripts/csp-check.js && node --check scripts/round-meeting-check.js && node --check scripts/motion-check.js && node --check scripts/discord-link-check.js && node --check scripts/cdnlivetv-check.js && node --check scripts/discord-gate-check.js && node --check scripts/discord-revoke-check.js && node --check scripts/strmfree-check.js",
     "check:targets": "node scripts/targets-check.js",
     "targets": "node scripts/targets-check.js",
     "check:unit": "node scripts/smoke-test.js && node scripts/presence-check.js && node scripts/preview-auth-check.js && node scripts/race-times-check.js && node scripts/visitor-counter-check.js",
@@ -32,7 +32,9 @@
     "check:motion": "node scripts/motion-check.js",
     "motion": "node scripts/motion-check.js",
     "check:discord": "node scripts/discord-link-check.js",
-    "check:gate": "node scripts/discord-gate-check.js"
+    "check:gate": "node scripts/discord-gate-check.js",
+    "check:revoke": "node scripts/discord-revoke-check.js",
+    "check:strmfree": "node scripts/strmfree-check.js"
   },
   "engines": {
     "node": ">=18.11"
