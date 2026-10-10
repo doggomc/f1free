@@ -1,270 +1,194 @@
-# Render environment (f1free)
+# Render deployment
 
-Analytics, unique visitors, news and maintenance **reset on every rebuild** unless Redis is configured. Render’s disk is ephemeral.
+`render.yaml` is the production definition. It is tuned for one 512 MB Render
+web service and a small monthly egress allowance:
 
-## Required (production will refuse to boot without these)
+- one Node process with a 384 MB old-space ceiling;
+- production-only dependencies (`npm ci --omit=dev --omit=optional`);
+- no ffmpeg/native voice packages;
+- no HLS/media relay routes (the retired routes return a tiny `410`);
+- provider-hosted stream targets are redirects, so media never crosses Render;
+- 1,200 public SSE connections by default, capped at 2,000;
+- geolocation is off by default in the Blueprint;
+- `/readyz` is the Render readiness check; `/healthz` remains a lightweight
+  process-liveness endpoint.
 
-| Key | What it is |
+## 1. Create the service
+
+Use **New → Blueprint** in Render and select this repository. The Blueprint
+asks for values marked `sync: false`.
+
+Required values:
+
+| Key | Value |
 | --- | --- |
-| `NODE_ENV` | `production` |
-| `ADMIN_USER` | Admin dashboard login |
-| `ADMIN_PASS` | Long random password |
-| `ADMIN_SECRET` | 64 hex chars — signs the admin cookie |
-| `VISITOR_SECRET` | Random string — signs visitor heartbeat tokens |
-| `UNIQUE_VISITOR_HASH_SECRET` | Random string — unique-visitor identity. **Do not rotate** or the all-time count resets |
-| `AUTHORIZED_DOMAIN` | `freef1.netlify.app` |
-| `ALLOWED_ORIGIN` | `https://freef1.netlify.app` |
-| `TRUST_PROXY_HOPS` | `1` on Render (`2` if Cloudflare sits in front) — see below |
-| `UPSTASH_REDIS_REST_URL` | Upstash REST URL |
-| `UPSTASH_REDIS_REST_TOKEN` | Upstash REST token |
-| `STREAM_TARGETS_JSON` | **Optional** override for where each feed plays — see below. The repo already ships the addresses in `data/stream-targets.json`, so a fresh deploy plays with no host configuration at all |
-| (nothing else) | The API permission needs no configuration: `/api` is closed by default and the site mints its own ticket |
+| `ADMIN_USER` | A non-default admin name |
+| `ADMIN_PASS` | A random password of at least 12 characters |
+| `REDIS_URL` | A TLS Redis/Valkey connection URL (recommended: a free Redis Cloud database) |
 
-Create the Redis DB: [Upstash](https://console.upstash.com/) → Redis → Create → copy **REST URL** and **REST TOKEN**.
+The Blueprint generates `ADMIN_SECRET`, `VISITOR_SECRET`,
+`UNIQUE_VISITOR_HASH_SECRET`, and `SELFCHECK_TOKEN`. Do not rotate
+`UNIQUE_VISITOR_HASH_SECRET`: it defines the anonymous all-time visitor hashes.
+Production refuses blank, short, default, or obvious placeholder secrets.
 
-### The feed addresses — shipped in the repo, not in the site
-
-The site's JavaScript is public: anything in it can be copied in one request.
-So it no longer contains a single feed address. It holds ids and labels, asks
-this server for a short-lived signed alias at play time (`/api/stream/ticket` →
-`/stream/<ticket>`), and this server — which is where the addresses actually
-live — redirects the alias to the current target. Two consequences worth
-knowing:
-
-* rotating a feed is one value in the file (or one call to
-  `POST /admin/api/stream/targets`), and **every alias already handed out
-  follows the new target** — a list somebody copied last week is worthless;
-* a value that is missing or wrong makes that feed show as unavailable, because
-  there is no longer a hardcoded fallback in the browser.
-
-The addresses travel with the backend in `data/stream-targets.json`, which is
-committed on purpose (it is the one exception to the `data/*` ignore rule).
-Deploy the repo and it plays — there is nothing to configure on the host. The
-override below is only for rotating an address without touching the repo.
-
-```jsonc
-STREAM_TARGETS_JSON={
-  "sky-sports-f1": "https://…/embed/44.php",
-  "westream":     "https://…/westreamf1.php",
-  "sky-uk-2":     "https://…/shopping2/?channel_id=sky_sport_f1_uk",
-  "sky-uk":       "https://…/embed/racing/skyf1",
-  "f1tv":         "https://…/embed/f1/{season}/{eventSlug}/{sessionSlug}",
-  "appletv":      "https://…/embed/admin/{eastSlug}/3",
-  "dazn":         "https://…/embed/admin/{eastSlug}/5",
-  "wikisport":    "https://…/strm/f1.php"
-}
-```
-
-Values must be `https` (production refuses plain `http`; `http://127.0.0.1/…` is
-accepted off production so tests can point at a stub). The placeholders —
-`{season}`, `{eventSlug}`, `{sessionSlug}`, `{eastSlug}` — are filled from the
-session on screen, and each one is validated by shape before it is substituted,
-so a client cannot steer a redirect anywhere else. The ids are the eight above;
-a build that renames one simply stops receiving a target for it.
-
-The file is read from `DATA_DIR`, which defaults to `data/` inside the repo, so
-a Render deploy picks it up as-is. One caveat comes with committing it: the
-addresses are now in the repo's history, and they are exactly as private as the
-repository is. If the repository is public, keep them in `STREAM_TARGETS_JSON`
-instead — that variable wins over the file, so a real secret stays out of git.
-
-Related tuning: `STREAM_TICKET_TTL_MS` (alias lifetime, default 1h),
-`STREAM_TICKET_RATE_MAX` (aliases per address per hour, default `120`),
-`STREAM_TICKETS=false` (refuse every alias while swapping providers).
-
-### The API is closed by default
-
-Everything under `/api` now needs a **site ticket**: `POST /api/site/ticket` →
-`{ ticket, expiresAt }`, minted only for a request carrying the site's own
-authorized `Origin`/`Referer` (a browser on the site), budgeted per address
-(60/hour). The page asks once per session, keeps it, and presents it as
-`X-Site-Ticket` — in `?ticket=` for `/api/events`, since an EventSource cannot
-set headers. A clone or a script has no ticket, so it gets `403` instead of your
-news, standings, schedule timing or feed list.
-
-Free of the gate, on purpose:
-
-| path | why |
-| --- | --- |
-| `/api/site/status` · `/api/auth/verify` | the page must be able to learn it is in maintenance *before* it can hold a ticket |
-| `/api/stream/ticket` · `/api/visitors/token` | they *are* permissions (own origin gate + budget) |
-| `/api/visitors/heartbeat` · `/event` · `/leave` | carry a signed visitor token, minted the same way |
-
-**Two knobs, and one escape hatch:**
-
-* `SITE_TICKET_TTL_MS` — how long a permission lasts (default 6h; the page
-  refreshes before it expires).
-* `SITE_TICKET_RATE_MAX` — mints per address per hour (default `60`).
-* `SITE_TICKETS=false` — switch the whole gate off instantly, without touching
-  the site. Use it if a deploy ever goes out in the wrong order (below).
-
-### `TRUST_PROXY_HOPS` — do not skip this
-
-Every rate limit, the admin login lockout and the unique-visitor budget key off
-the client IP. The server only trusts as many proxy hops as this says, which is
-what makes that IP unforgeable:
-
-| Topology | Value |
-| --- | --- |
-| Render alone (current) | `1` (default in production) |
-| Cloudflare → Render | `2` |
-| Local dev / direct | `0` |
-
-Get it wrong the other way — larger than reality — and `X-Forwarded-For` becomes
-client-controlled again, which is exactly how the login limiter used to be
-bypassable with one header. If you put a CDN in front, raise this in the same
-change. Log line at boot: `[Server] Trusted proxy hops: N`.
-
-
-Do **not** set `DEV_DIR` to the API repo root. Leave it unset on Render (the public site is on Netlify).
-
-## Optional
-
-| Key | What it is |
-| --- | --- |
-| `UNIQUE_VISITOR_BASELINE` | Add once if you know the old unique-visitor total |
-| `DISCORD_BOT_TOKEN` | Bot token; omit to run with no bot |
-| `DISCORD_GUILD_ID` | Instant slash-command register |
-| `DISCORD_OWNER_ID` | Your Discord user id (bot will not start without this if the token is set) |
-| `DISCORD_INVITE` | `https://discord.gg/...` |
-| `SITE_URL` | `https://freef1.netlify.app` |
-| `OPENF1_API_KEY` | Optional OpenF1 key |
-| `FREEF1_AUDIO_URL` | Default `/watchparty` audio URL |
-| `PUBLIC_SSE_MAX` | Default `400` (global); `PUBLIC_SSE_MAX_PER_IP` defaults to `4` |
-| `ADMIN_IP_ALLOWLIST` | Optional: exact IPs / IPv4 CIDRs allowed to reach `/admin`. Everyone else gets a 404 |
-| `ADMIN_PASS_MIN_LENGTH` | Default `12` — production refuses to boot below it |
-| `LOGIN_MAX_FAILURES` / `LOGIN_BASE_LOCK_MS` / `LOGIN_MAX_LOCK_MS` | Login lockout tuning (5 failures, 15m doubling to a 6h cap) |
-| `NEW_IDENTITY_BUDGET_PER_IP_HOUR` | Max new visitor identities one address adds to the all-time total per hour (default `60`) |
-| `JOLPI_MAX_PER_MINUTE` | Shared upstream budget for the free Jolpica API (default `120`) |
-| `OPENF1_CACHE_MAX` / `OPENF1_SNAPSHOT_MAX` / `CAREER_CACHE_MAX` | LRU cache ceilings (defaults `400` / `400` / `200`) |
-| `OPENF1_SNAPSHOT_WRITES_PER_DAY` | Durable OpenF1 snapshot writes per day (default `2000`) |
-
-Generate hex secrets:
+If configuring the service manually instead of using the Blueprint, copy
+[`render.env.example`](render.env.example), fill its blank values, and import it
+through **Render → Environment → Add from .env**. Generate each secret separately:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Run that three times for `ADMIN_SECRET`, `VISITOR_SECRET`, `UNIQUE_VISITOR_HASH_SECRET`.
+Do not set `PORT` or `RENDER`; Render supplies both.
 
-Always set `UNIQUE_VISITOR_HASH_SECRET` explicitly: without it visitor hashes
-fall back to `VISITOR_SECRET`, so rotating that secret resets the all-time
-unique total (the boot log warns about this).
+The production process refuses to start if the admin secrets or durable store
+are missing. Render's filesystem is ephemeral, so silently falling back to a
+local JSON file would lose analytics, settings, and visitor totals on deploy.
 
-## Testing the deploy
+### Existing Upstash deployment
+
+The application now prefers the provider-neutral `REDIS_URL`. The legacy
+Upstash REST variables still work during migration; `REDIS_URL` wins if both are
+present.
+
+Inventory the old database without writing anything:
 
 ```bash
-npm run check            # full gate: syntax, unit, browser, site, admin, security, relay
-npm run check:security   # abuse-resistance only (rate limits, lockout, origin gate)
+UPSTASH_REDIS_REST_URL='https://…' \
+UPSTASH_REDIS_REST_TOKEN='…' \
+REDIS_URL='rediss://…' \
+npm run migrate:redis
 ```
 
-`npm run check:site` reads `../netlifyf1` by default — set `SITE_DIR` if the
-site lives elsewhere. The relay check prints `skip` when the optional voice
-packages are absent, so a skip is never mistaken for a pass.
+Then copy all `freef1:*` strings, sets, hashes, and expirations:
 
----
+```bash
+UPSTASH_REDIS_REST_URL='https://…' \
+UPSTASH_REDIS_REST_TOKEN='…' \
+REDIS_URL='rediss://…' \
+npm run migrate:redis -- --apply
+```
 
-## The cdnlivetv relay (source `cdnlivetv-f1`)
+Deploy with only `REDIS_URL`. Keep the old database until `/readyz` returns
+`200`, `/healthz` reports `"redis"` for all stores, and the admin analytics are
+present.
 
-Eight of the feeds are ordinary provider pages: the server holds an address and
-`/stream/<ticket>` redirects the browser to it. `cdnlivetv-f1` is different —
-it is played by **this server** rather than redirected to.
+## 2. Environment details
 
-### Why it cannot be a target like the others
+The Blueprint supplies the normal values:
 
-Two reasons, both forced by the browser:
+| Key | Blueprint value |
+| --- | --- |
+| `NODE_ENV` | `production` |
+| `NODE_OPTIONS` | `--max-old-space-size=384` |
+| `TRUST_PROXY_HOPS` | `1` (Render's router) |
+| `CLIENT_IP_HEADER` | `cf-connecting-ip` |
+| `AUTHORIZED_DOMAIN` | `freef1.netlify.app` |
+| `ALLOWED_ORIGIN` | `https://freef1.netlify.app` |
+| `SITE_URL` | `https://freef1.netlify.app` |
+| `PUBLIC_SSE_MAX` | `1200` |
+| `PUBLIC_SSE_MAX_PER_IP` | `32` |
+| `SSE_HEARTBEAT_MS` | `25000` |
+| `PRESENCE_TTL_MS` / `HEARTBEAT_TIMEOUT_MS` | `270000` / `270000` |
+| `PRESENCE_LEAVE_GRACE_MS` | `125000` |
+| `STREAM_TICKETS` / `SITE_TICKETS` | `true` / `true` |
+| `GEO_ENABLED` | `false` |
 
-1. **The upstream playlist is signed and short-lived.** It expires ~4 hours
-   after it is minted. Tampering is pointless — pushing the expiry out, blanking
-   the signature or swapping the domain all come back `403 Invalid token
-   signature`. A stored address would be dead within the hour.
-2. **An `<iframe>` cannot render an `.m3u8`.** The cockpit frames every source,
-   and a browser handed a playlist offers it as a download. So the frame has to
-   receive a *document* that plays HLS inside it.
+Set `TRUST_PROXY_HOPS=2` only if another reverse proxy is placed in front of
+Render. Setting it higher than the real proxy count makes client-address rate
+limits forgeable; setting it lower makes viewers share the router's address.
 
-So the relay mints a token on demand (cheap, unlimited, ~4h each), caches it per
-channel and refreshes it 5 minutes before it expires, then serves that document.
+Useful optional values:
 
-### What it adds
+| Key | Purpose |
+| --- | --- |
+| `DISCORD_BOT_TOKEN` | Enables the companion bot |
+| `DISCORD_GUILD_ID` / `DISCORD_OWNER_ID` | Bot scope and owner commands |
+| `DISCORD_INVITE` | Public invite URL |
+| `OPENF1_API_KEY` | Raises upstream OpenF1 limits |
+| `ADMIN_IP_ALLOWLIST` | Comma-separated exact IPv4/CIDR admin allowlist |
+| `STREAM_TARGETS_JSON` | Overrides the shipped provider redirect targets |
+| `STREAM_TICKETS=false` | Emergency playback kill switch |
+| `SITE_TICKETS=false` | Emergency API-gate escape hatch |
 
-| Route | Purpose |
-|---|---|
-| `/stream/<ticket>` | for a relay source: the player page (HTML, hls.js inlined) instead of a redirect |
-| `/relay/cdnlivetv/m3u8?t=…` | the live playlist, segments rewritten to absolute urls |
-| `node scripts/cdnlivetv-check.js` | four-hop diagnostic: player page → token → playlist → segment |
+Do not set `DEV_DIR` in production. The public site belongs on Netlify; serving
+its assets from Render would spend the limited Render bandwidth.
 
-**It does not proxy the video.** Only the ~2 KB playlist crosses this server;
-segment urls are rewritten to absolute `https://cdnlivetv.tv/…` so the viewer's
-browser fetches the video directly. A full race weekend costs the instance a few
-megabytes, not a stream.
+## 3. Deploy the matching Netlify client
 
-### Permission model
+This checkout cannot commit to the separate `doggomc/netlifyf1` repository, so
+its tested client change is provided as an apply-ready patch:
 
-The playlist route is the one relay path reachable without a stream ticket, so
-it accepts exactly two callers:
+```bash
+cd /path/to/netlifyf1
+git apply /path/to/f1free/patches/netlifyf1-scale.patch
+git diff --check
+```
 
-* the site itself — an authorized browser origin (`ALLOWED_ORIGIN`);
-* the player page this server handed out, presenting the playback ticket that
-  was minted into it when the page was served.
+The patch:
 
-The playback ticket is scoped to one source and lasts `RELAY_PLAYBACK_TTL_MS`
-(default 12h — longer than the 1h stream ticket, because a race with a red-flag
-delay runs past it). It is only obtainable by redeeming a real stream ticket, so
-the relay is no easier to harvest than any other source.
+- removes the retired `cdnlivetv-f1` and `strmfree-f1` buttons;
+- moves capacity values into `runtime-config.js`;
+- changes visible-tab presence from 15 seconds to 120 seconds;
+- requests a bodyless `204` heartbeat acknowledgement because SSE carries counts;
+- changes fallback polling from 30 seconds to 120 seconds (SSE remains live);
+- gives versioned JS/CSS/assets immutable browser caching;
+- adds a zero-build `netlify.toml`.
 
-The player page also needs a CSP the rest of the site does not: the cockpit
-frames it (`frame-ancestors` names the site), hls.js fetches the segments itself
-(`connect-src`), and MSE plus the demuxer worker need `blob:`. That is why
-`buildCsp()` takes overrides — the default policy stays byte-identical to
-`netlifyf1/_headers`, which `scripts/csp-check.js` diffs.
+The server's 270-second presence window tolerates one lost two-minute heartbeat.
+The 125-second shared-browser leave grace lets another tab send its next beat;
+a page's final leave beacon still removes it without waiting for the full
+presence window.
 
-### Tuning
+Deploy order: **Render first, Netlify second**. The backend already reports the
+old relay IDs disabled, so an older cached client cannot reactivate them.
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `RELAY_RATE_MAX` | `180` | playlist requests per address per minute (a viewer uses ~6) |
-| `RELAY_PLAYBACK_TTL_MS` | `43200000` | how long a player page's playback permission lasts |
+## Capacity model
 
-### Adding another relay channel
+At 1,000 visible browsers:
 
-1. add an id to `FEED_SOURCES` in `server.js`;
-2. **and** add the same id to the hardcoded `sources` array in
-   `netlifyf1/app.js` — the cockpit renders that list, not the API response.
-   `/api/stream/sources` only ever toggles `disabled`; it cannot add an entry,
-   so a back-end-only change leaves the source invisible;
-3. add `{ name, code, title }` for it to `RELAY_CHANNELS`;
-4. check it: `node scripts/cdnlivetv-check.js "BBC One" gb`.
+- two-minute heartbeats average about 8.3 requests/second instead of about 67;
+- successful heartbeat responses have no body; the SSE connection carries counts;
+- one SSE socket per browser replaces six 30-second polling loops;
+- one shared 25-second SSE keepalive timer avoids 1,000 per-client timers;
+- only small JSON/SSE/ticket responses cross Render;
+- static HTML, JS, CSS, fonts, and images are served by Netlify's CDN;
+- stream media is fetched from the configured provider after a `302` redirect.
 
-### Discord gate (Sky F1 (CDN))
+At the deliberately pessimistic assumption of 1,000 SSE connections open all
+month, the 13-byte keepalive payload is about 1.35 GB/month before transport
+framing; normal usage is lower because 1,000 is a peak, not a permanent floor.
+Bodyless heartbeats leave most of the 5 GB allowance for framing, headers, state
+changes, and deploy traffic. Monitor Render's measured outbound bandwidth: no
+application estimate can include provider-specific proxy framing exactly.
 
-The relay source is limited to visitors who have linked a Discord account.
+The API strips document-only headers from high-frequency responses and sends
+CORS negotiation headers only on preflights. This reduces recurring egress
+without weakening document CSP.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `DISCORD_LINK_REQUIRED` | `1` | set `0` to reopen the source without a code change |
-| `DISCORD_LINK_SECRET` | falls back to `ADMIN_SECRET` | signs the link cookie; set it so rotating `ADMIN_SECRET` does not log everyone out |
-| `DISCORD_BOT_TOKEN` | — | already required for the bot; `/link` and `/unlink` run inside it |
-| `DISCORD_GUILD_ID` | — | scopes slash-command registration; leave empty for global |
+The final local 1,000-client simulation (`npm run check:load`) opened all SSE
+sockets in 0.96 s, completed 1,000 signed heartbeats in 1.15 s, and measured
+133.2 MiB RSS (68.5 MiB baseline, +64.7 MiB). Treat this as a repeatable
+capacity regression check, not a substitute for Render's production metrics.
 
-Visitor flow: the site shows a 5-character code (30-minute expiry), the member
-runs `/link <code>` in a channel named **#link**, the site shows the profile
-back for confirmation, and a signed cookie is set. `/unlink` in #link deletes
-the account so every browser holding it loses access at once.
+## Verification
 
-The bot needs no privileged intents for this — `/link` and `/unlink` are slash
-commands, so Message Content stays off.
+Run the full cross-repository gate before deploying:
 
-Needs **two** front-end files on deploy: `app.js` and `app.css`.
+```bash
+SITE_DIR=/path/to/netlifyf1 npm ci
+SITE_DIR=/path/to/netlifyf1 npm run check
+```
 
-Verify with `npm run check:discord` (state machine, offline) and
-`node scripts/cdnlivetv-check.js` (upstream chain).
+After deployment:
 
-### Failure modes
+```bash
+curl -fsS https://freef1.onrender.com/healthz
+curl -fsS https://freef1.onrender.com/readyz
+curl -fsS "https://freef1.onrender.com/selfcheck?token=$SELFCHECK_TOKEN"
+```
 
-Run the check first. Its four hops fail differently:
-
-* **hop 1 (player page)** — this host is blocked or geo-fenced. Nothing to fix
-  in code; try another country code to tell the two apart.
-* **hop 2 (token)** — cdnlivetv changed their obfuscation. Update
-  `extractStreamUrl()` in `lib/cdnlivetv-relay.js`.
-* **hops 3–4** — transient, or the channel is offline.
+`/readyz` must return HTTP 200 with `durableReady` and `targetsReady` both true.
+`/healthz` must report `redis`, not `redis-connecting`, `file`, or `memory`.
+The self-check verifies Redis and the target catalog, confirms that self-hosted
+relays are retired, and intentionally does not proxy or probe media.

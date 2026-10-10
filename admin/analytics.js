@@ -153,8 +153,9 @@ const Analytics = (() => {
     $('analyticsRangeLabel').textContent = spec.label;
     const store = String(data.store || 'unknown').toUpperCase();
     const storeEl = $('analyticsStore');
-    storeEl.textContent = store === 'UPSTASH' ? '● Durable · Upstash' : store === 'FILE' ? '● Local file' : '● Memory only';
-    storeEl.className = `panel-badge ${store === 'UPSTASH' ? 'normal' : store === 'FILE' ? 'warn' : 'live'}`;
+    const durable = store === 'REDIS' || store === 'UPSTASH';
+    storeEl.textContent = store === 'REDIS' ? '● Durable · Redis' : store === 'UPSTASH' ? '● Durable · Upstash' : store === 'FILE' ? '● Local file' : '● Memory only';
+    storeEl.className = `panel-badge ${durable ? 'normal' : store === 'FILE' ? 'warn' : 'live'}`;
     $('analyticsSince').textContent = data.since ? `Collecting since ${F.fullDayFmt.format(data.since)}` : 'Collecting from the first heartbeat';
 
     // KPI cards ----------------------------------------------------------------

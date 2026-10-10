@@ -1,0 +1,57 @@
+services:
+  - type: web
+    name: freef1
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm ci --omit=dev --omit=optional
+    startCommand: npm start
+    healthCheckPath: /readyz
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=384
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: CLIENT_IP_HEADER
+        value: cf-connecting-ip
+      - key: AUTHORIZED_DOMAIN
+        value: freef1.netlify.app
+      - key: ALLOWED_ORIGIN
+        value: https://freef1.netlify.app
+      - key: SITE_URL
+        value: https://freef1.netlify.app
+      - key: PUBLIC_SSE_MAX
+        value: "1200"
+      - key: PUBLIC_SSE_MAX_PER_IP
+        value: "32"
+      - key: SSE_HEARTBEAT_MS
+        value: "25000"
+      - key: PRESENCE_TTL_MS
+        value: "270000"
+      - key: PRESENCE_LEAVE_GRACE_MS
+        value: "125000"
+      - key: HEARTBEAT_TIMEOUT_MS
+        value: "270000"
+      - key: STREAM_TICKETS
+        value: "true"
+      - key: SITE_TICKETS
+        value: "true"
+      - key: GEO_ENABLED
+        value: "false"
+      - key: ADMIN_USER
+        sync: false
+      - key: ADMIN_PASS
+        sync: false
+      - key: ADMIN_SECRET
+        generateValue: true
+      - key: VISITOR_SECRET
+        generateValue: true
+      - key: UNIQUE_VISITOR_HASH_SECRET
+        generateValue: true
+      - key: REDIS_URL
+        sync: false
+      - key: SELFCHECK_TOKEN
+        generateValue: true
