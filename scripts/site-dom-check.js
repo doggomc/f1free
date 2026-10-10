@@ -57,7 +57,7 @@ const requested = [];
    That is how the direct api.openf1.org calls (blocked in production, and
    never reachable anyway — OpenF1 sends no CORS headers) were found; a stub
    that answers any URL containing "openf1" cannot see that class of bug. */
-const CSP_HOSTS = new Set(['self', 'f1free.onrender.com', 'api.jolpi.ca']);
+const CSP_HOSTS = new Set(['self', 'freef1.onrender.com', 'f1free.onrender.com', 'api.jolpi.ca']);
 const blockedByCsp = [];
 
 const emptyJson = body => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });

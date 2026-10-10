@@ -50,13 +50,89 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  Client, GatewayIntentBits, Partials, ActionRowBuilder,
+  Client, GatewayIntentBits, IntentsBitField, Partials, ActionRowBuilder,
   ButtonBuilder, ButtonStyle, REST, Routes, Events, ActivityType,
 } = require('discord.js');
 /* Optional voice relay. Loaded lazily so the bot still boots (and the site
    still serves) when the voice packages are not installed. See
    bot/STREAMING.md for why this is audio-only. */
 const relayModule = require('./voice-relay.js');
+
+/* ── link channel naming (module scope so it is testable) ─────────────────
+   A server may call the channel #link or #links; both are accepted so renaming
+   it does not silently break /link. Decoration is tolerated. */
+const LINK_CHANNEL_NAMES = new Set(['link', 'links']);
+const normaliseChannelName = (name) =>
+  String(name || '').toLowerCase().replace(/^[#\s]+/, '').trim();
+const isLinkChannelName = (name) => LINK_CHANNEL_NAMES.has(normaliseChannelName(name));
+
+/* Prefer an exact `links` when a server has both. */
+function pickLinkChannel(channels) {
+  const list = Array.isArray(channels) ? channels : [];
+  const matches = list.filter((c) => c && isLinkChannelName(c && c.name));
+  if (!matches.length) return null;
+  return matches.find((c) => String(c.name).toLowerCase() === 'links') || matches[0];
+}
+
+/* The wording the announcements use. Kept pure so the exact strings are
+   asserted in tests rather than eyeballed. */
+function linkAnnouncementText(event) {
+  const id = (event && event.userId) || (event && event.profile && event.profile.id) || '';
+  const mention = id
+    ? `<@${id}>`
+    : ((event && event.profile && (event.profile.globalName || event.profile.username)) || 'Someone');
+  if (!event) return `${mention} has unlinked their account.`;
+  if (event.type === 'linked') return `${mention} has linked their account.`;
+  if (event.reason === 'left') return `${mention} has left and access was revoked.`;
+  return `${mention} has unlinked their account.`;
+}
+
+/* Decides whether a failed login is the privileged-intent refusal (recover:
+   drop the bit and retry) or a genuine misconfiguration (bad token, no
+   OWNER_ID — retrying would just loop). Module scope so it is testable. */
+function isDisallowedIntentError(error) {
+  const msg = String((error && error.message) || error);
+  return /disallowed intent|privileged intent|4014|Used disallowed intents/i.test(msg);
+}
+
+/* Where the announcements go. Prefers an exact `links` so a server with both
+   gets them in the one this was asked for. Falls back to the cache when the
+   fetch is not permitted. */
+async function findLinkChannel(guild) {
+  if (!guild || !guild.channels) return null;
+  let list = [];
+  try {
+    const fetched = await guild.channels.fetch();
+    list = fetched && fetched.values ? [...fetched.values()] : [];
+  } catch (_) {
+    list = guild.channels.cache && guild.channels.cache.values
+      ? [...guild.channels.cache.values()] : [];
+  }
+  return pickLinkChannel(list.filter((c) => typeof c.isTextBased === 'function' && c.isTextBased()));
+}
+
+/* Announce a link event in the server's link channel. Best effort and fully
+   swallowed: a missing channel, no permission to speak, or a client that has
+   not connected yet must never surface as a failed link to the member. */
+async function announceLinkEvent(client, deps, event) {
+  const log = (deps && deps.log) || ((...a) => console.log('[Bot]', ...a));
+  try {
+    if (!event || !client || typeof client.isReady !== 'function' || !client.isReady()) return false;
+    const guildId = (event.profile && event.profile.guildId) || String((deps && deps.guildId) || '');
+    const guilds = client.guilds && client.guilds.cache;
+    const guild = guildId && guilds
+      ? guilds.get(guildId)
+      : (guilds && typeof guilds.first === 'function' ? guilds.first() : null);
+    if (!guild) { log('no guild to announce in'); return false; }
+    const channel = await findLinkChannel(guild);
+    if (!channel) { log('no #link/#links channel to announce in'); return false; }
+    await channel.send(linkAnnouncementText(event));
+    return true;
+  } catch (error) {
+    log('link announcement failed:', error && error.message);
+    return false;
+  }
+}
 
 const OWNER_ID = String(process.env.DISCORD_OWNER_ID || '').trim();
 const DEFAULT_SOON_MINUTES = 10;    // lead time for the "starting soon" alert
@@ -362,6 +438,12 @@ function start(deps) {
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.GuildMessageReactions,
       GatewayIntentBits.GuildVoiceStates, // audio relay + empty-room pause
+      /* PRIVILEGED: must also be switched on in the Developer Portal, or the
+         client will refuse to connect. Needed only so a member leaving the
+         server can have their stream access revoked automatically. If it is
+         not enabled, everything else still works — see the note at the
+         GuildMemberRemove handler. */
+      GatewayIntentBits.GuildMembers,
     ],
     partials: [Partials.Message, Partials.Reaction],
   });
@@ -708,10 +790,13 @@ function start(deps) {
      wired up, in which case the commands say so instead of throwing. */
   const links = deps.discordLink || null;
 
+  const announceLink = (event) => announceLinkEvent(client, deps, event);
+
   function isLinkChannel(interaction) {
     const name = interaction.channel && interaction.channel.name ? String(interaction.channel.name) : '';
-    return name.toLowerCase() === 'link';
+    return isLinkChannelName(name);
   }
+
 
   /* ── interactions ── */
   async function onInteraction(interaction) {
@@ -732,7 +817,7 @@ function start(deps) {
           return interaction.reply({ content: 'Linking is not configured on the site right now.', ephemeral: true });
         }
         if (!isLinkChannel(interaction)) {
-          return interaction.reply({ content: 'Run this in the #link channel.', ephemeral: true });
+          return interaction.reply({ content: 'Run this in the #links channel.', ephemeral: true });
         }
         const user = interaction.user;
         const profile = {
@@ -1008,13 +1093,60 @@ function start(deps) {
     } catch (_) { /* never let a voice event break the bot */ }
   });
 
+  /* Someone leaving the server must not keep the access their link granted —
+     it is a benefit of membership. If the GuildMembers intent is not enabled
+     in the portal this event never fires and nothing is revoked here; /unlink
+     and the site-side checks are unaffected. */
+  client.on(Events.GuildMemberRemove, (member) => {
+    (async () => {
+      try {
+        if (!links) return;
+        const id = member && (member.id || (member.user && member.user.id));
+        if (!id) return;
+        const result = await links.revoke(id, 'left');
+        log(`member left ${id}: ${result.wasLinked ? 'access revoked' : 'was not linked'}`);
+      } catch (error) {
+        log('guildMemberRemove handler failed:', error && error.message);
+      }
+    })();
+  });
+
   client.on(Events.Error, e => log('client error:', e.message));
 
-  client.login(deps.token).catch(e => log('login failed:', e.message));
+  /* GuildMembers is a PRIVILEGED intent, and it is off by default in the
+     Developer Portal. Asking for it while it is switched off makes the gateway
+     refuse the connection outright (close 4014), which would take the entire
+     bot down over one optional announcement — so on that specific refusal we
+     drop the bit and reconnect. Only the auto-revoke on leave is lost, and
+     the log says exactly how to get it back. Any other login failure is a
+     real misconfiguration (bad token, missing OWNER_ID) and is left alone;
+     it must not be retried.
+
+     Note client.options.intents is frozen, so the bit is cleared by swapping
+     in a fresh BitField rather than calling .remove() (which would no-op). */
+  client.login(deps.token).catch((error) => {
+    const msg = String((error && error.message) || error);
+    log('login failed:', msg);
+    if (!isDisallowedIntentError(error)) return;
+    log('GuildMembers is not enabled in the Developer Portal (Applications > Bot > '
+      + 'Privileged Gateway Intents). Reconnecting without it. Everything works except '
+      + 'auto-revoke when a member leaves — flip the switch and restart to enable that.');
+    try {
+      const bit = client.options.intents.bitfield & ~GatewayIntentBits.GuildMembers;
+      client.options.intents = new IntentsBitField(bit);
+    } catch (e) {
+      log('could not drop the GuildMembers intent:', e && e.message);
+      return;
+    }
+    setTimeout(() => {
+      client.login(deps.token).catch(e2 => log('login retry failed:', e2 && e2.message));
+    }, 1500);
+  });
 
   /* Handle for server.js: flush the store during graceful shutdown. */
   return {
     client,
+    announceLink,
     flush: () => store.save(),
     stop: () => {
       if (tickTimer) clearInterval(tickTimer);
@@ -1027,6 +1159,9 @@ function start(deps) {
 module.exports = {
   start,
   _test: {
+    normaliseChannelName, isLinkChannelName, pickLinkChannel, linkAnnouncementText,
+    findLinkChannel, announceLinkEvent, isDisallowedIntentError,
+    LINK_CHANNEL_NAMES,
     driverPanelEmbed, alertsPanelEmbed, sessionEmbed, websiteEmbed,
     gridRows, alertsRow,
     nextSession, liveSession, sessionState, findSession, presenceActivity,

@@ -29,7 +29,7 @@ const KEY = process.argv[2] || 'skyf1';
 const QUALITY = process.argv[3] || '1080p';
 const OUR_REFERERS = [
   process.env.SITE_URL || 'https://freef1.netlify.app',
-  'https://f1free.onrender.com',
+  'https://freef1.onrender.com',
 ];
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
   + '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';

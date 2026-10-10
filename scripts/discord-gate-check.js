@@ -95,9 +95,26 @@ async function api(path, { ticket, cookie, method = 'GET', body } = {}) {
       player.status === 200 && (await player.text()).includes('hls.js') !== null,
       `status=${player.status}`);
 
+    /* The player page is framed cross-site, and iOS/Safari block third-party
+       cookies there, so access rides in the SIGNED TICKET (its `u` claim)
+       rather than the cookie. Replaying the page without the cookie is
+       therefore meant to work — asserting 403 here would be asserting the
+       bug. What must be refused is a ticket that is not ours. */
     const replay = await api(tj.href, { cookie: null });
-    check('unlinked: the same player page is refused',
-      replay.status === 403, `status=${replay.status}`);
+    check('the player page still plays without the cookie (uid is in the ticket)',
+      replay.status === 200, `status=${replay.status}`);
+
+    const forged = await api(tj.href.replace(/\/stream\/.+$/, '/stream/' + b64u(JSON.stringify({ u: '123456789012345678', sourceId: RELAY, exp: Date.now() + 60000 }))));
+    check('a forged player-page ticket is refused',
+      forged.status === 403, `status=${forged.status}`);
+
+    const expired = await api(tj.href.replace(/\/stream\/.+$/, '/stream/' + tj.href.split('/stream/')[1]));
+    check('the real player-page ticket is accepted',
+      expired.status === 200, `status=${expired.status}`);
+
+    const gone = await api('/stream/not-a-real-ticket');
+    check('a malformed player-page ticket is refused',
+      gone.status === 403, `status=${gone.status}`);
   }
 
   const relayOk = await api('/relay/cdnlivetv/m3u8', { cookie: linked });

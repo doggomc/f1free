@@ -589,7 +589,7 @@ function buildCsp(overrides = {}) {
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' data: https://media.formula1.com https://cdn.discordapp.com",
-    ["connect-src 'self' https://f1free.onrender.com https://api.jolpi.ca", ...extraConnect].join(' '),
+    ["connect-src 'self' https://freef1.onrender.com https://api.jolpi.ca", ...extraConnect].join(' '),
     // 'self' matters now the player frames the site's own /stream/<ticket>
     // alias; any https feed host is still allowed by the scheme source.
     "frame-src 'self' https:",
@@ -843,9 +843,18 @@ function pruneGeoCache() {
    most once per window, in the server log only. */
 let geoPrivateSkips = 0;
 let geoPublicLookups = 0;
+/* Reported ONCE per process. It was once per 5-minute window, which meant a
+   mis-set hop count nagged forever — and the advice cannot change without a
+   redeploy anyway, so repeating it adds noise, not information. The counters
+   keep running so a later /admin check can still see the real state. */
+let geoNoticeLogged = false;
 setInterval(() => {
-  if (GEO_ENABLED && geoPrivateSkips >= 5 && geoPublicLookups === 0) {
-    console.warn(`[Geo] ${geoPrivateSkips} visitors had no locatable address in the last 5 min — on a deployment, check that TRUST_PROXY_HOPS matches the proxy chain in front of the server.`);
+  if (GEO_ENABLED && !geoNoticeLogged && geoPrivateSkips >= 5 && geoPublicLookups === 0) {
+    geoNoticeLogged = true;
+    console.warn('[Geo] Every visitor is arriving on a private address, so no '
+      + 'country can be resolved. Set TRUST_PROXY_HOPS to the number of proxies '
+      + 'in front of this service (Render is normally 1) — then client IPs, '
+      + 'rate limits and per-IP budgets all work. This is logged once per start.');
   }
   geoPrivateSkips = 0;
   geoPublicLookups = 0;
@@ -949,6 +958,11 @@ function writeLocalJson(filePath, value) {
    code change, which is also how the rest of the suite tests unlocked paths.
    ───────────────────────────────────────────────────────────────────────────── */
 const DISCORD_LINK_REQUIRED = process.env.DISCORD_LINK_REQUIRED !== '0';
+/* The store is built before the bot is, so the announcer is reached through a
+   mutable sink the bot fills in once it has a connected client. Until then
+   events are simply dropped — a link made seconds after boot must not fail
+   just because Discord has not finished connecting. */
+let linkEventSink = null;
 const discordLink = require('./lib/discord-link.js').createStore({
   readLocalJson,
   writeLocalJson,
@@ -957,6 +971,13 @@ const discordLink = require('./lib/discord-link.js').createStore({
   fileKey: path.join(DATA_DIR, 'discord-link.json'),
   secret: process.env.DISCORD_LINK_SECRET || ADMIN_SECRET,
   log: (...a) => console.log('[DiscordLink]', ...a),
+  onLinkEvent: (event) => {
+    const sink = linkEventSink;
+    if (!sink) return;
+    Promise.resolve(sink(event)).catch((error) => {
+      console.log('[DiscordLink] announcement failed:', error && error.message);
+    });
+  },
 });
 
 /* SameSite=None is only sent over https, and a browser drops it otherwise, so
@@ -2179,7 +2200,7 @@ function rejectUnauthorizedSiteRequest(res) {
 /* ── New-identity budget (see NEW_IDENTITY_BUDGET_PER_IP_HOUR) ──── */
 const newIdentityWindows = new Map(); // ip -> { count, resetAt }
 let newIdentityBlockedCount = 0;
-let newIdentityWarnedAt = 0;
+const newIdentityWarnedIps = new Set();
 
 function consumeNewIdentityBudget(ip) {
   const now = Date.now();
@@ -2190,9 +2211,20 @@ function consumeNewIdentityBudget(ip) {
   }
   if (state.count >= NEW_IDENTITY_BUDGET_PER_IP_HOUR) {
     newIdentityBlockedCount++;
-    if (now - newIdentityWarnedAt >= 60_000) {
-      newIdentityWarnedAt = now;
-      console.warn(`[Visitors] New-identity budget reached for ${ip}; further identities stay live but are not added to the all-time total.`);
+    /* One line per address, ever. Throttling it to once a minute still filled
+       the log during a race, and a shared egress address (a mobile carrier, a
+       university, an office) hits this constantly by design — it is the budget
+       working, not a fault. The running total stays available to /admin. */
+    if (!newIdentityWarnedIps.has(ip)) {
+      newIdentityWarnedIps.add(ip);
+      if (newIdentityWarnedIps.size <= 3) {
+        console.warn(`[Visitors] New-identity budget reached for ${ip}; further `
+          + 'identities stay live but are not added to the all-time total '
+          + '(expected for shared/carrier egress addresses).');
+      } else if (newIdentityWarnedIps.size === 4) {
+        console.warn('[Visitors] New-identity budget reached for further '
+          + 'addresses too — suppressing the rest, they are normal for shared egress.');
+      }
     }
     return false;
   }
@@ -3103,6 +3135,24 @@ if (SITE_STATIC_SAFE) {
     }
   }));
 }
+
+/* hls.js, served once and cached for a year.
+
+   It used to be inlined into every relay player page: 414 KB of egress per
+   mount, re-paid on every source fallback. As its own immutable file the
+   browser downloads it one time and keeps it. The filename is fixed, so the
+   cache is only broken by a deploy that changes the library — content hashing
+   is not worth the plumbing here. */
+app.get('/vendor/hls.min.js', (req, res) => {
+  const file = path.join(__dirname, 'vendor', 'hls.min.js');
+  fs.readFile(file, (err, buf) => {
+    if (err) return res.status(404).type('text/plain').send('hls.js is not bundled.');
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Timing-Allow-Origin', '*');
+    res.send(buf);
+  });
+});
 
 app.get('/healthz', (req, res) => {
   res.json({
@@ -4768,6 +4818,11 @@ if (process.env.DISCORD_BOT_TOKEN) {
       discordLink,
       log: (...a) => console.log('[Bot]', ...a),
     });
+    /* Now there is a client, hand the store its announcer so link and unlink
+       events reach #links. */
+    if (discordBot && typeof discordBot.announceLink === 'function') {
+      linkEventSink = discordBot.announceLink;
+    }
   } catch (error) {
     console.error('[Bot] failed to start:', error.message);
   }
