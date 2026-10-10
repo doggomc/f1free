@@ -300,17 +300,24 @@ function start(deps) {
   const store = {
     async load() {
       if (storeCache) return storeCache;
-      try {
-        if (deps.upstash) {
-          const r = await deps.upstash(['GET', deps.redisKey]);
-          storeCache = r && r.result ? JSON.parse(r.result) : { guilds: {} };
-        } else {
-          storeCache = deps.readLocalJson(deps.fileKey) || { guilds: {} };
-        }
-      } catch (e) {
-        log('store load failed, starting empty:', e.message);
-        storeCache = { guilds: {} };
+      // A failed or malformed read throws and is NOT cached. Caching an empty
+      // store here let the next save write {guilds:{}} over the real state
+      // (sent-markers, alert channels, roles). The next tick simply retries.
+      let loaded;
+      if (deps.upstash) {
+        const r = await deps.upstash(['GET', deps.redisKey]);
+        if (r && typeof r.result === 'string') loaded = JSON.parse(r.result);
+        else if (r && r.result == null) loaded = null; // key never written
+        else throw new Error('unexpected Upstash reply');
+      } else {
+        loaded = deps.readLocalJson(deps.fileKey);
       }
+      // "null" in storage is an empty store, not a corrupt one.
+      if (loaded === null || loaded === undefined) loaded = { guilds: {} };
+      if (!loaded || typeof loaded !== 'object' || !loaded.guilds || typeof loaded.guilds !== 'object') {
+        throw new Error('stored bot state has no guilds map');
+      }
+      storeCache = loaded;
       return storeCache;
     },
     async save() {
@@ -318,6 +325,8 @@ function start(deps) {
       // so two overlapping saves cannot clobber a newer one with a stale
       // snapshot.
       const write = async () => {
+        // Nothing loaded yet: writing would replace the stored state with nothing.
+        if (!storeCache) return;
         try {
           if (deps.upstash) await deps.upstash(['SET', deps.redisKey, JSON.stringify(storeCache)]);
           else deps.writeLocalJson(deps.fileKey, storeCache);
